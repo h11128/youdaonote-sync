@@ -1,6 +1,33 @@
 import os
 import platform
 import sys
+import uuid
+from enum import IntEnum
+
+
+# ========== 常量 ==========
+
+MARKDOWN_SUFFIX = ".md"
+
+
+# ========== 枚举 ==========
+
+class NoteDomain(IntEnum):
+    """有道云笔记类型"""
+    NOTE = 0       # 普通笔记（XML/JSON 格式）
+    MARKDOWN = 1   # Markdown 笔记
+
+
+# ========== 工具函数 ==========
+
+def normalize_sep(path: str) -> str:
+    """将路径中的反斜杠统一为正斜杠。"""
+    return path.replace("\\", "/")
+
+
+def generate_file_id() -> str:
+    """生成新的有道云文件 ID。"""
+    return "WEB" + uuid.uuid4().hex
 
 
 def get_script_directory():

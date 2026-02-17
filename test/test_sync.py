@@ -7,6 +7,7 @@
 - markdown_to_note_json: Markdown → 有道 JSON 转换
 - decide_action: 同步决策逻辑
 - _cloud_score: 去重评分逻辑
+- P0 纯函数: map_cloud_name, normalize_filename, filter_by_direction, format_file_size, _optimize_file_name
 """
 
 import json
@@ -19,8 +20,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.sync.metadata import SyncMetadata
 from src.convert.md_to_note import markdown_to_note_json
-from src.sync.utils import decide_action, SyncAction
+from src.sync.utils import decide_action, SyncAction, filter_by_direction, SyncDirection, SyncItem
 from src.sync.dedup import _cloud_score
+from src.sync.scanner import map_cloud_name
+from src.sync.moves import normalize_filename
+from src.common import format_file_size
 
 
 # ========== SyncMetadata 测试 ==========
@@ -962,6 +966,322 @@ class CustomScoreFuncTest(unittest.TestCase):
         # Cleanup
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ========== P0 纯函数测试 ==========
+
+class MapCloudNameTest(unittest.TestCase):
+    """map_cloud_name() 云端文件名映射"""
+
+    def test_note_to_md(self):
+        """test.note → test.md"""
+        # Given
+        name = "test.note"
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, "test.md")
+
+    def test_clip_to_md(self):
+        """test.clip → test.md"""
+        # Given
+        name = "test.clip"
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, "test.md")
+
+    def test_no_extension_to_md(self):
+        """noext → noext.md (no extension)"""
+        # Given
+        name = "noext"
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, "noext.md")
+
+    def test_already_md_unchanged(self):
+        """test.md → test.md (already md)"""
+        # Given
+        name = "test.md"
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, "test.md")
+
+    def test_other_extension_unchanged(self):
+        """test.pdf → test.pdf (other extension)"""
+        # Given
+        name = "test.pdf"
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, "test.pdf")
+
+    def test_nested_note_extension(self):
+        """my.note.note → my.note.md (nested extension)"""
+        # Given
+        name = "my.note.note"
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, "my.note.md")
+
+    def test_empty_string(self):
+        """'' → '.md' (empty string)"""
+        # Given
+        name = ""
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, ".md")
+
+
+class NormalizeFilenameTest(unittest.TestCase):
+    """normalize_filename() 文件名净化"""
+
+    def test_normal_unchanged(self):
+        """normal.md → normal.md (no change)"""
+        # Given
+        name = "normal.md"
+        # When
+        result = normalize_filename(name)
+        # Then
+        self.assertEqual(result, "normal.md")
+
+    def test_colon_removed(self):
+        """file:name → filename (colon removed)"""
+        # Given
+        name = "file:name"
+        # When
+        result = normalize_filename(name)
+        # Then
+        self.assertEqual(result, "filename")
+
+    def test_special_chars_removed(self):
+        """a\"b*c → abc (special chars removed)"""
+        # Given
+        name = 'a"b*c'
+        # When
+        result = normalize_filename(name)
+        # Then
+        self.assertEqual(result, "abc")
+
+    def test_fullwidth_space_lstrip(self):
+        """\\u3000\\u3000leading.md → leading.md (fullwidth space lstrip)"""
+        # Given
+        name = "\u3000\u3000leading.md"
+        # When
+        result = normalize_filename(name)
+        # Then
+        self.assertEqual(result, "leading.md")
+
+    def test_strip_spaces(self):
+        """  spaces   → spaces (strip)"""
+        # Given
+        name = "  spaces  "
+        # When
+        result = normalize_filename(name)
+        # Then
+        self.assertEqual(result, "spaces")
+
+    def test_newline_removed(self):
+        """a\\nb → ab (newline removed)"""
+        # Given
+        name = "a\nb"
+        # When
+        result = normalize_filename(name)
+        # Then
+        self.assertEqual(result, "ab")
+
+    def test_empty_string(self):
+        """'' → '' (empty string)"""
+        # Given
+        name = ""
+        # When
+        result = normalize_filename(name)
+        # Then
+        self.assertEqual(result, "")
+
+
+class FilterByDirectionTest(unittest.TestCase):
+    """filter_by_direction() 按方向过滤"""
+
+    def test_pull_only_download_and_skip(self):
+        """PULL direction → only DOWNLOAD and SKIP"""
+        # Given
+        items = [
+            SyncItem("a.md", None, "id1", None, None, 100, False, SyncAction.DOWNLOAD),
+            SyncItem("b.md", None, "id2", None, None, 100, False, SyncAction.UPLOAD),
+            SyncItem("c.md", None, "id3", None, None, 100, False, SyncAction.SKIP),
+            SyncItem("d.md", None, "id4", None, None, 100, False, SyncAction.CONFLICT),
+        ]
+        # When
+        result = filter_by_direction(items, SyncDirection.PULL)
+        # Then
+        self.assertEqual(len(result), 2)
+        actions = {i.action for i in result}
+        self.assertEqual(actions, {SyncAction.DOWNLOAD, SyncAction.SKIP})
+
+    def test_push_only_upload_and_skip(self):
+        """PUSH direction → only UPLOAD and SKIP"""
+        # Given
+        items = [
+            SyncItem("a.md", None, "id1", None, None, 100, False, SyncAction.DOWNLOAD),
+            SyncItem("b.md", None, "id2", None, None, 100, False, SyncAction.UPLOAD),
+            SyncItem("c.md", None, "id3", None, None, 100, False, SyncAction.SKIP),
+            SyncItem("d.md", None, "id4", None, None, 100, False, SyncAction.CONFLICT),
+        ]
+        # When
+        result = filter_by_direction(items, SyncDirection.PUSH)
+        # Then
+        self.assertEqual(len(result), 2)
+        actions = {i.action for i in result}
+        self.assertEqual(actions, {SyncAction.UPLOAD, SyncAction.SKIP})
+
+    def test_both_all_items(self):
+        """BOTH direction → all items"""
+        # Given
+        items = [
+            SyncItem("a.md", None, "id1", None, None, 100, False, SyncAction.DOWNLOAD),
+            SyncItem("b.md", None, "id2", None, None, 100, False, SyncAction.UPLOAD),
+            SyncItem("c.md", None, "id3", None, None, 100, False, SyncAction.SKIP),
+            SyncItem("d.md", None, "id4", None, None, 100, False, SyncAction.CONFLICT),
+        ]
+        # When
+        result = filter_by_direction(items, SyncDirection.BOTH)
+        # Then
+        self.assertEqual(len(result), 4)
+
+
+class FormatFileSizeTest(unittest.TestCase):
+    """format_file_size() 文件大小格式化"""
+
+    def test_zero_bytes(self):
+        """0 → 0B"""
+        # Given
+        size = 0
+        # When
+        result = format_file_size(size)
+        # Then
+        self.assertEqual(result, "0B")
+
+    def test_bytes(self):
+        """512 → 512B"""
+        # Given
+        size = 512
+        # When
+        result = format_file_size(size)
+        # Then
+        self.assertEqual(result, "512B")
+
+    def test_one_kb(self):
+        """1024 → 1.0KB"""
+        # Given
+        size = 1024
+        # When
+        result = format_file_size(size)
+        # Then
+        self.assertEqual(result, "1.0KB")
+
+    def test_one_point_five_kb(self):
+        """1536 → 1.5KB"""
+        # Given
+        size = 1536
+        # When
+        result = format_file_size(size)
+        # Then
+        self.assertEqual(result, "1.5KB")
+
+    def test_one_mb(self):
+        """1048576 → 1.0MB"""
+        # Given
+        size = 1048576
+        # When
+        result = format_file_size(size)
+        # Then
+        self.assertEqual(result, "1.0MB")
+
+    def test_ten_mb(self):
+        """10485760 → 10.0MB"""
+        # Given
+        size = 10485760
+        # When
+        result = format_file_size(size)
+        # Then
+        self.assertEqual(result, "10.0MB")
+
+
+class OptimizeFileNameTest(unittest.TestCase):
+    """YoudaoNoteDownload._optimize_file_name() 文件名优化"""
+
+    def setUp(self):
+        from unittest.mock import MagicMock
+        from src.transfer.download import YoudaoNoteDownload
+        self.downloader = YoudaoNoteDownload(api=MagicMock())
+
+    def test_normal_unchanged(self):
+        """normal.md → normal.md"""
+        # Given
+        name = "normal.md"
+        # When
+        result = self.downloader._optimize_file_name(name)
+        # Then
+        self.assertEqual(result, "normal.md")
+
+    def test_newline_removed(self):
+        """test\\n.md → test.md (newline removed)"""
+        # Given
+        name = "test\n.md"
+        # When
+        result = self.downloader._optimize_file_name(name)
+        # Then
+        self.assertEqual(result, "test.md")
+
+    def test_strip_spaces(self):
+        """  spaced.md   → spaced.md (strip)"""
+        # Given
+        name = "  spaced.md  "
+        # When
+        result = self.downloader._optimize_file_name(name)
+        # Then
+        self.assertEqual(result, "spaced.md")
+
+    def test_angle_bracket_replaced_with_underscore(self):
+        """file<name → file_name (< replaced with _)"""
+        # Given
+        name = "file<name"
+        # When
+        result = self.downloader._optimize_file_name(name)
+        # Then
+        self.assertEqual(result, "file_name")
+
+    def test_double_quote_removed(self):
+        """file\"name → filename (double quote removed)"""
+        # Given
+        name = 'file"name'
+        # When
+        result = self.downloader._optimize_file_name(name)
+        # Then
+        self.assertEqual(result, "filename")
+
+    def test_colon_removed(self):
+        """file:name → filename (colon removed)"""
+        # Given
+        name = "file:name"
+        # When
+        result = self.downloader._optimize_file_name(name)
+        # Then
+        self.assertEqual(result, "filename")
+
+    def test_hash_and_angle_removed(self):
+        """a#b>c → abc (# and > removed)"""
+        # Given
+        name = "a#b>c"
+        # When
+        result = self.downloader._optimize_file_name(name)
+        # Then
+        self.assertEqual(result, "abc")
 
 
 if __name__ == "__main__":

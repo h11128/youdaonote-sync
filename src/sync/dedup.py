@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.protocols import FileDeleter
 
-from src.common import safe_long_path
+from src.common import safe_long_path, normalize_sep
 from src.sync.metadata import SyncMetadata
 from src.sync.utils import compute_content_hash
 
@@ -94,7 +94,7 @@ def _build_indexes(
                 continue
 
             full = safe_long_path(os.path.join(dirpath, f))
-            rel = os.path.relpath(full, root).replace("\\", "/")
+            rel = normalize_sep(os.path.relpath(full, root))
 
             # ---- hash 索引 ----
             cached_hash = None
@@ -139,7 +139,7 @@ def _build_indexes(
                     if "://" in ref_path or (len(ref_path) > 2 and ":" in ref_path[2:]):
                         continue
                     abs_ref = os.path.normpath(os.path.join(md_dir, ref_path))
-                    rel_ref = os.path.relpath(abs_ref, root).replace("\\", "/")
+                    rel_ref = normalize_sep(os.path.relpath(abs_ref, root))
                     referenced.add(rel_ref)
 
     if updated > 0 and metadata:

@@ -9,9 +9,12 @@ import os
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List
+from typing import Dict, List, TYPE_CHECKING
 
-from src.api import YoudaoNoteApi
+from src.common import normalize_sep
+
+if TYPE_CHECKING:
+    from src.protocols import DirBrowser
 
 # 本地下载转换过程中产生的资源目录，云端不存在对应路径
 LOCAL_ARTIFACT_DIRS = {"images", "attachments"}
@@ -32,7 +35,7 @@ def map_cloud_name(name: str) -> str:
     return name
 
 
-def scan_cloud(api: YoudaoNoteApi, dir_id: str, base: str = "",
+def scan_cloud(api: "DirBrowser", dir_id: str, base: str = "",
                workers: int = DEFAULT_SCAN_WORKERS) -> Dict[str, Dict]:
     """并发获取云端文件列表（BFS + 线程池）。
 
@@ -120,7 +123,7 @@ def scan_local(local_dir: str, base_path: str = "") -> Dict[str, Dict]:
                    and d not in LOCAL_ARTIFACT_DIRS]
         for d in dirs:
             p = os.path.join(root, d)
-            rel = os.path.relpath(p, local_dir).replace("\\", "/")
+            rel = normalize_sep(os.path.relpath(p, local_dir))
             files[rel] = {"path": p, "is_dir": True,
                           "mtime": int(os.path.getmtime(p))}
         for f in filenames:
@@ -132,9 +135,9 @@ def scan_local(local_dir: str, base_path: str = "") -> Dict[str, Dict]:
             # 与 scan_cloud 相同的路径映射
             mapped_name = map_cloud_name(f)
 
-            rel = os.path.relpath(
+            rel = normalize_sep(os.path.relpath(
                 os.path.join(root, mapped_name), local_dir
-            ).replace("\\", "/")
+            ))
 
             # .md 文件优先于 .note/.clip 原始文件
             if rel in files and ext in (".note", ".clip"):

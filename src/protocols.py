@@ -60,11 +60,20 @@ class HttpClient(Protocol):
 
 
 @runtime_checkable
+class DownloadFileApi(Protocol):
+    """YoudaoNoteDownload 所需的 API 子集（下载文件 + HTTP 图片拉取）"""
+
+    def get_file_by_id(self, file_id: str) -> Any: ...
+    def http_get(self, url: str) -> Any: ...
+
+
+@runtime_checkable
 class DownloadApi(Protocol):
-    """下载引擎所需的 API 子集（FileReader + DirBrowser + HttpClient）"""
+    """PullEngine 所需的 API 子集（DownloadFileApi + 目录浏览）"""
 
     def get_file_by_id(self, file_id: str) -> Any: ...
     def get_dir_info_by_id(self, dir_id: str) -> dict: ...
+    def get_root_dir_info_id(self) -> dict: ...
     def http_get(self, url: str) -> Any: ...
 
 

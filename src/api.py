@@ -8,7 +8,7 @@ import uuid
 import requests
 from requests.adapters import HTTPAdapter
 
-from src.common import get_config_directory
+from src.common import get_config_directory, NoteDomain
 
 
 class YoudaoNoteApi(object):
@@ -312,7 +312,7 @@ class YoudaoNoteApi(object):
             data["req_from"] = "save"
 
         # Markdown 需要额外字段
-        if domain == 1:
+        if domain == NoteDomain.MARKDOWN:
             data["tags"] = ""
             data["resources"] = ";"
         else:

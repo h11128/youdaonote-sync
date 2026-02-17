@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.protocols import FilePusher
 
-from src.api import YoudaoNoteApi
+from src.common import generate_file_id, NoteDomain, normalize_sep
 from src.sync.metadata import SyncMetadata
 
 
@@ -50,7 +50,7 @@ class YoudaoNoteUpload:
         :param rel_path: 文件或目录的相对路径
         :return: 父目录 ID，失败返回 None
         """
-        parent_rel = os.path.dirname(rel_path).replace("\\", "/")
+        parent_rel = normalize_sep(os.path.dirname(rel_path))
         
         if not parent_rel:
             # 顶层 → 返回根目录 ID
@@ -136,7 +136,7 @@ class YoudaoNoteUpload:
             is_create = False
             logging.info(f"更新: {relative_path}")
         else:
-            file_id = YoudaoNoteApi.generate_file_id()
+            file_id = generate_file_id()
             is_create = True
             logging.info(f"创建: {relative_path}")
 
@@ -165,7 +165,7 @@ class YoudaoNoteUpload:
             else:
                 error_msg = result.get("error", str(result))
                 return False, f"上传失败: {error_msg}"
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             return False, f"上传异常: {e}"
 
     def _upload_markdown(
@@ -193,7 +193,7 @@ class YoudaoNoteUpload:
             file_name = file_name + ".md"
 
         return self._push_and_record(
-            file_info, file_name, 1, content,
+            file_info, file_name, NoteDomain.MARKDOWN, content,
             parent_id, relative_path, local_mtime)
 
     def upload_note(
@@ -228,7 +228,7 @@ class YoudaoNoteUpload:
         note_name = base_name + ".note"
 
         return self._push_and_record(
-            file_info, note_name, 0, note_json,
+            file_info, note_name, NoteDomain.NOTE, note_json,
             parent_id, relative_path, local_mtime)
 
     def upload_folder(
@@ -263,7 +263,7 @@ class YoudaoNoteUpload:
         # 遍历目录
         for item in os.listdir(local_dir):
             item_path = os.path.join(local_dir, item)
-            relative_path = os.path.relpath(item_path, base_dir).replace("\\", "/")
+            relative_path = normalize_sep(os.path.relpath(item_path, base_dir))
 
             # 跳过隐藏文件和目录
             if item.startswith("."):

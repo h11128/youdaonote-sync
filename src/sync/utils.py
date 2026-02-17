@@ -13,6 +13,8 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 
+from src.common import NoteDomain
+
 
 # ========== 枚举 ==========
 
@@ -33,9 +35,9 @@ class SyncAction(Enum):
 
 # ========== 数据类 ==========
 
-@dataclass
+@dataclass(frozen=True)
 class SyncItem:
-    """同步项"""
+    """同步项（不可变快照）"""
     relative_path: str
     local_path: Optional[str]
     cloud_id: Optional[str]
@@ -45,7 +47,7 @@ class SyncItem:
     is_dir: bool
     action: SyncAction
     cloud_name: Optional[str] = None
-    domain: int = 1  # 0=普通笔记, 1=Markdown
+    domain: NoteDomain = NoteDomain.MARKDOWN
     cloud_ctime: Optional[int] = None  # 云端创建时间
 
 

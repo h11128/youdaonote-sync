@@ -11,9 +11,12 @@ import os
 import threading
 import time as _time
 from datetime import datetime
-from typing import Dict
+from typing import Dict, TYPE_CHECKING
 
-from src.api import YoudaoNoteApi
+if TYPE_CHECKING:
+    from src.protocols import SyncApi
+
+from src.common import normalize_sep
 from src.sync.engine import SyncManager
 from src.sync.utils import SyncDirection
 
@@ -29,7 +32,7 @@ class SyncWatcher:
 
     def __init__(
         self,
-        api: YoudaoNoteApi,
+        api: "SyncApi",
         local_dir: str,
         poll_interval: int = 60,
         debounce_seconds: int = 5,
@@ -71,7 +74,7 @@ class SyncWatcher:
                 if event.is_directory:
                     return
                 src = event.src_path
-                if not src.endswith(".md") or "/.git/" in src.replace("\\", "/") or ".conflict." in src:
+                if not src.endswith(".md") or "/.git/" in normalize_sep(src) or ".conflict." in src:
                     return
                 with watcher_self._pending_lock:
                     watcher_self._pending_local_changes[src] = _time.time()
@@ -108,7 +111,7 @@ class SyncWatcher:
                             if p not in ready
                         }
                 if ready:
-                    changed_files = [os.path.relpath(p, self.local_dir).replace("\\", "/") for p in ready]
+                    changed_files = [normalize_sep(os.path.relpath(p, self.local_dir)) for p in ready]
                     logging.info(f"检测到本地变更: {changed_files}")
                     self._do_sync(f"本地变更: {len(changed_files)} 个文件")
 

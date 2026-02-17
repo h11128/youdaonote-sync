@@ -14,12 +14,14 @@ import xml.etree.ElementTree as ET
 from enum import Enum
 from typing import Dict, Optional, Tuple, TYPE_CHECKING
 
+import requests
+
 if TYPE_CHECKING:
-    from src.protocols import DownloadApi
+    from src.protocols import DownloadFileApi
 
 from src.convert.note_convert import YoudaoNoteConvert
 from src.transfer.image import ImagePull
-from src.common import get_script_directory, safe_long_path, load_config
+from src.common import get_script_directory, safe_long_path, load_config, MARKDOWN_SUFFIX, normalize_sep
 
 # 尝试导入 Windows 特定模块
 try:
@@ -27,9 +29,6 @@ try:
     HAS_WIN32_SETCTIME = True
 except ImportError:
     HAS_WIN32_SETCTIME = False
-
-
-MARKDOWN_SUFFIX = ".md"
 
 
 class FileType(Enum):
@@ -53,7 +52,7 @@ class YoudaoNoteDownload:
     提供统一的文件和文件夹下载功能
     """
 
-    def __init__(self, api: "DownloadApi", smms_secret_token: str = "",
+    def __init__(self, api: "DownloadFileApi", smms_secret_token: str = "",
                  is_relative_path: bool = True,
                  image_puller: ImagePull = None):
         """
@@ -94,9 +93,9 @@ class YoudaoNoteDownload:
 
             # 1. 可转换文件的 SKIP 预判
             if not skip_action_check and convert_to_md and youdao_file_suffix in [".note", ".clip", ""]:
-                candidate_md = os.path.join(
+                candidate_md = normalize_sep(os.path.join(
                     local_dir, os.path.splitext(file_name)[0] + MARKDOWN_SUFFIX
-                ).replace("\\", "/")
+                ))
                 if self._get_file_action(candidate_md, mtime_sec) == FileAction.SKIP:
                     logging.debug(f"跳过文件: {candidate_md}")
                     return True
@@ -130,7 +129,7 @@ class YoudaoNoteDownload:
             logging.info(f"{file_action.value}「{local_path}」{tip}")
             return True
 
-        except Exception as e:
+        except (OSError, requests.RequestException, RuntimeError) as e:
             logging.error(f"下载文件 {file_name} 失败: {e}")
             return False
 
@@ -140,11 +139,11 @@ class YoudaoNoteDownload:
                        file_type: FileType, convert_to_md: bool
                        ) -> Tuple[str, str]:
         """返回 (original_file_path, local_file_path)，已做长路径保护。"""
-        original = os.path.join(local_dir, file_name).replace("\\", "/")
+        original = normalize_sep(os.path.join(local_dir, file_name))
         if file_type != FileType.OTHER and convert_to_md:
-            local = os.path.join(
+            local = normalize_sep(os.path.join(
                 local_dir, os.path.splitext(file_name)[0] + MARKDOWN_SUFFIX
-            ).replace("\\", "/")
+            ))
         else:
             local = original
         return safe_long_path(original), safe_long_path(local)
@@ -214,7 +213,7 @@ class YoudaoNoteDownload:
         """
         from src.transfer.pull import PullEngine
         try:
-            local_folder_path = os.path.join(local_dir, folder_name).replace("\\", "/")
+            local_folder_path = normalize_sep(os.path.join(local_dir, folder_name))
             if not os.path.exists(local_folder_path):
                 os.makedirs(local_folder_path, exist_ok=True)
             logging.info(f"📁 下载文件夹: {folder_name} -> {local_folder_path}")

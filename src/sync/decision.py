@@ -9,6 +9,7 @@ import os
 import logging
 from typing import Dict, Optional
 
+from src.common import NoteDomain
 from src.sync.utils import SyncAction, SyncItem, decide_action, compute_content_hash
 from src.sync.metadata import SyncMetadata
 
@@ -56,7 +57,7 @@ def calibrate_metadata(
             cloud_mtime=cloud["mtime"],
             local_mtime=local["mtime"],
             parent_id=cloud.get("parent_id"),
-            domain=cloud.get("domain", 1),
+            domain=cloud.get("domain", NoteDomain.MARKDOWN),
             content_hash=content_hash,
             create_time=cloud.get("ctime", 0),
         )
@@ -112,6 +113,6 @@ def build_item(
         is_dir=is_dir,
         action=action,
         cloud_name=cloud["name"] if cloud else None,
-        domain=cloud.get("domain", 1) if cloud else 1,
+        domain=NoteDomain(cloud.get("domain", NoteDomain.MARKDOWN)) if cloud else NoteDomain.MARKDOWN,
         cloud_ctime=cloud.get("ctime", 0) if cloud else (meta.get("create_time") if meta else None),
     )

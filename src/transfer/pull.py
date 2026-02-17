@@ -9,7 +9,7 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
-from src.common import get_script_directory
+from src.common import get_script_directory, normalize_sep
 
 if TYPE_CHECKING:
     from src.protocols import DirBrowser
@@ -63,7 +63,7 @@ class PullEngine:
             logging.info("全量导出完成!")
             return True
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             logging.error(f"全量导出失败: {e}")
             return False
 
@@ -79,7 +79,7 @@ class PullEngine:
             is_dir = file_entry.get('dir', False)
 
             if is_dir:
-                sub_dir = os.path.join(local_dir, name).replace("\\", "/")
+                sub_dir = normalize_sep(os.path.join(local_dir, name))
                 if not os.path.exists(sub_dir):
                     os.makedirs(sub_dir, exist_ok=True)
                 self._download_dir_recursively(entry_id, sub_dir)
