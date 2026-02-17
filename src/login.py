@@ -9,5 +9,5 @@
 
 def cmd_login(args):
     """执行 login 命令 - 使用 Playwright 持久化上下文登录"""
-    from youdaonote_sync.auth import browser_login
+    from src.auth import browser_login
     return browser_login()

@@ -12,7 +12,7 @@
 - git_helper — GitHelper（Git 自动提交）
 
 使用方式：
-    from youdaonote_sync.sync.engine import SyncManager
-    from youdaonote_sync.sync.utils import SyncDirection, SyncAction
-    from youdaonote_sync.sync.metadata import SyncMetadata
+    from src.sync.engine import SyncManager
+    from src.sync.utils import SyncDirection, SyncAction
+    from src.sync.metadata import SyncMetadata
 """

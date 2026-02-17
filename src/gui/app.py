@@ -13,7 +13,7 @@ import threading
 import logging
 from typing import Dict
 
-from youdaonote_sync.gui.controller import GUIController
+from src.gui.controller import GUIController
 
 
 class YoudaoNoteGUI:
@@ -178,7 +178,7 @@ class YoudaoNoteGUI:
         self._set_status("正在登录...")
         ok, err = self.ctrl.login()
         if not ok:
-            messagebox.showerror("登录失败", f"{err}\n\n请运行命令重新登录:\npython -m youdaonote_sync login")
+            messagebox.showerror("登录失败", f"{err}\n\n请运行命令重新登录:\npython -m src login")
             self._set_status("登录失败")
             return
         self._set_status("登录成功")

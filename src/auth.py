@@ -13,8 +13,8 @@ import logging
 import os
 from typing import Optional
 
-from youdaonote_sync.common import get_config_directory
-from youdaonote_sync.cookies import CookieManager
+from src.common import get_config_directory
+from src.cookies import CookieManager
 
 
 def get_browser_data_dir() -> str:
@@ -89,7 +89,7 @@ def try_cookie_login(context) -> bool:
     if success:
         print(f"✅ Cookies 已更新: {CookieManager.get_default_path()}")
         print("\n🎉 登录状态有效！可以直接使用：")
-        print("  python -m youdaonote_sync pull")
+        print("  python -m src pull")
         return True
     return False
 
@@ -141,9 +141,9 @@ def wait_for_browser_login(context, page) -> int:
     print("\n" + "=" * 60)
     print("🎉 登录成功！现在可以使用以下命令：")
     print("=" * 60)
-    print("\n  python -m youdaonote_sync pull      # 全量导出")
-    print("  python -m youdaonote_sync gui       # 图形界面")
-    print("  python -m youdaonote_sync search XX # 搜索笔记")
+    print("\n  python -m src pull      # 全量导出")
+    print("  python -m src gui       # 图形界面")
+    print("  python -m src search XX # 搜索笔记")
     print("\n📌 提示：下次运行 login 时将自动复用登录状态\n")
     return 0
 

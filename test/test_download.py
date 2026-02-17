@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from youdaonote_sync.common import load_config
+from src.common import load_config
 
 
 class YoudaoNoteDownloadTest(unittest.TestCase):

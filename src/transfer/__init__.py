@@ -7,7 +7,7 @@
 - image    — ImagePull / upload_to_smms（图片/附件迁移）
 
 使用方式：
-    from youdaonote_sync.transfer.download import YoudaoNoteDownload
-    from youdaonote_sync.transfer.upload import YoudaoNoteUpload
-    from youdaonote_sync.transfer.search import YoudaoNoteSearch
+    from src.transfer.download import YoudaoNoteDownload
+    from src.transfer.upload import YoudaoNoteUpload
+    from src.transfer.search import YoudaoNoteSearch
 """

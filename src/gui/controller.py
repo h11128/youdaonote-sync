@@ -10,11 +10,11 @@ import os
 import time
 from typing import Dict, List, Optional, Tuple
 
-from youdaonote_sync.api import YoudaoNoteApi
-from youdaonote_sync.common import format_file_size, load_config
-from youdaonote_sync.cookies import CookieManager
-from youdaonote_sync.transfer.download import YoudaoNoteDownload
-from youdaonote_sync.transfer.search import YoudaoNoteSearch
+from src.api import YoudaoNoteApi
+from src.common import format_file_size, load_config
+from src.cookies import CookieManager
+from src.transfer.download import YoudaoNoteDownload
+from src.transfer.search import YoudaoNoteSearch
 
 
 class GUIController:

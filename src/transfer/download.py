@@ -15,11 +15,11 @@ from enum import Enum
 from typing import Dict, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from youdaonote_sync.protocols import DownloadApi
+    from src.protocols import DownloadApi
 
-from youdaonote_sync.convert.note_convert import YoudaoNoteConvert
-from youdaonote_sync.transfer.image import ImagePull
-from youdaonote_sync.common import get_script_directory, safe_long_path, load_config
+from src.convert.note_convert import YoudaoNoteConvert
+from src.transfer.image import ImagePull
+from src.common import get_script_directory, safe_long_path, load_config
 
 # 尝试导入 Windows 特定模块
 try:
@@ -212,7 +212,7 @@ class YoudaoNoteDownload:
         下载整个文件夹（递归）。
         实际递归逻辑委托给 PullEngine。
         """
-        from youdaonote_sync.transfer.pull import PullEngine
+        from src.transfer.pull import PullEngine
         try:
             local_folder_path = os.path.join(local_dir, folder_name).replace("\\", "/")
             if not os.path.exists(local_folder_path):
@@ -377,15 +377,3 @@ class YoudaoNoteDownload:
                 entry.get('createTimeForSort', 0)
             )
 
-    def pull_all(self, local_dir: str = None, ydnote_dir: str = None) -> bool:
-        """
-        全量导出所有笔记。
-
-        .. deprecated:: 实际实现已移至 ``PullEngine.pull_all``
-        """
-        from youdaonote_sync.transfer.pull import PullEngine
-        return PullEngine(self.api, self).pull_all(local_dir, ydnote_dir)
-
-
-
-# load_config 已移至 common.py，此处通过 import 保持向后兼容

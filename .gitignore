@@ -28,9 +28,9 @@ test-pull/
 # 导出目录（用户生成的笔记文件，非源码）
 youdaonote-export/
 
-# youdaonote_sync/ 是 Python 源码包，不能忽略
+# src/ 是 Python 源码包，不能忽略
 # 但包目录下的用户运行时产物需要忽略
-youdaonote_sync/**/*.pyc
+src/**/*.pyc
 
 # 构建产物
 build/

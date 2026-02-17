@@ -237,7 +237,7 @@ def note_json_to_markdown(json_content: str) -> str:
     :return: Markdown 文本
     """
     # 复用现有的转换逻辑
-    from youdaonote_sync.convert.note_convert import JsonConvert
+    from src.convert.note_convert import JsonConvert
     
     try:
         json_data = json.loads(json_content)

@@ -12,11 +12,11 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from youdaonote_sync.api import YoudaoNoteApi
-from youdaonote_sync.cookies import CookieManager
-from youdaonote_sync.sync.engine import SyncManager
-from youdaonote_sync.sync.utils import SyncAction, SyncDirection, filter_by_direction
-from youdaonote_sync.sync.metadata import SyncMetadata
+from src.api import YoudaoNoteApi
+from src.cookies import CookieManager
+from src.sync.engine import SyncManager
+from src.sync.utils import SyncAction, SyncDirection, filter_by_direction
+from src.sync.metadata import SyncMetadata
 
 LOCAL_DIR = "E:/Projects/notes"
 

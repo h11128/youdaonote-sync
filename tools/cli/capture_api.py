@@ -71,7 +71,7 @@ def capture_requests():
                 except:
                     pass
 
-    from youdaonote_sync.auth import get_browser_data_dir
+    from src.auth import get_browser_data_dir
     browser_data_dir = get_browser_data_dir()
     
     print("="*60)

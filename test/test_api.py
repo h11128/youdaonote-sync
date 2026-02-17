@@ -12,7 +12,7 @@ from unittest.mock import Mock, mock_open, patch
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from youdaonote_sync.api import YoudaoNoteApi
+from src.api import YoudaoNoteApi
 
 
 TEST_COOKIES_PATH = "test_cookies.json"

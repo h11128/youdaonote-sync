@@ -22,15 +22,15 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from youdaonote_sync.api import YoudaoNoteApi
-from youdaonote_sync.cookies import CookieManager
-from youdaonote_sync.sync.engine import SyncManager
-from youdaonote_sync.sync.utils import (
+from src.api import YoudaoNoteApi
+from src.cookies import CookieManager
+from src.sync.engine import SyncManager
+from src.sync.utils import (
     SyncDirection, SyncAction, filter_by_direction, decide_action,
 )
-from youdaonote_sync.sync.scanner import scan_cloud, scan_local
-from youdaonote_sync.sync.decision import calibrate_metadata
-from youdaonote_sync.sync.metadata import SyncMetadata
+from src.sync.scanner import scan_cloud, scan_local
+from src.sync.decision import calibrate_metadata
+from src.sync.metadata import SyncMetadata
 
 LOCAL_DIR = "E:/Projects/notes"
 

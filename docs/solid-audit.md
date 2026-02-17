@@ -1,6 +1,6 @@
 # SOLID 原则审查报告
 
-> 审查范围：`youdaonote_sync/` 全部源码（不含 `tools/`、`test/`）
+> 审查范围：`src/` 全部源码（不含 `tools/`、`test/`）
 > 日期：2026-02-02
 
 ---
@@ -17,7 +17,7 @@
 
 **问题**: CLI 入口应该只做命令分发和参数解析。浏览器登录是独立的认证策略，它的变化原因（Playwright API 升级、登录页面 URL 变更、Cookie 提取方式调整）跟 CLI 命令结构无关。
 
-**建议**: 抽取为 `youdaonote_sync/auth/playwright_login.py`，`cmd_login` 只调用它。
+**建议**: 抽取为 `src/auth/playwright_login.py`，`cmd_login` 只调用它。
 
 ---
 
@@ -389,7 +389,7 @@ h = SyncMetadata.compute_content_hash(full)
 |----|------|----------|
 | S-1 | ✅ 已修复 | 提取 `auth.py`，`cmd_login` 仅调用 `browser_login()` |
 | S-2 | ✅ 已修复 | 删除 `_convert_cookies`，`login_by_cookies` 改用 `CookieManager.load()` |
-| S-3 | ✅ 已修复 | 提取 `transfer/pull.py: PullEngine`，`download.py` 委托调用 |
+| S-3 | ✅ 已修复 | 提取 `transfer/pull.py: PullEngine`；删除 `download.py` 中废弃的 `pull_all` 包装 |
 | S-4 | ✅ 已修复 | 新增纯函数 `xml_bytes_to_markdown`/`json_bytes_to_markdown`/`html_string_to_markdown` |
 | S-5 | ✅ 已修复 | `ImageUpload` 移至 `transfer/image_upload.py`，`image.py` 保留 re-export |
 | S-6 | ✅ 已修复 | `compute_content_hash` 移至 `sync/utils.py`，`SyncMetadata` 保留委托 |
@@ -403,4 +403,7 @@ h = SyncMetadata.compute_content_hash(full)
 | O-2 | ✅ 已修复 | `upload_file` 改用 `_UPLOAD_HANDLERS` 注册表 |
 | O-3 | ✅ 已修复 | `auto_dedup`/`_resolve_group`/`_resolve_cloud_group` 接受可选 `score_func` |
 | I-1 | ✅ 已修复 | `protocols.py` 中定义了 `FileReader`/`DirBrowser`/`FilePusher`/`FileDeleter`/`HttpClient`/`DownloadApi` |
+| I-2 | ✅ 已修复 | `protocols.py` 新增 `SingleFileDownloader`/`Uploader`/`SyncApi`；`SyncManager` 改用窄接口 |
+| I-3 | 🟡 低优先级 | `SyncMetadata` 方法虽多，但各消费者按需使用，拆分收益不大 |
+| D-5 | ✅ 已修复 | `dedup.py` 已改用 `src.sync.utils.compute_content_hash`，不再直接调用 `SyncMetadata` 静态方法 |
 | L-1 | 🟡 低优先级 | 保持现状，无运行时问题 |

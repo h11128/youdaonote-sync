@@ -8,7 +8,7 @@ import uuid
 import requests
 from requests.adapters import HTTPAdapter
 
-from youdaonote_sync.common import get_config_directory
+from src.common import get_config_directory
 
 
 class YoudaoNoteApi(object):
@@ -84,7 +84,7 @@ class YoudaoNoteApi(object):
         使用 Cookies 登录，其实就是设置 Session 的 Cookies
         :return: error_msg，成功返回 None
         """
-        from youdaonote_sync.cookies import CookieManager
+        from src.cookies import CookieManager
 
         cookies, error = CookieManager.load(self.cookies_path)
         if error:
@@ -147,7 +147,7 @@ class YoudaoNoteApi(object):
         """验证已登录（cstk 不为空），否则抛异常。所有需要认证的 API 方法应先调用此方法。"""
         if not self.cstk:
             raise RuntimeError(
-                "未登录：cstk 为空。请先调用 login_by_cookies() 或运行 `python -m youdaonote_sync login`"
+                "未登录：cstk 为空。请先调用 login_by_cookies() 或运行 `python -m src login`"
             )
 
     def get_root_dir_info_id(self) -> dict:

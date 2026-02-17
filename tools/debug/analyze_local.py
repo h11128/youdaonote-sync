@@ -99,10 +99,10 @@ def cmd_extra(args):
 
 def cmd_dir_match(args):
     """对比本地/云端目录匹配，找有 dir_id 但云端扫描不到的。"""
-    from youdaonote_sync.api import YoudaoNoteApi
-    from youdaonote_sync.cookies import CookieManager
-    from youdaonote_sync.sync.scanner import scan_cloud, scan_local
-    from youdaonote_sync.sync.metadata import SyncMetadata
+    from src.api import YoudaoNoteApi
+    from src.cookies import CookieManager
+    from src.sync.scanner import scan_cloud, scan_local
+    from src.sync.metadata import SyncMetadata
 
     api = YoudaoNoteApi(cookies_path=CookieManager.get_default_path())
     error = api.login_by_cookies()
@@ -161,12 +161,12 @@ def cmd_dir_match(args):
 
 def cmd_dir_upload(args):
     """分析目录被标记为 UPLOAD 的原因。"""
-    from youdaonote_sync.api import YoudaoNoteApi
-    from youdaonote_sync.cookies import CookieManager
-    from youdaonote_sync.sync.engine import SyncManager
-    from youdaonote_sync.sync.utils import SyncAction, SyncDirection, filter_by_direction
-    from youdaonote_sync.sync.scanner import scan_cloud, scan_local
-    from youdaonote_sync.sync.metadata import SyncMetadata
+    from src.api import YoudaoNoteApi
+    from src.cookies import CookieManager
+    from src.sync.engine import SyncManager
+    from src.sync.utils import SyncAction, SyncDirection, filter_by_direction
+    from src.sync.scanner import scan_cloud, scan_local
+    from src.sync.metadata import SyncMetadata
 
     api = YoudaoNoteApi(cookies_path=CookieManager.get_default_path())
     error = api.login_by_cookies()

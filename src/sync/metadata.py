@@ -12,7 +12,7 @@ import tempfile
 import threading
 from typing import Optional, Dict, Any, List
 
-from youdaonote_sync.common import get_config_directory
+from src.common import get_config_directory
 
 
 class SyncMetadata:
@@ -322,9 +322,9 @@ class SyncMetadata:
         """
         向后兼容入口，实际实现已移至 sync.utils.compute_content_hash。
 
-        .. deprecated:: 使用 ``from youdaonote_sync.sync.utils import compute_content_hash``
+        .. deprecated:: 使用 ``from src.sync.utils import compute_content_hash``
         """
-        from youdaonote_sync.sync.utils import compute_content_hash
+        from src.sync.utils import compute_content_hash
         return compute_content_hash(file_path)
 
     def update_content_hash(self, local_path: str, content_hash: str) -> None:

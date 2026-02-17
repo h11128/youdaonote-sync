@@ -22,10 +22,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from youdaonote_sync.api import YoudaoNoteApi
-from youdaonote_sync.cookies import CookieManager
-from youdaonote_sync.sync.metadata import SyncMetadata
-from youdaonote_sync.sync.utils import compute_content_hash
+from src.api import YoudaoNoteApi
+from src.cookies import CookieManager
+from src.sync.metadata import SyncMetadata
+from src.sync.utils import compute_content_hash
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 

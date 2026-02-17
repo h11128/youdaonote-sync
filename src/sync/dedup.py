@@ -20,11 +20,11 @@ from typing import Dict, List, Set, Tuple, Optional
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from youdaonote_sync.protocols import FileDeleter
+    from src.protocols import FileDeleter
 
-from youdaonote_sync.common import safe_long_path
-from youdaonote_sync.sync.metadata import SyncMetadata
-from youdaonote_sync.sync.utils import compute_content_hash
+from src.common import safe_long_path
+from src.sync.metadata import SyncMetadata
+from src.sync.utils import compute_content_hash
 
 # 空文件的 MD5
 _EMPTY_MD5 = "d41d8cd98f00b204e9800998ecf8427e"

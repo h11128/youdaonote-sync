@@ -1,13 +1,14 @@
 """
 角色接口定义（Protocol）
 
-为 YoudaoNoteApi 的不同消费者定义最小化接口，
+为各模块的不同消费者定义最小化接口，
 实现接口隔离（ISP）和依赖倒置（DIP）。
 
-YoudaoNoteApi 隐式满足所有 Protocol，无需显式继承。
+具体类（YoudaoNoteApi / YoudaoNoteDownload / YoudaoNoteUpload）
+隐式满足对应的 Protocol，无需显式继承。
 """
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Optional, Protocol, Tuple, runtime_checkable
 
 
 @runtime_checkable
@@ -65,3 +66,48 @@ class DownloadApi(Protocol):
     def get_file_by_id(self, file_id: str) -> Any: ...
     def get_dir_info_by_id(self, dir_id: str) -> dict: ...
     def http_get(self, url: str) -> Any: ...
+
+
+# ---- SyncManager 依赖的窄接口 (I-2) ----
+
+@runtime_checkable
+class SingleFileDownloader(Protocol):
+    """SyncManager 只需要的下载能力：单文件下载"""
+
+    def download_file(
+        self,
+        file_id: str,
+        file_name: str,
+        local_dir: str,
+        modify_time: int = ...,
+        create_time: int = ...,
+        convert_to_md: bool = ...,
+        skip_action_check: bool = ...,
+    ) -> bool: ...
+
+
+@runtime_checkable
+class Uploader(Protocol):
+    """SyncManager 只需要的上传能力"""
+
+    def upload_file(
+        self,
+        local_path: str,
+        parent_id: str,
+        rel_path: str = ...,
+        force: bool = ...,
+    ) -> Tuple[bool, Optional[str]]: ...
+
+    def ensure_cloud_dir(
+        self, dir_name: str, parent_id: str, relative_path: str,
+        defer_save: bool = ...,
+    ) -> Optional[str]: ...
+
+    def ensure_parent_dir(self, rel_path: str) -> Optional[str]: ...
+
+
+@runtime_checkable
+class SyncApi(Protocol):
+    """SyncManager 只需要的 API 能力"""
+
+    def get_root_id(self) -> str: ...

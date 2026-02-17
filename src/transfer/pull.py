@@ -9,11 +9,11 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
-from youdaonote_sync.common import get_script_directory
+from src.common import get_script_directory
 
 if TYPE_CHECKING:
-    from youdaonote_sync.protocols import DirBrowser
-    from youdaonote_sync.transfer.download import YoudaoNoteDownload
+    from src.protocols import DirBrowser
+    from src.transfer.download import YoudaoNoteDownload
 
 
 class PullEngine:

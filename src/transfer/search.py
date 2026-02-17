@@ -11,7 +11,7 @@ from typing import List, Dict, Optional
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from youdaonote_sync.protocols import DirBrowser
+    from src.protocols import DirBrowser
 
 
 class YoudaoNoteSearch:

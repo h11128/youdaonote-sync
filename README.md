@@ -34,7 +34,7 @@ pip install -r requirements.txt
 
 ```bash
 # 自动登录（会弹出浏览器，扫码或输入账号登录）
-python -m youdaonote_sync login
+python -m src login
 ```
 
 > 首次运行前需安装 Playwright：`pip install playwright && playwright install chromium`
@@ -43,32 +43,32 @@ python -m youdaonote_sync login
 
 ```bash
 # 全量导出
-python -m youdaonote_sync pull
+python -m src pull
 
 # 导出到指定目录
-python -m youdaonote_sync pull --dir ./backup
+python -m src pull --dir ./backup
 
 # 只导出指定目录
-python -m youdaonote_sync pull --ydnote-dir 工作笔记
+python -m src pull --ydnote-dir 工作笔记
 ```
 
 ### 3. 双向同步
 
 ```bash
 # 双向同步（云端和本地互相更新）
-python -m youdaonote_sync sync
+python -m src sync
 
 # 只上传（本地 → 云端）
-python -m youdaonote_sync sync --push
+python -m src sync --push
 
 # 只下载（云端 → 本地）
-python -m youdaonote_sync sync --pull
+python -m src sync --pull
 
 # 预览模式（查看会执行哪些操作，但不实际执行）
-python -m youdaonote_sync sync --dry-run
+python -m src sync --dry-run
 
 # 指定同步目录
-python -m youdaonote_sync sync --dir E:/Projects/notes
+python -m src sync --dir E:/Projects/notes
 ```
 
 同步规则：
@@ -81,22 +81,22 @@ python -m youdaonote_sync sync --dir E:/Projects/notes
 
 ```bash
 # 启动图形界面
-python -m youdaonote_sync gui
+python -m src gui
 
 # 列出目录结构
-python -m youdaonote_sync list
+python -m src list
 
 # 搜索笔记
-python -m youdaonote_sync search 关键词
+python -m src search 关键词
 
 # 搜索并下载
-python -m youdaonote_sync download 关键词
+python -m src download 关键词
 ```
 
 ## 项目结构
 
 ```
-├── youdaonote_sync/        # 核心包
+├── src/                    # 核心包
 │   ├── __main__.py         # CLI 入口（argparse + 命令分发）
 │   ├── cli.py              # CLI 命令处理（pull/list/search/download/sync/gui）
 │   ├── login.py            # 登录命令处理
@@ -151,7 +151,7 @@ python -m youdaonote_sync download 关键词
 ## 命令行参数
 
 ```bash
-python -m youdaonote_sync --help
+python -m src --help
 
 # 可用命令
   login      登录有道云笔记（使用浏览器）
@@ -186,7 +186,7 @@ python -m youdaonote_sync --help
 重新运行登录命令：
 
 ```bash
-python -m youdaonote_sync login
+python -m src login
 ```
 
 ### 缺少依赖
@@ -213,7 +213,7 @@ pip install -e ".[dev]"
 pytest test/
 
 # 格式化代码
-black youdaonote_sync/
+black src/
 ```
 
 ## License

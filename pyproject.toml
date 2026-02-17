@@ -57,8 +57,8 @@ dev = [
 ]
 
 [project.scripts]
-youdaonote-sync = "youdaonote_sync.__main__:main"
-youdaonote = "youdaonote_sync.__main__:main"
+youdaonote-sync = "src.__main__:main"
+youdaonote = "src.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/DeppWang/youdaonote-sync"
@@ -66,14 +66,15 @@ Repository = "https://github.com/DeppWang/youdaonote-sync"
 Issues = "https://github.com/DeppWang/youdaonote-sync/issues"
 
 [tool.setuptools.packages.find]
-include = ["youdaonote_sync*"]
+include = ["src*"]
 
 [tool.setuptools.package-data]
-youdaonote_sync = ["*.json"]
+src = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
 python_files = ["test_*.py"]
+pythonpath = ["."]
 
 [tool.black]
 line-length = 100

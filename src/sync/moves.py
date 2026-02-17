@@ -10,7 +10,7 @@ import shutil
 import logging
 from typing import Dict
 
-from youdaonote_sync.sync.metadata import SyncMetadata
+from src.sync.metadata import SyncMetadata
 
 
 def normalize_filename(name: str) -> str:

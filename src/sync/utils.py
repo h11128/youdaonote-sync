@@ -1,7 +1,7 @@
 """
 同步工具：枚举、数据类、纯函数
 
-不依赖任何 youdaonote_sync 内部模块，可被所有 sync_* 模块安全导入。
+不依赖任何 src 内部模块，可被所有 sync_* 模块安全导入。
 """
 
 import hashlib

@@ -10,11 +10,11 @@ import logging
 import os
 import time
 
-from youdaonote_sync.api import YoudaoNoteApi
-from youdaonote_sync.common import format_file_size, load_config
-from youdaonote_sync.cookies import CookieManager
-from youdaonote_sync.transfer.download import YoudaoNoteDownload
-from youdaonote_sync.transfer.search import YoudaoNoteSearch
+from src.api import YoudaoNoteApi
+from src.common import format_file_size, load_config
+from src.cookies import CookieManager
+from src.transfer.download import YoudaoNoteDownload
+from src.transfer.search import YoudaoNoteSearch
 
 
 class YoudaoNoteCLI:
@@ -38,7 +38,7 @@ class YoudaoNoteCLI:
         if error_msg:
             logging.warning(f"Cookie 登录失败: {error_msg}")
 
-            from youdaonote_sync.auth import refresh_cookies_if_needed
+            from src.auth import refresh_cookies_if_needed
             if auto_refresh and refresh_cookies_if_needed(headless=True):
                 self.youdaonote_api = YoudaoNoteApi(cookies_path=self.cookies_path)
                 error_msg = self.youdaonote_api.login_by_cookies()
@@ -49,7 +49,7 @@ class YoudaoNoteCLI:
                     return True
 
             print("❌ Cookie 已过期，请运行以下命令重新登录：")
-            print("   python -m youdaonote_sync login")
+            print("   python -m src login")
             return False
 
         logging.info("登录成功!")
@@ -172,7 +172,7 @@ class YoudaoNoteCLI:
 
     def pull(self, local_dir: str = None, ydnote_dir: str = None):
         """全量导出所有笔记"""
-        from youdaonote_sync.transfer.pull import PullEngine
+        from src.transfer.pull import PullEngine
 
         config, error = load_config()
         if error:
@@ -244,11 +244,11 @@ def cmd_gui(args):
     cookies_path = CookieManager.get_default_path()
     if not os.path.exists(cookies_path):
         print(f"❌ 未找到 cookies 文件: {cookies_path}")
-        print("请先运行: python -m youdaonote_sync login")
+        print("请先运行: python -m src login")
         return 1
 
     try:
-        from youdaonote_sync.gui.app import run_gui
+        from src.gui.app import run_gui
         run_gui()
         return 0
     except ImportError as e:
@@ -262,9 +262,9 @@ def cmd_gui(args):
 
 def cmd_sync(args):
     """执行 sync 命令 - 双向同步"""
-    from youdaonote_sync.sync.engine import SyncManager
-    from youdaonote_sync.sync.utils import SyncDirection
-    from youdaonote_sync.watcher import SyncWatcher
+    from src.sync.engine import SyncManager
+    from src.sync.utils import SyncDirection
+    from src.watcher import SyncWatcher
 
     config, error = load_config()
     if error:

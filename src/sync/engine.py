@@ -17,21 +17,23 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 
-from youdaonote_sync.api import YoudaoNoteApi
-from youdaonote_sync.transfer.download import YoudaoNoteDownload
-from youdaonote_sync.transfer.upload import YoudaoNoteUpload
-from youdaonote_sync.sync.metadata import SyncMetadata
-from youdaonote_sync.sync.git_helper import GitHelper
+from typing import TYPE_CHECKING
 
-from youdaonote_sync.sync.utils import (
+from src.sync.metadata import SyncMetadata
+from src.sync.git_helper import GitHelper
+
+if TYPE_CHECKING:
+    from src.protocols import SyncApi, SingleFileDownloader, Uploader
+
+from src.sync.utils import (
     SyncDirection, SyncAction, SyncItem,          # noqa: F401 — re-exported
     filter_by_direction, empty_stats,
     print_preview, print_dryrun_summary, backup_file,
     compute_content_hash,
 )
-from youdaonote_sync.sync.scanner import scan_cloud, scan_local
-from youdaonote_sync.sync.decision import calibrate_metadata, build_item
-from youdaonote_sync.sync.moves import reconcile_moves
+from src.sync.scanner import scan_cloud, scan_local
+from src.sync.decision import calibrate_metadata, build_item
+from src.sync.moves import reconcile_moves
 
 
 class SyncManager:
@@ -43,16 +45,22 @@ class SyncManager:
     UPLOAD_WORKERS = 5        # 文件上传并发数
     METADATA_SAVE_BATCH = 50  # 每操作 N 个文件保存一次元数据
 
-    def __init__(self, api: YoudaoNoteApi, local_dir: str,
+    def __init__(self, api: "SyncApi", local_dir: str,
                  metadata: SyncMetadata = None,
-                 downloader: YoudaoNoteDownload = None,
-                 uploader: YoudaoNoteUpload = None,
+                 downloader: "SingleFileDownloader" = None,
+                 uploader: "Uploader" = None,
                  git: GitHelper = None):
         self.api = api
         self.local_dir = os.path.abspath(local_dir)
         self.metadata = metadata or SyncMetadata()
-        self.downloader = downloader or YoudaoNoteDownload(api)
-        self.uploader = uploader or YoudaoNoteUpload(api, self.metadata)
+        if downloader is None:
+            from src.transfer.download import YoudaoNoteDownload
+            downloader = YoudaoNoteDownload(api)
+        if uploader is None:
+            from src.transfer.upload import YoudaoNoteUpload
+            uploader = YoudaoNoteUpload(api, self.metadata)
+        self.downloader = downloader
+        self.uploader = uploader
         self.stats = empty_stats()
         self._changed_paths: List[str] = []
         self._lock = threading.Lock()
@@ -149,7 +157,7 @@ class SyncManager:
 
     def _run_dedup(self, dry_run: bool = False) -> Dict:
         """执行基于内容 hash 的去重扫描"""
-        from youdaonote_sync.sync.dedup import auto_dedup
+        from src.sync.dedup import auto_dedup
         try:
             stats = auto_dedup(self.local_dir, metadata=self.metadata,
                                api=self.api, dry_run=dry_run)

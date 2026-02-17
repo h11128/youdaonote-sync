@@ -11,7 +11,7 @@ import unittest
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from youdaonote_sync.convert.note_convert import (
+from src.convert.note_convert import (
     YoudaoNoteConvert,
     xml_bytes_to_markdown,
     json_bytes_to_markdown,

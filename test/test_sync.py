@@ -17,10 +17,10 @@ import unittest
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from youdaonote_sync.sync.metadata import SyncMetadata
-from youdaonote_sync.convert.md_to_note import markdown_to_note_json
-from youdaonote_sync.sync.utils import decide_action, SyncAction
-from youdaonote_sync.sync.dedup import _cloud_score
+from src.sync.metadata import SyncMetadata
+from src.convert.md_to_note import markdown_to_note_json
+from src.sync.utils import decide_action, SyncAction
+from src.sync.dedup import _cloud_score
 
 
 # ========== SyncMetadata 测试 ==========
@@ -563,7 +563,7 @@ class DedupCollisionTest(unittest.TestCase):
 
     def test_same_hash_different_size_not_deduped(self):
         """同 hash 但不同大小的文件不当作重复"""
-        from youdaonote_sync.sync.dedup import auto_dedup
+        from src.sync.dedup import auto_dedup
 
         # Given — 创建两个文件，手动构造"碰撞"场景
         # 正常情况下 MD5 不会碰撞，这里直接用 metadata 模拟
@@ -590,7 +590,7 @@ class DedupCollisionTest(unittest.TestCase):
 
     def test_same_hash_same_size_deduped(self):
         """同 hash 同大小的文件正常去重"""
-        from youdaonote_sync.sync.dedup import auto_dedup
+        from src.sync.dedup import auto_dedup
 
         # Given — 两个内容完全相同的文件
         meta = SyncMetadata(metadata_path=os.path.join(self.tmpdir, "meta.json"))
@@ -627,7 +627,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
 
     def test_missing_key_5_returns_empty(self):
         """JSON 缺少 '5' 内容字段时返回空字符串"""
-        from youdaonote_sync.convert import YoudaoNoteConvert
+        from src.convert import YoudaoNoteConvert
 
         # Given — 写一个缺少 key "5" 的 JSON 文件
         tmpdir = tempfile.mkdtemp()
@@ -646,7 +646,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
 
     def test_invalid_json_returns_empty(self):
         """文件不是合法 JSON 时不崩溃"""
-        from youdaonote_sync.convert import YoudaoNoteConvert
+        from src.convert import YoudaoNoteConvert
 
         tmpdir = tempfile.mkdtemp()
         f = os.path.join(tmpdir, "invalid.note")
@@ -663,7 +663,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
 
     def test_heading_missing_key_4(self):
         """标题节点缺少 '4' 字段时不崩溃"""
-        from youdaonote_sync.convert import JsonConvert
+        from src.convert import JsonConvert
 
         # Given — 一个缺少 "4" 的标题内容
         content = {"5": [{"7": [{"8": "test text"}]}], "6": "h"}
@@ -677,7 +677,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
 
     def test_image_missing_key_4(self):
         """图片节点缺少 '4' 字段时不崩溃"""
-        from youdaonote_sync.convert import JsonConvert
+        from src.convert import JsonConvert
 
         content = {"6": "im"}
         converter = JsonConvert()
@@ -698,7 +698,7 @@ class SafeLongPathTest(unittest.TestCase):
 
     def test_short_path_unchanged(self):
         """短路径原样返回"""
-        from youdaonote_sync.common import safe_long_path
+        from src.common import safe_long_path
         path = "C:\\Users\\test\\notes\\file.md"
         result = safe_long_path(path)
         # 短路径不应被修改（除非恰好在 Windows 且超长）
@@ -707,7 +707,7 @@ class SafeLongPathTest(unittest.TestCase):
 
     def test_already_prefixed_unchanged(self):
         """已有 \\\\?\\ 前缀的路径不会重复添加"""
-        from youdaonote_sync.common import safe_long_path
+        from src.common import safe_long_path
         path = "\\\\?\\" + "C:\\" + "a" * 300 + ".md"
         result = safe_long_path(path)
         # 不应出现双重前缀
@@ -715,7 +715,7 @@ class SafeLongPathTest(unittest.TestCase):
 
     def test_empty_path(self):
         """空路径不崩溃"""
-        from youdaonote_sync.common import safe_long_path
+        from src.common import safe_long_path
         result = safe_long_path("")
         self.assertEqual(result, "" if len("") < 240 else result)
 
@@ -730,7 +730,7 @@ class SafeJsonTest(unittest.TestCase):
 
     def test_valid_json(self):
         """正常 JSON 响应解析成功"""
-        from youdaonote_sync.api import YoudaoNoteApi
+        from src.api import YoudaoNoteApi
 
         class FakeResp:
             status_code = 200
@@ -743,7 +743,7 @@ class SafeJsonTest(unittest.TestCase):
 
     def test_invalid_json_raises_runtime_error(self):
         """非 JSON 响应抛出 RuntimeError 并包含有用信息"""
-        from youdaonote_sync.api import YoudaoNoteApi
+        from src.api import YoudaoNoteApi
 
         class FakeResp:
             status_code = 502
@@ -759,7 +759,7 @@ class SafeJsonTest(unittest.TestCase):
 
     def test_empty_response_raises_runtime_error(self):
         """空响应抛出 RuntimeError"""
-        from youdaonote_sync.api import YoudaoNoteApi
+        from src.api import YoudaoNoteApi
 
         class FakeResp:
             status_code = 200
@@ -788,7 +788,7 @@ class ComputeContentHashTest(unittest.TestCase):
 
     def test_basic_file(self):
         """普通文件计算出非空 hash"""
-        from youdaonote_sync.sync.utils import compute_content_hash
+        from src.sync.utils import compute_content_hash
 
         # Given
         path = os.path.join(self.tmpdir, "a.md")
@@ -804,7 +804,7 @@ class ComputeContentHashTest(unittest.TestCase):
 
     def test_crlf_lf_same_hash(self):
         """CRLF 和 LF 文件应产生相同 hash"""
-        from youdaonote_sync.sync.utils import compute_content_hash
+        from src.sync.utils import compute_content_hash
 
         # Given
         lf_path = os.path.join(self.tmpdir, "lf.md")
@@ -820,7 +820,7 @@ class ComputeContentHashTest(unittest.TestCase):
 
     def test_bom_stripped(self):
         """UTF-8 BOM 文件与无 BOM 文件应产生相同 hash"""
-        from youdaonote_sync.sync.utils import compute_content_hash
+        from src.sync.utils import compute_content_hash
 
         # Given
         plain = os.path.join(self.tmpdir, "plain.md")
@@ -836,7 +836,7 @@ class ComputeContentHashTest(unittest.TestCase):
 
     def test_empty_file(self):
         """空文件返回非 None hash"""
-        from youdaonote_sync.sync.utils import compute_content_hash
+        from src.sync.utils import compute_content_hash
 
         path = os.path.join(self.tmpdir, "empty.md")
         with open(path, "wb"):
@@ -847,14 +847,14 @@ class ComputeContentHashTest(unittest.TestCase):
 
     def test_nonexistent_file_returns_none(self):
         """文件不存在返回 None"""
-        from youdaonote_sync.sync.utils import compute_content_hash
+        from src.sync.utils import compute_content_hash
 
         h = compute_content_hash(os.path.join(self.tmpdir, "no_such.md"))
         self.assertIsNone(h)
 
     def test_empty_path_raises_value_error(self):
         """空路径抛出 ValueError"""
-        from youdaonote_sync.sync.utils import compute_content_hash
+        from src.sync.utils import compute_content_hash
 
         with self.assertRaises(ValueError):
             compute_content_hash("")
@@ -870,28 +870,28 @@ class DetectContentTypeTest(unittest.TestCase):
 
     def test_xml_content(self):
         """XML 内容应检测为 XML"""
-        from youdaonote_sync.transfer.download import YoudaoNoteDownload, FileType
+        from src.transfer.download import YoudaoNoteDownload, FileType
 
         result = YoudaoNoteDownload._detect_content_type(b"<?xml version='1.0'?>")
         self.assertEqual(result, FileType.XML)
 
     def test_json_content(self):
         """JSON 内容应检测为 JSON"""
-        from youdaonote_sync.transfer.download import YoudaoNoteDownload, FileType
+        from src.transfer.download import YoudaoNoteDownload, FileType
 
         result = YoudaoNoteDownload._detect_content_type(b'{"key": "value"}')
         self.assertEqual(result, FileType.JSON)
 
     def test_other_content(self):
         """普通二进制内容应检测为 OTHER"""
-        from youdaonote_sync.transfer.download import YoudaoNoteDownload, FileType
+        from src.transfer.download import YoudaoNoteDownload, FileType
 
         result = YoudaoNoteDownload._detect_content_type(b"hello world")
         self.assertEqual(result, FileType.OTHER)
 
     def test_empty_content(self):
         """空内容应检测为 OTHER"""
-        from youdaonote_sync.transfer.download import YoudaoNoteDownload, FileType
+        from src.transfer.download import YoudaoNoteDownload, FileType
 
         result = YoudaoNoteDownload._detect_content_type(b"")
         self.assertEqual(result, FileType.OTHER)
@@ -907,21 +907,21 @@ class UploadHandlerDispatchTest(unittest.TestCase):
 
     def test_md_dispatches_to_upload_markdown(self):
         """".md" 文件应映射到 _upload_markdown"""
-        from youdaonote_sync.transfer.upload import YoudaoNoteUpload
+        from src.transfer.upload import YoudaoNoteUpload
 
         handler_name = YoudaoNoteUpload._UPLOAD_HANDLERS.get(".md")
         self.assertEqual(handler_name, "_upload_markdown")
 
     def test_note_dispatches_to_skip(self):
         """".note" 文件应映射到 _upload_note_skip"""
-        from youdaonote_sync.transfer.upload import YoudaoNoteUpload
+        from src.transfer.upload import YoudaoNoteUpload
 
         handler_name = YoudaoNoteUpload._UPLOAD_HANDLERS.get(".note")
         self.assertEqual(handler_name, "_upload_note_skip")
 
     def test_unknown_suffix_falls_back_to_markdown(self):
         """未知后缀应 fallback 到 _upload_markdown"""
-        from youdaonote_sync.transfer.upload import YoudaoNoteUpload
+        from src.transfer.upload import YoudaoNoteUpload
 
         handler_name = YoudaoNoteUpload._UPLOAD_HANDLERS.get(".xyz", "_upload_markdown")
         self.assertEqual(handler_name, "_upload_markdown")
@@ -937,7 +937,7 @@ class CustomScoreFuncTest(unittest.TestCase):
 
     def test_custom_score_func_used(self):
         """自定义 score_func 应被 _resolve_cloud_group 使用"""
-        from youdaonote_sync.sync.dedup import _resolve_cloud_group
+        from src.sync.dedup import _resolve_cloud_group
 
         # Given
         tmpdir = tempfile.mkdtemp()

@@ -8,9 +8,9 @@ from urllib.parse import urlparse
 import requests
 
 if TYPE_CHECKING:
-    from youdaonote_sync.protocols import HttpClient
+    from src.protocols import HttpClient
 
-from youdaonote_sync.common import safe_long_path
+from src.common import safe_long_path
 
 REGEX_IMAGE_URL = re.compile(r"!\[.*?\]\((.*?note\.youdao\.com.*?)\)")
 REGEX_ATTACH = re.compile(r"\[(.*?)\]\(((http|https)://note\.youdao\.com.*?)\)")
@@ -197,4 +197,4 @@ class ImagePull:
 
 
 # 向后兼容：ImageUpload 已移至 image_upload.py
-from youdaonote_sync.transfer.image_upload import ImageUpload  # noqa: F401
+from src.transfer.image_upload import ImageUpload  # noqa: F401

@@ -9,8 +9,8 @@ import os
 import logging
 from typing import Dict, Optional
 
-from youdaonote_sync.sync.utils import SyncAction, SyncItem, decide_action, compute_content_hash
-from youdaonote_sync.sync.metadata import SyncMetadata
+from src.sync.utils import SyncAction, SyncItem, decide_action, compute_content_hash
+from src.sync.metadata import SyncMetadata
 
 
 def calibrate_metadata(

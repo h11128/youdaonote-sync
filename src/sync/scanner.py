@@ -11,7 +11,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List
 
-from youdaonote_sync.api import YoudaoNoteApi
+from src.api import YoudaoNoteApi
 
 # 本地下载转换过程中产生的资源目录，云端不存在对应路径
 LOCAL_ARTIFACT_DIRS = {"images", "attachments"}

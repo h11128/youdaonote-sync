@@ -11,10 +11,10 @@ from typing import Optional, Tuple
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from youdaonote_sync.protocols import FilePusher
+    from src.protocols import FilePusher
 
-from youdaonote_sync.api import YoudaoNoteApi
-from youdaonote_sync.sync.metadata import SyncMetadata
+from src.api import YoudaoNoteApi
+from src.sync.metadata import SyncMetadata
 
 
 class YoudaoNoteUpload:
@@ -204,7 +204,7 @@ class YoudaoNoteUpload:
         force: bool = False,
     ) -> Tuple[bool, Optional[str]]:
         """上传普通笔记（将 Markdown 转换为有道 JSON 格式）"""
-        from youdaonote_sync.convert.md_to_note import markdown_to_note_json
+        from src.convert.md_to_note import markdown_to_note_json
 
         file_name = os.path.basename(local_path)
         local_mtime = int(os.path.getmtime(local_path))

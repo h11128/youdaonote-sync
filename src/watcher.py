@@ -13,9 +13,9 @@ import time as _time
 from datetime import datetime
 from typing import Dict
 
-from youdaonote_sync.api import YoudaoNoteApi
-from youdaonote_sync.sync.engine import SyncManager
-from youdaonote_sync.sync.utils import SyncDirection
+from src.api import YoudaoNoteApi
+from src.sync.engine import SyncManager
+from src.sync.utils import SyncDirection
 
 
 class SyncWatcher:

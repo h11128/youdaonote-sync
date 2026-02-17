@@ -12,8 +12,8 @@ import traceback
 
 import requests
 
-from youdaonote_sync import log
-from youdaonote_sync.cli import (
+from src import log
+from src.cli import (
     cmd_download,
     cmd_gui,
     cmd_list,
@@ -21,7 +21,7 @@ from youdaonote_sync.cli import (
     cmd_search,
     cmd_sync,
 )
-from youdaonote_sync.login import cmd_login
+from src.login import cmd_login
 
 
 def main():

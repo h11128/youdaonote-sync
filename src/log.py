@@ -3,7 +3,7 @@ import os
 import sys
 from datetime import datetime
 
-from youdaonote_sync.common import get_script_directory
+from src.common import get_script_directory
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(processName)s-%(threadName)s-%(thread)d %(filename)s:%(lineno)d %(funcName)-10s : %(message)s"
 DATE_FORMAT = "%Y/%m/%d %H:%M:%S "

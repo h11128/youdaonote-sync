@@ -11,7 +11,7 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from youdaonote_sync.common import get_script_directory, get_config_directory
+from src.common import get_script_directory, get_config_directory
 
 
 class CookieManager:
@@ -185,9 +185,9 @@ class CookieManager:
         """
         从浏览器自动提取 cookies。
 
-        .. deprecated:: 实际实现已移至 ``youdaonote_sync.auth.extract_cookies_from_browser``
+        .. deprecated:: 实际实现已移至 ``src.auth.extract_cookies_from_browser``
         """
-        from youdaonote_sync.auth import extract_cookies_from_browser
+        from src.auth import extract_cookies_from_browser
         return extract_cookies_from_browser()
 
     @staticmethod
