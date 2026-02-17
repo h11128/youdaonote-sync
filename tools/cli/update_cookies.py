@@ -4,7 +4,7 @@
 有道云笔记 Cookie 手动更新工具
 用于手动输入和更新 cookies.json 文件
 
-推荐使用: python -m youdaonote login
+推荐使用: python -m youdaonote_sync login
 """
 
 import json
@@ -14,14 +14,14 @@ import sys
 # 添加父目录到路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from youdaonote.cookies import CookieManager
+from youdaonote_sync.cookies import CookieManager
 
 
 def update_cookies_interactive():
     """交互式更新 cookies"""
     print("🔧 有道云笔记 Cookie 手动更新工具")
     print("=" * 50)
-    print("\n💡 推荐使用自动登录: python -m youdaonote login\n")
+    print("\n💡 推荐使用自动登录: python -m youdaonote_sync login\n")
     
     cookie_dict = {}
     
@@ -49,8 +49,8 @@ def update_cookies_interactive():
     if success:
         print(f"\n🎉 Cookie 已成功保存到 {CookieManager.get_default_path()}")
         print("\n现在可以使用:")
-        print("  python -m youdaonote pull   # 全量导出")
-        print("  python -m youdaonote gui    # 图形界面")
+        print("  python -m youdaonote_sync pull   # 全量导出")
+        print("  python -m youdaonote_sync gui    # 图形界面")
         return True
     else:
         print(f"❌ 保存失败: {error}")

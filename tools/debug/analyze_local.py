@@ -99,10 +99,10 @@ def cmd_extra(args):
 
 def cmd_dir_match(args):
     """对比本地/云端目录匹配，找有 dir_id 但云端扫描不到的。"""
-    from youdaonote.api import YoudaoNoteApi
-    from youdaonote.cookies import CookieManager
-    from youdaonote.sync.scanner import scan_cloud, scan_local
-    from youdaonote.sync.metadata import SyncMetadata
+    from youdaonote_sync.api import YoudaoNoteApi
+    from youdaonote_sync.cookies import CookieManager
+    from youdaonote_sync.sync.scanner import scan_cloud, scan_local
+    from youdaonote_sync.sync.metadata import SyncMetadata
 
     api = YoudaoNoteApi(cookies_path=CookieManager.get_default_path())
     error = api.login_by_cookies()
@@ -111,7 +111,7 @@ def cmd_dir_match(args):
         return 1
 
     meta = SyncMetadata()
-    cloud_dir_id = api.get_root_dir_info_id()["fileEntry"]["id"]
+    cloud_dir_id = api.get_root_id()
 
     cloud_files = scan_cloud(api, cloud_dir_id, "")
     local_files = scan_local(LOCAL_DIR, "")
@@ -161,12 +161,12 @@ def cmd_dir_match(args):
 
 def cmd_dir_upload(args):
     """分析目录被标记为 UPLOAD 的原因。"""
-    from youdaonote.api import YoudaoNoteApi
-    from youdaonote.cookies import CookieManager
-    from youdaonote.sync.engine import SyncManager
-    from youdaonote.sync.utils import SyncAction, SyncDirection, filter_by_direction
-    from youdaonote.sync.scanner import scan_cloud, scan_local
-    from youdaonote.sync.metadata import SyncMetadata
+    from youdaonote_sync.api import YoudaoNoteApi
+    from youdaonote_sync.cookies import CookieManager
+    from youdaonote_sync.sync.engine import SyncManager
+    from youdaonote_sync.sync.utils import SyncAction, SyncDirection, filter_by_direction
+    from youdaonote_sync.sync.scanner import scan_cloud, scan_local
+    from youdaonote_sync.sync.metadata import SyncMetadata
 
     api = YoudaoNoteApi(cookies_path=CookieManager.get_default_path())
     error = api.login_by_cookies()
@@ -176,7 +176,7 @@ def cmd_dir_upload(args):
 
     meta = SyncMetadata()
     mgr = SyncManager(api, LOCAL_DIR, meta)
-    cloud_dir_id = api.get_root_dir_info_id()["fileEntry"]["id"]
+    cloud_dir_id = api.get_root_id()
 
     cloud_files = scan_cloud(api, cloud_dir_id, "")
     local_files = scan_local(LOCAL_DIR, "")

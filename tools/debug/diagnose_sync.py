@@ -22,15 +22,15 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from youdaonote.api import YoudaoNoteApi
-from youdaonote.cookies import CookieManager
-from youdaonote.sync.engine import SyncManager
-from youdaonote.sync.utils import (
+from youdaonote_sync.api import YoudaoNoteApi
+from youdaonote_sync.cookies import CookieManager
+from youdaonote_sync.sync.engine import SyncManager
+from youdaonote_sync.sync.utils import (
     SyncDirection, SyncAction, filter_by_direction, decide_action,
 )
-from youdaonote.sync.scanner import scan_cloud, scan_local
-from youdaonote.sync.decision import calibrate_metadata
-from youdaonote.sync.metadata import SyncMetadata
+from youdaonote_sync.sync.scanner import scan_cloud, scan_local
+from youdaonote_sync.sync.decision import calibrate_metadata
+from youdaonote_sync.sync.metadata import SyncMetadata
 
 LOCAL_DIR = "E:/Projects/notes"
 
@@ -51,7 +51,7 @@ def _login():
 
 def _scan(api):
     """扫描云端和本地，返回 (cloud_dir_id, cloud_files, local_files)。"""
-    cloud_dir_id = api.get_root_dir_info_id()["fileEntry"]["id"]
+    cloud_dir_id = api.get_root_id()
     print("扫描云端...")
     cloud_files = scan_cloud(api, cloud_dir_id, "")
     print("扫描本地...")

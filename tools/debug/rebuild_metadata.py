@@ -22,9 +22,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from youdaonote.api import YoudaoNoteApi
-from youdaonote.cookies import CookieManager
-from youdaonote.sync.metadata import SyncMetadata
+from youdaonote_sync.api import YoudaoNoteApi
+from youdaonote_sync.cookies import CookieManager
+from youdaonote_sync.sync.metadata import SyncMetadata
+from youdaonote_sync.sync.utils import compute_content_hash
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -37,8 +38,7 @@ def scan_cloud(api: YoudaoNoteApi) -> dict:
     cloud_files = {}
     cloud_dirs = {}
 
-    root_info = api.get_root_dir_info_id()
-    root_id = root_info["fileEntry"]["id"]
+    root_id = api.get_root_id()
 
     def fetch_dir(dir_id, base_path):
         subdirs = []
@@ -175,7 +175,7 @@ def main():
                     if existing.get("local_mtime") == local["mtime"]:
                         content_hash = existing["content_hash"]
                 if content_hash is None:
-                    content_hash = SyncMetadata.compute_content_hash(local["path"])
+                    content_hash = compute_content_hash(local["path"])
 
                 meta.set_file_info(
                     local_path=rel,
@@ -209,7 +209,7 @@ def main():
         elif local and not cloud:
             # 只有本地（非 conflict）→ 记录 local_mtime，file_id=""
             if not args.dry_run:
-                content_hash = SyncMetadata.compute_content_hash(local["path"])
+                content_hash = compute_content_hash(local["path"])
                 meta.set_file_info(
                     local_path=rel,
                     file_id="",

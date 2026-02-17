@@ -13,7 +13,7 @@ import sys
 # 添加父目录到路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from youdaonote.cookies import CookieManager
+from youdaonote_sync.cookies import CookieManager
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
             print("  3. 浏览器数据库被锁定（请关闭浏览器后重试）")
         
         print("\n💡 推荐使用浏览器登录方式:")
-        print("  python -m youdaonote login")
+        print("  python -m youdaonote_sync login")
         return 1
     
     print("🎉 成功提取到所有必需的 cookies!")
@@ -51,8 +51,8 @@ def main():
     if success:
         print(f"\n✅ Cookies 已保存到: {CookieManager.get_default_path()}")
         print("\n现在可以使用:")
-        print("  python -m youdaonote pull   # 全量导出")
-        print("  python -m youdaonote gui    # 图形界面")
+        print("  python -m youdaonote_sync pull   # 全量导出")
+        print("  python -m youdaonote_sync gui    # 图形界面")
         return 0
     else:
         print(f"\n❌ 保存失败: {error}")

@@ -18,12 +18,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from playwright.sync_api import sync_playwright
 
 
-def get_browser_data_dir() -> str:
-    """获取浏览器数据目录"""
-    from youdaonote.common import get_config_directory
-    return os.path.join(get_config_directory(), "browser_data")
-
-
 def capture_requests():
     """捕获有道云笔记的 API 请求"""
     
@@ -77,6 +71,7 @@ def capture_requests():
                 except:
                     pass
 
+    from youdaonote_sync.auth import get_browser_data_dir
     browser_data_dir = get_browser_data_dir()
     
     print("="*60)

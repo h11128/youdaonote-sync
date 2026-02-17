@@ -12,11 +12,11 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from youdaonote.api import YoudaoNoteApi
-from youdaonote.cookies import CookieManager
-from youdaonote.sync.engine import SyncManager
-from youdaonote.sync.utils import SyncAction, SyncDirection, filter_by_direction
-from youdaonote.sync.metadata import SyncMetadata
+from youdaonote_sync.api import YoudaoNoteApi
+from youdaonote_sync.cookies import CookieManager
+from youdaonote_sync.sync.engine import SyncManager
+from youdaonote_sync.sync.utils import SyncAction, SyncDirection, filter_by_direction
+from youdaonote_sync.sync.metadata import SyncMetadata
 
 LOCAL_DIR = "E:/Projects/notes"
 
@@ -61,7 +61,7 @@ def main():
     print("=" * 70)
 
     mgr = SyncManager(api, LOCAL_DIR, meta)
-    cloud_dir_id = api.get_root_dir_info_id()["fileEntry"]["id"]
+    cloud_dir_id = api.get_root_id()
     items = mgr._collect_items(cloud_dir_id, "")
     items = filter_by_direction(items, SyncDirection.BOTH)
 

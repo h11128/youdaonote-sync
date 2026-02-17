@@ -3,15 +3,15 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "youdaonote-pull"
-version = "2.0.0"
-description = "有道云笔记导出工具 - 支持全量导出、搜索、GUI"
+name = "youdaonote-sync"
+version = "3.0.0"
+description = "有道云笔记同步工具 - 支持双向同步、搜索、GUI"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
     {name = "DeppWang", email = ""},
 ]
-keywords = ["youdao", "note", "export", "markdown", "云笔记"]
+keywords = ["youdao", "note", "sync", "export", "markdown", "云笔记"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -57,19 +57,19 @@ dev = [
 ]
 
 [project.scripts]
-youdaonote = "youdaonote.__main__:main"
-youdaonote-pull = "youdaonote.__main__:main"
+youdaonote-sync = "youdaonote_sync.__main__:main"
+youdaonote = "youdaonote_sync.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/DeppWang/youdaonote-pull"
-Repository = "https://github.com/DeppWang/youdaonote-pull"
-Issues = "https://github.com/DeppWang/youdaonote-pull/issues"
+Homepage = "https://github.com/DeppWang/youdaonote-sync"
+Repository = "https://github.com/DeppWang/youdaonote-sync"
+Issues = "https://github.com/DeppWang/youdaonote-sync/issues"
 
 [tool.setuptools.packages.find]
-include = ["youdaonote*"]
+include = ["youdaonote_sync*"]
 
 [tool.setuptools.package-data]
-youdaonote = ["*.json"]
+youdaonote_sync = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]

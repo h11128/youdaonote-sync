@@ -12,7 +12,7 @@ from unittest.mock import Mock, mock_open, patch
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from youdaonote.api import YoudaoNoteApi
+from youdaonote_sync.api import YoudaoNoteApi
 
 
 TEST_COOKIES_PATH = "test_cookies.json"
@@ -44,7 +44,7 @@ class YoudaoNoteApiTest(unittest.TestCase):
         # 如果 cookies 文件不存在。期待：登录失败
         youdaonote_api = YoudaoNoteApi(cookies_path=self.TEST_COOKIES_PATH)
         message = youdaonote_api.login_by_cookies()
-        self.assertTrue("No such file or directory" in message)
+        self.assertIn("找不到文件", message)
 
         # 如果 cookies 格式不对（少了一个 [）。期待：登录失败
         cookies_json_str = """{
@@ -59,7 +59,7 @@ class YoudaoNoteApiTest(unittest.TestCase):
             "builtins.open", mock_open(read_data=cookies_json_str.encode("utf-8"))
         ):
             message = youdaonote_api.login_by_cookies()
-            self.assertIn("cookies.json 不是有效的 JSON", message)
+            self.assertIn("JSON 解析错误", message)
 
         # 如果 cookies 格式正确，但少了 YNOTE_CSTK。期待：登录失败
         cookies_json_str = """{"cookies": [
@@ -87,20 +87,19 @@ class YoudaoNoteApiTest(unittest.TestCase):
             self.assertFalse(message)
             self.assertEqual(youdaonote_api.cstk, "fPk5IkDg")
 
+    def _mock_login(self) -> YoudaoNoteApi:
+        """创建一个已 mock 登录的 API 实例（cstk 已设置）。"""
+        api = YoudaoNoteApi(cookies_path=TEST_COOKIES_PATH)
+        api.cstk = "fPk5IkDg"
+        return api
+
     def test_get_root_dir_info_id(self):
         """
         测试获取有道云笔记根目录信息
         python -m pytest test/test_api.py::YoudaoNoteApiTest::test_get_root_dir_info_id -v
         """
 
-        # 先 mock 登录一下
-        youdaonote_api = YoudaoNoteApi(cookies_path=TEST_COOKIES_PATH)
-        with patch(
-            "youdaonote.api.YoudaoNoteApi._convert_cookies",
-            return_value=[["YNOTE_CSTK", "fPk5IkDg", ".note.youdao.com", "/"]],
-        ):
-            error_msg = youdaonote_api.login_by_cookies()
-            self.assertFalse(error_msg)
+        youdaonote_api = self._mock_login()
 
         # 接口返回正常时。期待：根目录信息中有根目录 ID
         youdaonote_api.http_post = Mock(
@@ -117,14 +116,7 @@ class YoudaoNoteApiTest(unittest.TestCase):
         python -m pytest test/test_api.py::YoudaoNoteApiTest::test_get_dir_info_by_id -v
         """
 
-        # 先 mock 登录一下
-        youdaonote_api = YoudaoNoteApi(cookies_path=TEST_COOKIES_PATH)
-        with patch(
-            "youdaonote.api.YoudaoNoteApi._convert_cookies",
-            return_value=[["YNOTE_CSTK", "fPk5IkDg", ".note.youdao.com", "/"]],
-        ):
-            error_msg = youdaonote_api.login_by_cookies()
-            self.assertFalse(error_msg)
+        youdaonote_api = self._mock_login()
 
         # 当目录 ID 存在时。期待获取正常
         youdaonote_api.http_get = Mock(
@@ -162,14 +154,7 @@ class YoudaoNoteApiTest(unittest.TestCase):
         python -m pytest test/test_api.py::YoudaoNoteApiTest::test_get_file_by_id -v
         """
 
-        # 先 mock 登录一下
-        youdaonote_api = YoudaoNoteApi(cookies_path=TEST_COOKIES_PATH)
-        with patch(
-            "youdaonote.api.YoudaoNoteApi._convert_cookies",
-            return_value=[["YNOTE_CSTK", "fPk5IkDg", ".note.youdao.com", "/"]],
-        ):
-            error_msg = youdaonote_api.login_by_cookies()
-            self.assertFalse(error_msg)
+        youdaonote_api = self._mock_login()
 
         # 当文件 ID 存在时。期待获取正常
         youdaonote_api.http_post = Mock(return_value=MockResponse({}, 200))

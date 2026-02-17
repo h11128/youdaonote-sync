@@ -1,0 +1,67 @@
+"""
+角色接口定义（Protocol）
+
+为 YoudaoNoteApi 的不同消费者定义最小化接口，
+实现接口隔离（ISP）和依赖倒置（DIP）。
+
+YoudaoNoteApi 隐式满足所有 Protocol，无需显式继承。
+"""
+
+from typing import Any, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class FileReader(Protocol):
+    """读取文件内容（下载）"""
+
+    def get_file_by_id(self, file_id: str) -> Any: ...
+
+
+@runtime_checkable
+class DirBrowser(Protocol):
+    """浏览目录结构"""
+
+    def get_root_dir_info_id(self) -> dict: ...
+    def get_dir_info_by_id(self, dir_id: str) -> dict: ...
+
+
+@runtime_checkable
+class FilePusher(Protocol):
+    """上传/创建文件和目录"""
+
+    def get_root_id(self) -> str: ...
+    def push_file(
+        self,
+        file_id: str,
+        parent_id: str,
+        name: str,
+        domain: int,
+        body_string: str,
+        create_time: int = ...,
+        modify_time: int = ...,
+        is_create: bool = ...,
+    ) -> dict: ...
+    def create_dir(self, parent_id: str, name: str) -> dict: ...
+
+
+@runtime_checkable
+class FileDeleter(Protocol):
+    """删除文件"""
+
+    def delete_file(self, file_id: str) -> dict: ...
+
+
+@runtime_checkable
+class HttpClient(Protocol):
+    """HTTP 请求（用于图片/附件下载）"""
+
+    def http_get(self, url: str) -> Any: ...
+
+
+@runtime_checkable
+class DownloadApi(Protocol):
+    """下载引擎所需的 API 子集（FileReader + DirBrowser + HttpClient）"""
+
+    def get_file_by_id(self, file_id: str) -> Any: ...
+    def get_dir_info_by_id(self, dir_id: str) -> dict: ...
+    def http_get(self, url: str) -> Any: ...
