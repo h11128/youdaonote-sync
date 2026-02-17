@@ -16,10 +16,11 @@ __version__ = '2.0.0'
 __author__ = 'DeppWang'
 
 from youdaonote.api import YoudaoNoteApi
-from youdaonote.search import YoudaoNoteSearch
-from youdaonote.download import YoudaoNoteDownload, load_config
+from youdaonote.transfer.search import YoudaoNoteSearch
+from youdaonote.transfer.download import YoudaoNoteDownload
+from youdaonote.common import load_config
 from youdaonote.cookies import CookieManager
-from youdaonote.covert import YoudaoNoteConvert
+from youdaonote.convert.note_convert import YoudaoNoteConvert
 
 __all__ = [
     'YoudaoNoteApi',

@@ -154,6 +154,8 @@ class SyncMetadata:
         :param create_time: 云端创建时间（秒级时间戳）
         :param base_dir: 基准目录，用于将相对路径转绝对路径以读取 mtime
         """
+        if not local_path:
+            raise ValueError("local_path 不能为空")
         path = self._normalize_path(local_path)
         
         # 如果没有提供本地修改时间，尝试从文件获取
@@ -185,6 +187,16 @@ class SyncMetadata:
                 self._hash_index[content_hash] = path
         if create_time is not None and create_time > 0:
             self._data["files"][path]["create_time"] = create_time
+
+    def remove_file_info(self, local_path: str) -> None:
+        """删除指定路径的文件元数据（用于文件移动后清理旧记录）。"""
+        path = self._normalize_path(local_path)
+        removed = self._data["files"].pop(path, None)
+        if removed:
+            # 清理 hash 索引
+            ch = removed.get("content_hash")
+            if ch and self._hash_index.get(ch) == path:
+                del self._hash_index[ch]
 
     def update_local_mtime(self, local_path: str, mtime: int) -> None:
         """
@@ -312,9 +324,11 @@ class SyncMetadata:
         计算文件的 normalized content hash（MD5）。
         去掉 CRLF → LF、BOM 差异后计算，这样同内容不同换行符的文件 hash 一致。
         
-        :param file_path: 文件绝对路径
+        :param file_path: 文件绝对路径（不能为空）
         :return: MD5 hex string，文件不存在或读取失败返回 None
         """
+        if not file_path:
+            raise ValueError("file_path 不能为空")
         try:
             with open(file_path, "rb") as f:
                 data = f.read()

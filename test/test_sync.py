@@ -17,10 +17,10 @@ import unittest
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from youdaonote.sync_metadata import SyncMetadata
-from youdaonote.md_to_note import markdown_to_note_json
-from youdaonote.sync import decide_action, SyncAction
-from youdaonote.dedup import _cloud_score
+from youdaonote.sync.metadata import SyncMetadata
+from youdaonote.convert.md_to_note import markdown_to_note_json
+from youdaonote.sync.utils import decide_action, SyncAction
+from youdaonote.sync.dedup import _cloud_score
 
 
 # ========== SyncMetadata 测试 ==========
@@ -563,7 +563,7 @@ class DedupCollisionTest(unittest.TestCase):
 
     def test_same_hash_different_size_not_deduped(self):
         """同 hash 但不同大小的文件不当作重复"""
-        from youdaonote.dedup import auto_dedup
+        from youdaonote.sync.dedup import auto_dedup
 
         # Given — 创建两个文件，手动构造"碰撞"场景
         # 正常情况下 MD5 不会碰撞，这里直接用 metadata 模拟
@@ -590,7 +590,7 @@ class DedupCollisionTest(unittest.TestCase):
 
     def test_same_hash_same_size_deduped(self):
         """同 hash 同大小的文件正常去重"""
-        from youdaonote.dedup import auto_dedup
+        from youdaonote.sync.dedup import auto_dedup
 
         # Given — 两个内容完全相同的文件
         meta = SyncMetadata(metadata_path=os.path.join(self.tmpdir, "meta.json"))
@@ -627,7 +627,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
 
     def test_missing_key_5_returns_empty(self):
         """JSON 缺少 '5' 内容字段时返回空字符串"""
-        from youdaonote.covert import YoudaoNoteConvert
+        from youdaonote.convert import YoudaoNoteConvert
 
         # Given — 写一个缺少 key "5" 的 JSON 文件
         tmpdir = tempfile.mkdtemp()
@@ -637,7 +637,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
 
         # When / Then — 不崩溃
         try:
-            YoudaoNoteConvert.covert_json_to_markdown(f)
+            YoudaoNoteConvert.convert_json_to_markdown(f)
         except KeyError:
             self.fail("缺少 '5' 字段时不应抛出 KeyError")
         finally:
@@ -646,7 +646,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
 
     def test_invalid_json_returns_empty(self):
         """文件不是合法 JSON 时不崩溃"""
-        from youdaonote.covert import YoudaoNoteConvert
+        from youdaonote.convert import YoudaoNoteConvert
 
         tmpdir = tempfile.mkdtemp()
         f = os.path.join(tmpdir, "invalid.note")
@@ -654,7 +654,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
             fh.write("this is not json {{{")
 
         try:
-            YoudaoNoteConvert.covert_json_to_markdown(f)
+            YoudaoNoteConvert.convert_json_to_markdown(f)
         except (KeyError, json.JSONDecodeError):
             self.fail("非法 JSON 时不应崩溃")
         finally:
@@ -663,7 +663,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
 
     def test_heading_missing_key_4(self):
         """标题节点缺少 '4' 字段时不崩溃"""
-        from youdaonote.covert import JsonConvert
+        from youdaonote.convert import JsonConvert
 
         # Given — 一个缺少 "4" 的标题内容
         content = {"5": [{"7": [{"8": "test text"}]}], "6": "h"}
@@ -677,7 +677,7 @@ class JsonConvertDefensiveTest(unittest.TestCase):
 
     def test_image_missing_key_4(self):
         """图片节点缺少 '4' 字段时不崩溃"""
-        from youdaonote.covert import JsonConvert
+        from youdaonote.convert import JsonConvert
 
         content = {"6": "im"}
         converter = JsonConvert()

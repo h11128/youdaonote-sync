@@ -19,6 +19,42 @@ def get_config_directory():
     return os.path.join(get_script_directory(), "config")
 
 
+def format_file_size(size: int) -> str:
+    """将字节数格式化为可读的文件大小字符串。"""
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f}MB"
+    elif size >= 1024:
+        return f"{size / 1024:.1f}KB"
+    return f"{size}B"
+
+
+def load_config():
+    """
+    加载配置文件。
+    :return: (config_dict, error_msg)
+    """
+    import json
+    config_path = os.path.join(get_config_directory(), "config.json")
+
+    if not os.path.exists(config_path):
+        return {
+            "local_dir": "",
+            "ydnote_dir": "",
+            "smms_secret_token": "",
+            "is_relative_path": True
+        }, ""
+
+    try:
+        with open(config_path, "rb") as f:
+            config_str = f.read().decode("utf-8")
+        config_dict = json.loads(config_str)
+        return config_dict, ""
+    except json.JSONDecodeError as e:
+        return {}, f"config.json 格式错误: {e}"
+    except Exception as e:
+        return {}, f"读取配置失败: {e}"
+
+
 def safe_long_path(path: str) -> str:
     """
     处理 Windows 长路径问题。

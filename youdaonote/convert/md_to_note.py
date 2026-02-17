@@ -20,167 +20,77 @@ def _generate_id() -> str:
 
 
 def _create_text_node(text: str, attrs: List[Dict] = None) -> Dict:
-    """
-    创建文本节点
-    
-    :param text: 文本内容
-    :param attrs: 文本属性（粗体、斜体等）
-    :return: 节点字典
-    """
+    """创建文本节点"""
     node = {"8": text}
     if attrs:
         node["9"] = attrs
     return node
 
 
-def _create_paragraph(text: str, text_attrs: List[Dict] = None) -> Dict:
-    """
-    创建普通段落
-    
-    :param text: 段落文本
-    :param text_attrs: 文本属性
-    :return: 段落字典
-    """
-    text_node = _create_text_node(text, text_attrs)
+def _make_text_line(text: str) -> Dict:
+    """创建一个包含纯文本的行子元素 — 大多数元素的 '5' 列表项共用此结构。"""
     return {
+        "2": "2",
         "3": _generate_id(),
-        "5": [{
-            "2": "2",
-            "3": _generate_id(),
-            "7": [text_node]
-        }]
+        "7": [{"8": text}],
     }
+
+
+def _create_element(
+    type_code: str = None,
+    attrs: Dict = None,
+    children: List[Dict] = None,
+) -> Dict:
+    """
+    构建有道云笔记 JSON 元素的通用工厂。
+    :param type_code: 元素类型（"h" / "l" / "cd" / "q" / "im" / "li"），None 表示段落
+    :param attrs: 附加属性，写入 key "4"
+    :param children: key "5" 的子元素列表
+    """
+    elem: Dict[str, Any] = {"3": _generate_id()}
+    if attrs:
+        elem["4"] = attrs
+    if children is not None:
+        elem["5"] = children
+    if type_code:
+        elem["6"] = type_code
+    return elem
+
+
+# ---------- 各类元素的快捷创建 ----------
+
+def _create_paragraph(text: str, text_attrs: List[Dict] = None) -> Dict:
+    node = _create_text_node(text, text_attrs)
+    return _create_element(children=[{
+        "2": "2", "3": _generate_id(), "7": [node],
+    }])
 
 
 def _create_heading(text: str, level: int) -> Dict:
-    """
-    创建标题
-    
-    :param text: 标题文本
-    :param level: 标题级别（1-6）
-    :return: 标题字典
-    """
-    return {
-        "3": _generate_id(),
-        "4": {"l": f"h{level}"},
-        "5": [{
-            "2": "2",
-            "3": _generate_id(),
-            "7": [{"8": text}]
-        }],
-        "6": "h"
-    }
+    return _create_element("h", {"l": f"h{level}"}, [_make_text_line(text)])
 
 
 def _create_list_item(text: str, ordered: bool = False, level: int = 1) -> Dict:
-    """
-    创建列表项
-    
-    :param text: 列表文本
-    :param ordered: 是否有序列表
-    :param level: 缩进级别
-    :return: 列表项字典
-    """
-    list_type = "ordered" if ordered else "unordered"
-    return {
-        "3": _generate_id(),
-        "4": {"lt": list_type, "ll": level},
-        "5": [{
-            "2": "2",
-            "3": _generate_id(),
-            "7": [{"8": text}]
-        }],
-        "6": "l"
-    }
+    lt = "ordered" if ordered else "unordered"
+    return _create_element("l", {"lt": lt, "ll": level}, [_make_text_line(text)])
 
 
 def _create_code_block(code: str, language: str = "") -> Dict:
-    """
-    创建代码块
-    
-    :param code: 代码内容
-    :param language: 编程语言
-    :return: 代码块字典
-    """
-    lines = code.split("\n")
-    code_lines = []
-    for line in lines:
-        code_lines.append({
-            "3": _generate_id(),
-            "5": [{
-                "2": "2",
-                "3": _generate_id(),
-                "7": [{"8": line}]
-            }]
-        })
-    
-    return {
-        "3": _generate_id(),
-        "4": {"la": language},
-        "5": code_lines,
-        "6": "cd"
-    }
+    lines = [_create_element(children=[_make_text_line(ln)]) for ln in code.split("\n")]
+    return _create_element("cd", {"la": language}, lines)
 
 
 def _create_quote(text: str) -> Dict:
-    """
-    创建引用块
-    
-    :param text: 引用文本
-    :return: 引用块字典
-    """
-    lines = text.split("\n")
-    quote_lines = []
-    for line in lines:
-        quote_lines.append({
-            "3": _generate_id(),
-            "5": [{
-                "2": "2",
-                "3": _generate_id(),
-                "7": [{"8": line}]
-            }]
-        })
-    
-    return {
-        "3": _generate_id(),
-        "5": quote_lines,
-        "6": "q"
-    }
+    lines = [_create_element(children=[_make_text_line(ln)]) for ln in text.split("\n")]
+    return _create_element("q", children=lines)
 
 
 def _create_image(url: str, alt: str = "") -> Dict:
-    """
-    创建图片
-    
-    :param url: 图片 URL
-    :param alt: 替代文本
-    :return: 图片字典
-    """
-    return {
-        "3": _generate_id(),
-        "4": {"u": url},
-        "6": "im"
-    }
+    return _create_element("im", {"u": url})
 
 
 def _create_link(text: str, url: str) -> Dict:
-    """
-    创建链接（作为段落的一部分）
-    
-    :param text: 链接文本
-    :param url: 链接 URL
-    :return: 链接节点
-    """
-    return {
-        "3": _generate_id(),
-        "4": {"hf": url},
-        "5": [{
-            "2": "2",
-            "3": _generate_id(),
-            "7": [{"8": text}]
-        }],
-        "6": "li"
-    }
+    return _create_element("li", {"hf": url}, [_make_text_line(text)])
 
 
 def _parse_inline_formatting(text: str) -> List[Dict]:
@@ -327,7 +237,7 @@ def note_json_to_markdown(json_content: str) -> str:
     :return: Markdown 文本
     """
     # 复用现有的转换逻辑
-    from youdaonote.covert import JsonConvert
+    from youdaonote.convert.note_convert import JsonConvert
     
     try:
         json_data = json.loads(json_content)

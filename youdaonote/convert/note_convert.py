@@ -359,7 +359,7 @@ class YoudaoNoteConvert(object):
     """
 
     @staticmethod
-    def covert_html_to_markdown(file_path):
+    def convert_html_to_markdown(file_path):
         """
         转换 HTML 为 MarkDown
         :param file_path:
@@ -406,7 +406,7 @@ class YoudaoNoteConvert(object):
         return f"\r\n\r\n".join(new_content_list)  # 换行 1 行
 
     @staticmethod
-    def covert_xml_to_markdown(file_path) -> bool:
+    def convert_xml_to_markdown(file_path) -> bool:
         """
         转换 XML 为 MarkDown
         :param file_path:
@@ -461,7 +461,7 @@ class YoudaoNoteConvert(object):
         return f"\r\n\r\n".join(new_content_list)  # 换行 1 行
 
     @staticmethod
-    def covert_json_to_markdown(file_path) -> str:
+    def convert_json_to_markdown(file_path) -> str:
         """
         转换 Json 为 MarkDown
         :param file_path:

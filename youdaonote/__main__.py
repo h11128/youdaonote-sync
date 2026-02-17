@@ -17,8 +17,9 @@ import requests
 
 from youdaonote import log
 from youdaonote.api import YoudaoNoteApi
-from youdaonote.search import YoudaoNoteSearch
-from youdaonote.download import YoudaoNoteDownload, load_config
+from youdaonote.common import format_file_size, load_config
+from youdaonote.transfer.search import YoudaoNoteSearch
+from youdaonote.transfer.download import YoudaoNoteDownload
 from youdaonote.cookies import CookieManager
 
 
@@ -106,12 +107,7 @@ class YoudaoNoteCLI:
             
             for file in files:
                 size = file.get('size', 0)
-                if size > 1024 * 1024:
-                    size_str = f"{size / (1024 * 1024):.1f}MB"
-                elif size > 1024:
-                    size_str = f"{size / 1024:.1f}KB"
-                else:
-                    size_str = f"{size}B"
+                size_str = format_file_size(size)
                 print(f"{indent}📄 {file['name']} ({size_str})")
                 
         except Exception as e:
@@ -307,130 +303,112 @@ def _refresh_cookies_if_needed(headless: bool = True) -> bool:
         return False
 
 
+def _try_cookie_login(context) -> bool:
+    """检查已有浏览器状态中是否有有效 cookies，有则保存并返回 True。"""
+    cookies = context.cookies()
+    cookie_names = [c['name'] for c in cookies]
+    if not all(name in cookie_names for name in CookieManager.REQUIRED_COOKIES):
+        return False
+
+    print("✅ 检测到已有登录状态，正在验证...")
+    cookies_data, error = CookieManager.convert_playwright_cookies(cookies)
+    if error:
+        return False
+    success, _ = CookieManager.save(cookies_data)
+    if success:
+        print(f"✅ Cookies 已更新: {CookieManager.get_default_path()}")
+        print("\n🎉 登录状态有效！可以直接使用：")
+        print("  python -m youdaonote pull")
+        return True
+    return False
+
+
+def _wait_for_browser_login(context, page) -> int:
+    """打开登录页面并等待用户完成登录。返回 0 表示成功，1 表示失败。"""
+    print("🚀 正在启动浏览器...")
+    print("📌 请在弹出的浏览器窗口中完成登录")
+    print("📌 支持：扫码登录 / 账号密码登录")
+    print("📌 登录成功后，程序会自动检测并保存 Cookies")
+    print("📌 下次运行 login 时将自动复用登录状态\n")
+
+    print("🌐 正在打开有道云笔记...")
+    page.goto("https://note.youdao.com/web/")
+
+    print("\n⏳ 等待登录完成...")
+    print("   （登录成功后会自动继续，最长等待 5 分钟）\n")
+
+    max_wait, interval, waited = 300, 2, 0
+    while waited < max_wait:
+        cookies = context.cookies()
+        if all(n in [c['name'] for c in cookies] for n in CookieManager.REQUIRED_COOKIES):
+            print("🎉 检测到登录成功！")
+            break
+        page.wait_for_timeout(interval * 1000)
+        waited += interval
+        if waited % 10 == 0:
+            print(f"   已等待 {waited} 秒...")
+
+    if waited >= max_wait:
+        print("❌ 等待超时，请重试")
+        return 1
+
+    page.wait_for_timeout(2000)
+    print("\n🔍 正在提取 Cookies...")
+    cookies = context.cookies()
+
+    cookies_data, error = CookieManager.convert_playwright_cookies(cookies)
+    if error:
+        print(f"\n❌ 转换 cookies 失败: {error}")
+        return 1
+
+    success, error = CookieManager.save(cookies_data)
+    if not success:
+        print(f"\n❌ 保存失败: {error}")
+        return 1
+
+    print(f"\n✅ Cookies 已保存到: {CookieManager.get_default_path()}")
+    print("\n" + "=" * 60)
+    print("🎉 登录成功！现在可以使用以下命令：")
+    print("=" * 60)
+    print("\n  python -m youdaonote pull      # 全量导出")
+    print("  python -m youdaonote gui       # 图形界面")
+    print("  python -m youdaonote search XX # 搜索笔记")
+    print("\n📌 提示：下次运行 login 时将自动复用登录状态\n")
+    return 0
+
+
 def cmd_login(args):
-    """
-    执行 login 命令 - 使用 Playwright 持久化上下文登录
-    
-    使用 persistent context 保存登录状态，下次运行时自动复用。
-    """
+    """执行 login 命令 - 使用 Playwright 持久化上下文登录"""
     print("\n" + "=" * 60)
     print("  有道云笔记登录")
     print("=" * 60 + "\n")
-    
-    # 检查 Playwright
+
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         print("❌ 未安装 Playwright，请执行以下命令安装：")
         print("\n  pip install playwright")
-        print("  playwright install chromium")
-        print()
+        print("  playwright install chromium\n")
         return 1
-    
+
     browser_data_dir = _get_browser_data_dir()
     os.makedirs(browser_data_dir, exist_ok=True)
-    
+
     with sync_playwright() as p:
-        # 使用 persistent context 保存登录状态
         context = p.chromium.launch_persistent_context(
-            browser_data_dir,
-            headless=False,
+            browser_data_dir, headless=False,
             viewport={'width': 1280, 'height': 800},
-            locale='zh-CN',
-            args=['--start-maximized']
-        )
-        
-        # 检查是否已经登录
-        cookies = context.cookies()
-        cookie_names = [c['name'] for c in cookies]
-        already_logged_in = all(name in cookie_names for name in CookieManager.REQUIRED_COOKIES)
-        
-        if already_logged_in:
-            print("✅ 检测到已有登录状态，正在验证...")
-            # 直接提取并保存 cookies
-            cookies_data, error = CookieManager.convert_playwright_cookies(cookies)
-            if not error:
-                success, _ = CookieManager.save(cookies_data)
-                if success:
-                    print(f"✅ Cookies 已更新: {CookieManager.get_default_path()}")
-                    print("\n🎉 登录状态有效！可以直接使用：")
-                    print("  python -m youdaonote pull")
-                    context.close()
-                    return 0
-        
-        # 需要登录
-        print("🚀 正在启动浏览器...")
-        print("📌 请在弹出的浏览器窗口中完成登录")
-        print("📌 支持：扫码登录 / 账号密码登录")
-        print("📌 登录成功后，程序会自动检测并保存 Cookies")
-        print("📌 下次运行 login 时将自动复用登录状态\n")
-        
-        page = context.pages[0] if context.pages else context.new_page()
-        print("🌐 正在打开有道云笔记...")
-        page.goto("https://note.youdao.com/web/")
-        
-        print("\n⏳ 等待登录完成...")
-        print("   （登录成功后会自动继续，最长等待 5 分钟）\n")
-        
+            locale='zh-CN', args=['--start-maximized'])
         try:
-            max_wait_time = 300
-            check_interval = 2
-            waited = 0
-            
-            while waited < max_wait_time:
-                cookies = context.cookies()
-                cookie_names = [c['name'] for c in cookies]
-                
-                if all(name in cookie_names for name in CookieManager.REQUIRED_COOKIES):
-                    print("🎉 检测到登录成功！")
-                    break
-                
-                page.wait_for_timeout(check_interval * 1000)
-                waited += check_interval
-                
-                if waited % 10 == 0:
-                    print(f"   已等待 {waited} 秒...")
-            
-            if waited >= max_wait_time:
-                print("❌ 等待超时，请重试")
-                context.close()
-                return 1
-            
-            page.wait_for_timeout(2000)
-            
-            print("\n🔍 正在提取 Cookies...")
-            cookies = context.cookies()
-            
-            cookies_data, error = CookieManager.convert_playwright_cookies(cookies)
-            
-            if error:
-                print(f"\n❌ 转换 cookies 失败: {error}")
-                context.close()
-                return 1
-            
-            success, error = CookieManager.save(cookies_data)
-            
-            if success:
-                print(f"\n✅ Cookies 已保存到: {CookieManager.get_default_path()}")
-                print("\n" + "=" * 60)
-                print("🎉 登录成功！现在可以使用以下命令：")
-                print("=" * 60)
-                print("\n  python -m youdaonote pull      # 全量导出")
-                print("  python -m youdaonote gui       # 图形界面")
-                print("  python -m youdaonote search XX # 搜索笔记")
-                print("\n📌 提示：下次运行 login 时将自动复用登录状态")
-                print()
-                context.close()
+            if _try_cookie_login(context):
                 return 0
-            else:
-                print(f"\n❌ 保存失败: {error}")
-                context.close()
-                return 1
-                
+            page = context.pages[0] if context.pages else context.new_page()
+            return _wait_for_browser_login(context, page)
         except Exception as e:
             print(f"\n❌ 发生错误: {e}")
-            context.close()
             return 1
+        finally:
+            context.close()
 
 
 def cmd_gui(args):
@@ -445,7 +423,7 @@ def cmd_gui(args):
         return 1
     
     try:
-        from youdaonote.gui import run_gui
+        from youdaonote.gui.app import run_gui
         run_gui()
         return 0
     except ImportError as e:
@@ -459,7 +437,8 @@ def cmd_gui(args):
 
 def cmd_sync(args):
     """执行 sync 命令 - 双向同步"""
-    from youdaonote.sync import SyncManager, SyncDirection
+    from youdaonote.sync.engine import SyncManager
+    from youdaonote.sync.utils import SyncDirection
     from youdaonote.watcher import SyncWatcher
     
     # 加载配置

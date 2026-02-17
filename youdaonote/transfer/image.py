@@ -39,9 +39,11 @@ class ImagePull:
     def migration_ydnote_url(self, file_path):
         """
         迁移有道云笔记文件 URL
-        :param file_path:
+        :param file_path: 本地文件路径（不能为空）
         :return:
         """
+        if not file_path:
+            raise ValueError("file_path 不能为空")
 
         # 文件内容为空，也下载到本地
         with open(file_path, "rb") as f:
@@ -213,10 +215,14 @@ class ImageUpload(object):
     def upload_to_smms(youdaonote_api, image_url, smms_secret_token) -> Tuple[str, str]:
         """
         上传图片到 sm.ms
-        :param image_url:
-        :param smms_secret_token:
+        :param image_url: 图片 URL（不能为空）
+        :param smms_secret_token: SM.MS API token（不能为空）
         :return: url, error_msg
         """
+        if not image_url:
+            raise ValueError("image_url 不能为空")
+        if not smms_secret_token:
+            raise ValueError("smms_secret_token 不能为空")
         try:
             smfile = youdaonote_api.http_get(image_url).content
         except Exception as e:

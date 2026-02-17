@@ -22,7 +22,7 @@ class YoudaoNoteApi(object):
         "https://note.youdao.com/yws/api/personal/file/{dir_id}?all=true&f=true&len={page_size}&sort=1"
         "&isReverse=false&method=listPageByParentId&keyfrom=web&cstk={cstk}"
     )
-    DIR_PAGE_SIZE = 200  # 每页条目数（较小值减少单次响应体积，配合分页更灵活）
+    DIR_PAGE_SIZE = 9999  # 有道云 startIndex 参数不可靠，一次全拉
     FILE_URL = (
         "https://note.youdao.com/yws/api/personal/sync?method=download&_system=macos&_systemVersion=&"
         "_screenWidth=1280&_screenHeight=800&_appName=ynote&_appuser=0123456789abcdeffedcba9876543210&"
@@ -184,20 +184,29 @@ class YoudaoNoteApi(object):
         data = {"path": "/", "entire": "true", "purge": "false", "cstk": self.cstk}
         return self._safe_json(self.http_post(self.ROOT_ID_URL.format(cstk=self.cstk), data=data))
 
-    def get_dir_info_by_id(self, dir_id) -> dict:
+    def get_dir_info_by_id(self, dir_id: str) -> dict:
         """
-        根据目录 ID 获取目录下所有文件信息（自动分页，确保不遗漏）。
+        根据目录 ID 获取目录下所有文件信息（自动分页 + 去重）。
+
+        有道云 API 在分页时可能返回重复条目，导致 offset 提前超过 total
+        而实际有部分条目被遗漏。因此用 seen_ids 去重，并以"连续无新增"
+        作为终止条件，而非仅靠 offset >= total。
+
         :return: {
-            'count': 总数,
-            'entries': [所有条目]
+            'count': 去重后总数,
+            'entries': [所有条目（已去重）]
         }
         """
+        if not dir_id:
+            raise ValueError("dir_id 不能为空")
         self._require_auth()
         all_entries = []
+        seen_ids: set = set()
         page_size = self.DIR_PAGE_SIZE
         offset = 0
+        max_pages = 50  # 安全上限，防止死循环
 
-        while True:
+        for _ in range(max_pages):
             url = self.DIR_MES_URL.format(
                 dir_id=dir_id, page_size=page_size, cstk=self.cstk
             )
@@ -205,23 +214,35 @@ class YoudaoNoteApi(object):
                 url += f"&startIndex={offset}"
             data = self._safe_json(self.http_get(url))
             entries = data.get("entries", [])
-            all_entries.extend(entries)
+            total = data.get("count", 0)
 
-            total = data.get("count", len(entries))
+            if not entries:
+                break
+
+            new_count = 0
+            for entry in entries:
+                eid = entry.get("fileEntry", {}).get("id", "")
+                if eid and eid not in seen_ids:
+                    seen_ids.add(eid)
+                    all_entries.append(entry)
+                    new_count += 1
+
             offset += len(entries)
 
-            # 如果拿到的条目数 < page_size 或已拿够 total，说明没有下一页了
-            if len(entries) < page_size or offset >= total:
+            # 终止条件：本页无新条目 或 去重后已达到 total 或 返回数 < page_size
+            if new_count == 0 or len(all_entries) >= total or len(entries) < page_size:
                 break
 
         return {"count": len(all_entries), "entries": all_entries}
 
-    def get_file_by_id(self, file_id):
+    def get_file_by_id(self, file_id: str):
         """
         根据文件 ID 获取文件内容
         :param file_id:
         :return: response，内容为笔记字节码
         """
+        if not file_id:
+            raise ValueError("file_id 不能为空")
         self._require_auth()
         data = {
             "fileId": file_id,
@@ -262,6 +283,12 @@ class YoudaoNoteApi(object):
         :param is_create: 是否为新建笔记
         :return: API 响应
         """
+        if not file_id:
+            raise ValueError("file_id 不能为空")
+        if not parent_id:
+            raise ValueError("parent_id 不能为空")
+        if not name:
+            raise ValueError("name 不能为空")
         self._require_auth()
         now = int(time.time())
         create_time = create_time or now
@@ -314,6 +341,10 @@ class YoudaoNoteApi(object):
         :param domain: 笔记类型，0=普通笔记，1=Markdown
         :return: API 响应
         """
+        if not file_id:
+            raise ValueError("file_id 不能为空")
+        if not new_name:
+            raise ValueError("new_name 不能为空")
         self._require_auth()
         now = int(time.time())
         url = (
@@ -342,6 +373,8 @@ class YoudaoNoteApi(object):
         :param file_id: 笔记 ID
         :return: API 响应
         """
+        if not file_id:
+            raise ValueError("file_id 不能为空")
         self._require_auth()
         url = self.DELETE_URL.format(file_id=file_id, cstk=self.cstk)
         data = {"cstk": self.cstk}
@@ -358,6 +391,10 @@ class YoudaoNoteApi(object):
         :param name: 目录名
         :return: API 响应，包含目录的 ID（在 fileEntry.id 中）
         """
+        if not parent_id:
+            raise ValueError("parent_id 不能为空")
+        if not name:
+            raise ValueError("name 不能为空")
         self._require_auth()
         now = int(time.time())
         file_id = self.generate_file_id()
@@ -401,6 +438,8 @@ class YoudaoNoteApi(object):
         :param file_id: 文件 ID
         :return: 文件信息
         """
+        if not file_id:
+            raise ValueError("file_id 不能为空")
         self._require_auth()
         url = (
             f"https://note.youdao.com/yws/api/personal/file/{file_id}"

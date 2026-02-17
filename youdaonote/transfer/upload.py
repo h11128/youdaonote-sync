@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Tuple
 
 from youdaonote.api import YoudaoNoteApi
-from youdaonote.sync_metadata import SyncMetadata
+from youdaonote.sync.metadata import SyncMetadata
 
 
 class YoudaoNoteUpload:
@@ -97,6 +97,67 @@ class YoudaoNoteUpload:
             # 其他类型文件作为 Markdown 上传（纯文本）
             return self._upload_markdown(local_path, parent_id, rel_path, force)
 
+    def _check_skip(self, relative_path: str, local_mtime: int,
+                     force: bool) -> Tuple[bool, Optional[dict]]:
+        """检查文件是否可以跳过上传。返回 (should_skip, file_info)。"""
+        file_info = self.metadata.get_file_info(relative_path)
+        if file_info and not force:
+            if local_mtime <= file_info.get("local_mtime", 0):
+                logging.debug(f"文件未修改，跳过: {relative_path}")
+                return True, file_info
+        return False, file_info
+
+    def _push_and_record(
+        self,
+        file_info: Optional[dict],
+        cloud_name: str,
+        domain: int,
+        body: str,
+        parent_id: str,
+        relative_path: str,
+        local_mtime: int,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        执行 push_file 并更新元数据。
+        _upload_markdown 和 upload_note 的共用尾段。
+        """
+        if file_info and file_info.get("file_id"):
+            file_id = file_info["file_id"]
+            is_create = False
+            logging.info(f"更新: {relative_path}")
+        else:
+            file_id = YoudaoNoteApi.generate_file_id()
+            is_create = True
+            logging.info(f"创建: {relative_path}")
+
+        try:
+            result = self.api.push_file(
+                file_id=file_id,
+                parent_id=parent_id,
+                name=cloud_name,
+                domain=domain,
+                body_string=body,
+                is_create=is_create,
+            )
+
+            if "entry" in result:
+                cloud_mtime = result["entry"].get("modifyTimeForSort", local_mtime)
+                self.metadata.set_file_info(
+                    local_path=relative_path,
+                    file_id=file_id,
+                    cloud_mtime=cloud_mtime,
+                    local_mtime=local_mtime,
+                    parent_id=parent_id,
+                    domain=domain,
+                )
+                logging.info(f"上传成功: {relative_path}")
+                return True, None
+            else:
+                error_msg = result.get("error", str(result))
+                return False, f"上传失败: {error_msg}"
+        except Exception as e:
+            return False, f"上传异常: {e}"
+
     def _upload_markdown(
         self,
         local_path: str,
@@ -104,82 +165,26 @@ class YoudaoNoteUpload:
         relative_path: str,
         force: bool = False,
     ) -> Tuple[bool, Optional[str]]:
-        """
-        上传 Markdown 文件
-        
-        :param local_path: 本地文件路径
-        :param parent_id: 云端父目录 ID
-        :param relative_path: 相对路径
-        :param force: 是否强制上传
-        :return: (是否成功, 错误信息)
-        """
+        """上传 Markdown 文件"""
         file_name = os.path.basename(local_path)
         local_mtime = int(os.path.getmtime(local_path))
 
-        # 检查是否已有记录
-        file_info = self.metadata.get_file_info(relative_path)
-        
-        if file_info and not force:
-            # 检查是否需要上传
-            recorded_local_mtime = file_info.get("local_mtime", 0)
-            if local_mtime <= recorded_local_mtime:
-                logging.debug(f"文件未修改，跳过: {relative_path}")
-                return True, None
+        skip, file_info = self._check_skip(relative_path, local_mtime, force)
+        if skip:
+            return True, None
 
-        # 读取文件内容
         try:
             with open(local_path, "r", encoding="utf-8") as f:
                 content = f.read()
         except Exception as e:
             return False, f"读取文件失败: {e}"
 
-        # 确定是创建还是更新
-        if file_info and file_info.get("file_id"):
-            file_id = file_info["file_id"]
-            is_create = False
-            logging.info(f"更新文件: {relative_path}")
-        else:
-            file_id = YoudaoNoteApi.generate_file_id()
-            is_create = True
-            logging.info(f"创建文件: {relative_path}")
-
-        # 确保文件名以 .md 结尾
         if not file_name.endswith(".md"):
             file_name = file_name + ".md"
 
-        # 调用 API 上传
-        try:
-            result = self.api.push_file(
-                file_id=file_id,
-                parent_id=parent_id,
-                name=file_name,
-                domain=1,  # Markdown
-                body_string=content,
-                is_create=is_create,
-            )
-
-            # 检查结果
-            if "entry" in result:
-                cloud_mtime = result["entry"].get("modifyTimeForSort", local_mtime)
-                
-                # 更新元数据（不在此处 save，由调用方统一保存，避免并发竞争）
-                self.metadata.set_file_info(
-                    local_path=relative_path,
-                    file_id=file_id,
-                    cloud_mtime=cloud_mtime,
-                    local_mtime=local_mtime,
-                    parent_id=parent_id,
-                    domain=1,
-                )
-                
-                logging.info(f"上传成功: {relative_path}")
-                return True, None
-            else:
-                error_msg = result.get("error", str(result))
-                return False, f"上传失败: {error_msg}"
-
-        except Exception as e:
-            return False, f"上传异常: {e}"
+        return self._push_and_record(
+            file_info, file_name, 1, content,
+            parent_id, relative_path, local_mtime)
 
     def upload_note(
         self,
@@ -188,88 +193,33 @@ class YoudaoNoteUpload:
         relative_path: str,
         force: bool = False,
     ) -> Tuple[bool, Optional[str]]:
-        """
-        上传普通笔记（将 Markdown 转换为有道 JSON 格式）
-        
-        :param local_path: 本地 Markdown 文件路径
-        :param parent_id: 云端父目录 ID
-        :param relative_path: 相对路径
-        :param force: 是否强制上传
-        :return: (是否成功, 错误信息)
-        """
-        # 延迟导入避免循环依赖
-        from youdaonote.md_to_note import markdown_to_note_json
+        """上传普通笔记（将 Markdown 转换为有道 JSON 格式）"""
+        from youdaonote.convert.md_to_note import markdown_to_note_json
 
         file_name = os.path.basename(local_path)
         local_mtime = int(os.path.getmtime(local_path))
 
-        # 检查是否已有记录
-        file_info = self.metadata.get_file_info(relative_path)
-        
-        if file_info and not force:
-            recorded_local_mtime = file_info.get("local_mtime", 0)
-            if local_mtime <= recorded_local_mtime:
-                logging.debug(f"文件未修改，跳过: {relative_path}")
-                return True, None
+        skip, file_info = self._check_skip(relative_path, local_mtime, force)
+        if skip:
+            return True, None
 
-        # 读取文件内容
         try:
             with open(local_path, "r", encoding="utf-8") as f:
                 md_content = f.read()
         except Exception as e:
             return False, f"读取文件失败: {e}"
 
-        # 转换为有道 JSON 格式
         try:
             note_json = markdown_to_note_json(md_content)
         except Exception as e:
             return False, f"转换格式失败: {e}"
 
-        # 确定是创建还是更新
-        if file_info and file_info.get("file_id"):
-            file_id = file_info["file_id"]
-            is_create = False
-            logging.info(f"更新笔记: {relative_path}")
-        else:
-            file_id = YoudaoNoteApi.generate_file_id()
-            is_create = True
-            logging.info(f"创建笔记: {relative_path}")
-
-        # 文件名改为 .note
         base_name = os.path.splitext(file_name)[0]
         note_name = base_name + ".note"
 
-        # 调用 API 上传
-        try:
-            result = self.api.push_file(
-                file_id=file_id,
-                parent_id=parent_id,
-                name=note_name,
-                domain=0,  # 普通笔记
-                body_string=note_json,
-                is_create=is_create,
-            )
-
-            if "entry" in result:
-                cloud_mtime = result["entry"].get("modifyTimeForSort", local_mtime)
-                
-                self.metadata.set_file_info(
-                    local_path=relative_path,
-                    file_id=file_id,
-                    cloud_mtime=cloud_mtime,
-                    local_mtime=local_mtime,
-                    parent_id=parent_id,
-                    domain=0,
-                )
-                
-                logging.info(f"上传成功: {relative_path}")
-                return True, None
-            else:
-                error_msg = result.get("error", str(result))
-                return False, f"上传失败: {error_msg}"
-
-        except Exception as e:
-            return False, f"上传异常: {e}"
+        return self._push_and_record(
+            file_info, note_name, 0, note_json,
+            parent_id, relative_path, local_mtime)
 
     def upload_folder(
         self,

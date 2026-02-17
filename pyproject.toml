@@ -65,15 +65,15 @@ Homepage = "https://github.com/DeppWang/youdaonote-pull"
 Repository = "https://github.com/DeppWang/youdaonote-pull"
 Issues = "https://github.com/DeppWang/youdaonote-pull/issues"
 
-[tool.setuptools]
-packages = ["youdaonote"]
+[tool.setuptools.packages.find]
+include = ["youdaonote*"]
 
 [tool.setuptools.package-data]
 youdaonote = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
-python_files = ["test_*.py", "test.py"]
+python_files = ["test_*.py"]
 
 [tool.black]
 line-length = 100

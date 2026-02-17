@@ -18,7 +18,7 @@ from collections import defaultdict
 from typing import Dict, List, Set, Tuple, Optional
 
 from youdaonote.common import safe_long_path
-from youdaonote.sync_metadata import SyncMetadata
+from youdaonote.sync.metadata import SyncMetadata
 
 # 空文件的 MD5
 _EMPTY_MD5 = "d41d8cd98f00b204e9800998ecf8427e"
@@ -180,36 +180,12 @@ def _cloud_score(path: str, metadata: SyncMetadata, root: str) -> tuple:
     return (depth, name_clean, -ctime)
 
 
-def auto_dedup(
+def _classify_duplicates(
+    raw_dup_groups: Dict[str, List[str]],
     root: str,
-    metadata: SyncMetadata = None,
-    api=None,
-    dry_run: bool = False,
-) -> Dict:
-    """
-    自动去重，处理两种重复组：
-
-    A) 混合组（有云端 + 有本地）：删本地旧副本
-    B) 全云端组（都有 file_id）：保留得分最高的一个，删其余（本地+云端）
-
-    本地自身重复（都没有 file_id）不处理。
-    空文件（hash = d41d8cd98f00...）不处理。
-
-    :param api: YoudaoNoteApi 实例，用于删除云端文件。如果不传，全云端组只删本地不删云端。
-    """
-    stats = {
-        "deleted": 0, "cloud_deleted": 0, "kept": 0,
-        "skipped": 0, "groups": 0, "protected_refs": 0,
-    }
-
-    # 第一步：一次遍历同时构建 hash 分组和引用索引
-    hash_index, referenced = build_all_indexes(root, metadata)
-    raw_dup_groups = {h: ps for h, ps in hash_index.items() if len(ps) > 1}
-
-    if not raw_dup_groups:
-        return stats
-
-    # 碰撞防护：同 hash 的文件按文件大小再分组，大小不同说明 MD5 碰撞
+    stats: Dict,
+) -> Dict[str, List[str]]:
+    """碰撞防护：按文件大小再分组，大小不同说明 MD5 碰撞。"""
     dup_groups: Dict[str, List[str]] = {}
     for h, paths in raw_dup_groups.items():
         size_groups: Dict[int, List[str]] = defaultdict(list)
@@ -221,123 +197,116 @@ def auto_dedup(
             size_groups[sz].append(p)
         for sz, sub_paths in size_groups.items():
             if len(sub_paths) > 1:
-                key = f"{h}_{sz}"
-                dup_groups[key] = sub_paths
+                dup_groups[f"{h}_{sz}"] = sub_paths
             elif len(sub_paths) == 1 and len(size_groups) > 1:
-                logging.warning(f"MD5 碰撞检测：{sub_paths[0]} (大小={sz}) 与同 hash 的其他文件大小不同，跳过去重")
+                logging.warning(
+                    f"MD5 碰撞检测：{sub_paths[0]} (大小={sz}) 与同 hash 的其他文件大小不同，跳过去重")
                 stats["skipped"] += 1
+    return dup_groups
 
-    # 第三步：逐组决策
-    # action: (local_path_to_remove, cloud_file_id_to_delete_or_None, keep_path, reason)
+
+def _resolve_group(
+    paths: List[str],
+    metadata: SyncMetadata,
+    referenced: Set[str],
+    root: str,
+    stats: Dict,
+) -> List[Tuple[str, Optional[str], str, str]]:
+    """
+    处理单个重复组，返回删除动作列表。
+    每个动作 = (待删本地路径, 待删云端 file_id 或 None, 保留路径, 原因)。
+    """
+    cloud_paths, local_paths = [], []
+    for p in paths:
+        if metadata:
+            info = metadata.get_file_info(p)
+            if info and info.get("file_id"):
+                cloud_paths.append(p)
+                continue
+        local_paths.append(p)
+
     actions: List[Tuple[str, Optional[str], str, str]] = []
 
-    for h, paths in sorted(dup_groups.items(), key=lambda x: x[0]):
-        stats["groups"] += 1
-
-        # 跳过空文件
-        if h == _EMPTY_MD5:
-            stats["skipped"] += 1
-            continue
-        try:
-            if os.path.getsize(os.path.join(root, paths[0])) == 0:
-                stats["skipped"] += 1
+    # 情况 A: 混合组（云端+本地）→ 删本地旧副本
+    if cloud_paths and local_paths:
+        to_remove = []
+        for lp in local_paths:
+            if _is_asset(lp) and lp in referenced:
+                stats["protected_refs"] += 1
                 continue
-        except OSError:
+            to_remove.append(lp)
+        if not to_remove:
             stats["skipped"] += 1
-            continue
+            return actions
+        keep = cloud_paths[0]
+        for r in to_remove:
+            actions.append((r, None, keep, f"云端版本在 {keep}"))
+        stats["kept"] += len(cloud_paths)
+        stats["deleted"] += len(to_remove)
+        return actions
 
-        # 按 file_id 分成云端组和本地组
-        cloud_paths = []
-        local_paths = []
-        for p in paths:
-            if metadata:
-                info = metadata.get_file_info(p)
-                if info and info.get("file_id"):
-                    cloud_paths.append(p)
-                    continue
-            local_paths.append(p)
+    # 情况 B: 全云端组 → 保留一个，删其余
+    if len(cloud_paths) > 1 and not local_paths:
+        keep_paths, remove_paths = _resolve_cloud_group(
+            cloud_paths, metadata, referenced, root, stats)
+        if remove_paths is None:
+            return actions
+        for r in remove_paths:
+            info = metadata.get_file_info(r) if metadata else None
+            fid = info.get("file_id") if info else None
+            actions.append((r, fid, keep_paths[0],
+                            f"保留 {keep_paths[0]}，删除云端副本"))
+        stats["kept"] += len(keep_paths)
+        stats["deleted"] += len(remove_paths)
+        stats["cloud_deleted"] += len(remove_paths)
+        return actions
 
-        # --- 情况 A: 混合组（云端+本地）→ 删本地旧副本 ---
-        if cloud_paths and local_paths:
-            to_remove = []
-            for lp in local_paths:
-                if _is_asset(lp) and lp in referenced:
-                    stats["protected_refs"] += 1
-                    continue
-                to_remove.append(lp)
+    # 情况 C: 全本地组 → 不处理
+    stats["skipped"] += 1
+    return actions
 
-            if not to_remove:
-                stats["skipped"] += 1
-                continue
 
-            keep_example = cloud_paths[0]
-            for r in to_remove:
-                actions.append((r, None, keep_example, f"云端版本在 {keep_example}"))
+def _resolve_cloud_group(
+    cloud_paths: List[str],
+    metadata: SyncMetadata,
+    referenced: Set[str],
+    root: str,
+    stats: Dict,
+) -> Tuple[List[str], Optional[List[str]]]:
+    """全云端重复组：决定保留哪些、删除哪些。返回 (keep, remove)。"""
+    if any(_is_asset(p) for p in cloud_paths):
+        ref = [p for p in cloud_paths if p in referenced]
+        unref = [p for p in cloud_paths if p not in referenced]
+        if ref and unref:
+            return ref, unref
+        elif not ref:
+            s = sorted(cloud_paths,
+                       key=lambda p: _cloud_score(p, metadata, root), reverse=True)
+            return [s[0]], s[1:]
+        else:
+            stats["skipped"] += 1
+            return cloud_paths, None
 
-            stats["kept"] += len(cloud_paths)
-            stats["deleted"] += len(to_remove)
-            continue
+    s = sorted(cloud_paths,
+               key=lambda p: _cloud_score(p, metadata, root), reverse=True)
+    return [s[0]], s[1:]
 
-        # --- 情况 B: 全云端组 → 保留一个，删其余 ---
-        if len(cloud_paths) > 1 and not local_paths:
-            # 对图片/附件：被引用的全保留，只删没被引用的多余副本
-            if any(_is_asset(p) for p in cloud_paths):
-                ref_paths = [p for p in cloud_paths if p in referenced]
-                unref_paths = [p for p in cloud_paths if p not in referenced]
-                if ref_paths and unref_paths:
-                    # 有引用的保留，没引用的删除
-                    keep_paths = ref_paths
-                    remove_paths = unref_paths
-                elif not ref_paths:
-                    # 都没引用：保留得分最高的
-                    sorted_paths = sorted(cloud_paths,
-                                          key=lambda p: _cloud_score(p, metadata, root),
-                                          reverse=True)
-                    keep_paths = [sorted_paths[0]]
-                    remove_paths = sorted_paths[1:]
-                else:
-                    # 都被引用：全保留
-                    stats["skipped"] += 1
-                    continue
-            else:
-                # 文本文件：保留得分最高的
-                sorted_paths = sorted(cloud_paths,
-                                      key=lambda p: _cloud_score(p, metadata, root),
-                                      reverse=True)
-                keep_paths = [sorted_paths[0]]
-                remove_paths = sorted_paths[1:]
 
-            for r in remove_paths:
-                info = metadata.get_file_info(r) if metadata else None
-                file_id = info.get("file_id") if info else None
-                keep_example = keep_paths[0]
-                actions.append((r, file_id, keep_example,
-                                f"保留 {keep_example}，删除云端副本"))
-
-            stats["kept"] += len(keep_paths)
-            stats["deleted"] += len(remove_paths)
-            stats["cloud_deleted"] += len(remove_paths)
-            continue
-
-        # --- 情况 C: 全本地组 → 不处理 ---
-        stats["skipped"] += 1
-
-    if not actions:
-        return stats
-
-    logging.info(
-        f"去重: {stats['groups']} 组重复，"
-        f"删除 {stats['deleted']} 个文件（其中 {stats['cloud_deleted']} 个同时删除云端），"
-        f"保护 {stats['protected_refs']} 个被引用的资源"
-    )
-
+def _execute_removals(
+    actions: List[Tuple[str, Optional[str], str, str]],
+    root: str,
+    metadata: SyncMetadata,
+    api,
+    dry_run: bool,
+    stats: Dict,
+) -> None:
+    """执行删除动作（本地 + 可选云端）。"""
     for remove_path, cloud_file_id, keep_path, reason in actions:
         if dry_run:
             cloud_tag = " + 云端" if cloud_file_id else ""
             print(f"  [去重] 删除{cloud_tag} {remove_path}")
             print(f"         {reason}")
         else:
-            # 删除本地文件
             full = safe_long_path(os.path.join(root, remove_path))
             try:
                 os.remove(full)
@@ -350,14 +319,70 @@ def auto_dedup(
                 stats["deleted"] -= 1
                 continue
 
-            # 删除云端文件
             if cloud_file_id and api:
                 try:
                     api.delete_file(cloud_file_id)
                     logging.info(f"去重删除云端: {remove_path} (file_id={cloud_file_id})")
                 except Exception as e:
-                    logging.error(f"去重删除云端失败: {remove_path} (file_id={cloud_file_id}) - {e}")
+                    logging.error(
+                        f"去重删除云端失败: {remove_path} (file_id={cloud_file_id}) - {e}")
                     stats["cloud_deleted"] -= 1
+
+
+def auto_dedup(
+    root: str,
+    metadata: SyncMetadata = None,
+    api=None,
+    dry_run: bool = False,
+) -> Dict:
+    """
+    自动去重（编排层）。
+
+    A) 混合组（有云端 + 有本地）：删本地旧副本
+    B) 全云端组（都有 file_id）：保留得分最高的一个，删其余（本地+云端）
+    本地自身重复不处理。空文件不处理。
+
+    :param api: 用于删除云端文件。不传则只删本地。
+    """
+    stats = {
+        "deleted": 0, "cloud_deleted": 0, "kept": 0,
+        "skipped": 0, "groups": 0, "protected_refs": 0,
+    }
+
+    hash_index, referenced = build_all_indexes(root, metadata)
+    raw_dups = {h: ps for h, ps in hash_index.items() if len(ps) > 1}
+    if not raw_dups:
+        return stats
+
+    dup_groups = _classify_duplicates(raw_dups, root, stats)
+
+    all_actions: List[Tuple[str, Optional[str], str, str]] = []
+    for h, paths in sorted(dup_groups.items(), key=lambda x: x[0]):
+        stats["groups"] += 1
+        if h.startswith(_EMPTY_MD5):
+            stats["skipped"] += 1
+            continue
+        try:
+            if os.path.getsize(os.path.join(root, paths[0])) == 0:
+                stats["skipped"] += 1
+                continue
+        except OSError:
+            stats["skipped"] += 1
+            continue
+
+        all_actions.extend(
+            _resolve_group(paths, metadata, referenced, root, stats))
+
+    if not all_actions:
+        return stats
+
+    logging.info(
+        f"去重: {stats['groups']} 组重复，"
+        f"删除 {stats['deleted']} 个文件（其中 {stats['cloud_deleted']} 个同时删除云端），"
+        f"保护 {stats['protected_refs']} 个被引用的资源"
+    )
+
+    _execute_removals(all_actions, root, metadata, api, dry_run, stats)
 
     if not dry_run and metadata:
         metadata.save()

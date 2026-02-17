@@ -24,6 +24,11 @@ class CookieManager:
     REQUIRED_COOKIES = ['YNOTE_CSTK', 'YNOTE_LOGIN', 'YNOTE_SESS']
 
     @staticmethod
+    def _find_missing_cookies(cookie_names) -> set:
+        """返回 cookie_names 中缺少的必需 cookie 名称集合。"""
+        return set(CookieManager.REQUIRED_COOKIES) - set(cookie_names)
+
+    @staticmethod
     def get_default_path() -> str:
         """
         获取默认的 cookies.json 路径
@@ -137,7 +142,7 @@ class CookieManager:
 
         # 检查必需的 cookies
         cookie_names = [c[0] for c in cookies if isinstance(c, list) and len(c) >= 2]
-        missing = set(CookieManager.REQUIRED_COOKIES) - set(cookie_names)
+        missing = CookieManager._find_missing_cookies(cookie_names)
         
         if missing:
             return False, f"缺少必需的 cookies: {', '.join(missing)}"
@@ -210,7 +215,7 @@ class CookieManager:
 
         # 检查是否找到了所有必需的 cookies
         if len(found_cookies) != len(CookieManager.REQUIRED_COOKIES):
-            missing = set(CookieManager.REQUIRED_COOKIES) - set(found_cookies.keys())
+            missing = CookieManager._find_missing_cookies(found_cookies.keys())
             return None, f"未能提取到所有必需的 cookies，缺少: {', '.join(missing)}"
 
         # 构建 cookies 数据
@@ -232,7 +237,7 @@ class CookieManager:
                 found_cookies[name] = cookie.get('value', '')
 
         # 检查是否找到所有必需的 cookies
-        missing = set(CookieManager.REQUIRED_COOKIES) - set(found_cookies.keys())
+        missing = CookieManager._find_missing_cookies(found_cookies.keys())
         if missing:
             return None, f"缺少必需的 cookies: {', '.join(missing)}"
 

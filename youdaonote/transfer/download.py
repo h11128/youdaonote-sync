@@ -15,9 +15,9 @@ from enum import Enum
 from typing import Dict, Optional, Tuple
 
 from youdaonote.api import YoudaoNoteApi
-from youdaonote.covert import YoudaoNoteConvert
-from youdaonote.image import ImagePull
-from youdaonote.common import get_config_directory, get_script_directory, safe_long_path
+from youdaonote.convert.note_convert import YoudaoNoteConvert
+from youdaonote.transfer.image import ImagePull
+from youdaonote.common import get_config_directory, get_script_directory, safe_long_path, load_config  # noqa: F401
 
 # 尝试导入 Windows 特定模块
 try:
@@ -72,130 +72,132 @@ class YoudaoNoteDownload:
                       convert_to_md: bool = True,
                       skip_action_check: bool = False) -> bool:
         """
-        下载单个文件
-        :param file_id: 文件 ID
-        :param file_name: 文件名
-        :param local_dir: 本地目录
-        :param modify_time: 修改时间（毫秒时间戳）
-        :param create_time: 创建时间（毫秒时间戳）
-        :param convert_to_md: 是否转换为 Markdown
-        :param skip_action_check: 跳过内部的 SKIP/UPDATE 判断（调用方已做过决策时设为 True）
+        下载单个文件（编排层，按步骤调用子方法）。
         :return: 是否成功
         """
+        if not file_id:
+            raise ValueError("file_id 不能为空")
+        if not file_name:
+            raise ValueError("file_name 不能为空")
+        if not local_dir:
+            raise ValueError("local_dir 不能为空")
         try:
-            # 优化文件名
             file_name = self._optimize_file_name(file_name)
             youdao_file_suffix = os.path.splitext(file_name)[1]
-            original_file_path = os.path.join(local_dir, file_name).replace("\\", "/")
+            mtime_sec = modify_time / 1000 if modify_time else 0
 
-            # 对于可能转换的文件类型（.note/.clip/无后缀），最终路径是 .md
-            # 先用 .md 路径做 SKIP 预判，避免不必要的下载
-            # （skip_action_check=True 时跳过：调用方已做过决策）
+            # 1. 可转换文件的 SKIP 预判
             if not skip_action_check and convert_to_md and youdao_file_suffix in [".note", ".clip", ""]:
-                candidate_md_path = os.path.join(
-                    local_dir,
-                    os.path.splitext(file_name)[0] + MARKDOWN_SUFFIX
+                candidate_md = os.path.join(
+                    local_dir, os.path.splitext(file_name)[0] + MARKDOWN_SUFFIX
                 ).replace("\\", "/")
-                pre_action = self._get_file_action(candidate_md_path, modify_time / 1000 if modify_time else 0)
-                if pre_action == FileAction.SKIP:
-                    logging.debug(f"跳过文件: {candidate_md_path}")
+                if self._get_file_action(candidate_md, mtime_sec) == FileAction.SKIP:
+                    logging.debug(f"跳过文件: {candidate_md}")
                     return True
 
-            # 一次性下载文件内容并判断类型（避免重复下载）
+            # 2. 下载 + 类型检测
             file_type, content = self._download_and_detect(file_id, youdao_file_suffix)
 
-            # 确定本地文件路径
-            if file_type != FileType.OTHER and convert_to_md:
-                local_file_path = os.path.join(
-                    local_dir, 
-                    os.path.splitext(file_name)[0] + MARKDOWN_SUFFIX
-                ).replace("\\", "/")
-            else:
-                local_file_path = original_file_path
+            # 3. 确定最终本地路径
+            original_path, local_path = self._resolve_paths(
+                file_name, local_dir, file_type, convert_to_md)
 
-            # Windows 长路径保护
-            original_file_path = safe_long_path(original_file_path)
-            local_file_path = safe_long_path(local_file_path)
+            # 4. 判断操作类型
+            file_action = self._determine_action(
+                local_path, mtime_sec, skip_action_check)
+            if file_action == FileAction.SKIP:
+                logging.debug(f"跳过文件: {local_path}")
+                return True
 
-            # 判断文件操作（skip_action_check=True 时跳过：调用方已做过决策）
-            if skip_action_check:
-                file_action = FileAction.ADD
-                if os.path.exists(local_file_path):
-                    file_action = FileAction.UPDATE
-            else:
-                file_action = self._get_file_action(local_file_path, modify_time / 1000 if modify_time else 0)
-                if file_action == FileAction.SKIP:
-                    logging.debug(f"跳过文件: {local_file_path}")
-                    return True
+            # 5. 原子写入 + 格式转换
+            self._atomic_write(file_id, content, original_path, local_path,
+                               file_type, youdao_file_suffix, convert_to_md)
 
-            # 先写到临时文件，成功后再替换原文件（避免写入失败时丢失原文件）
-            tmp_original = original_file_path + ".tmp"
-            try:
-                # _save_and_convert 内部会把内容写入 tmp_original，
-                # 对 .note/.clip XML/JSON 还会把 tmp_original rename 为 base+".md"
-                self._save_and_convert(file_id, content, tmp_original,
-                                       local_file_path + ".tmp" if local_file_path != original_file_path else tmp_original,
-                                       file_type, youdao_file_suffix, convert_to_md)
+            # 6. 图片链接迁移
+            self._migrate_images(file_type, youdao_file_suffix, local_path)
 
-                # 确定转换后文件的实际路径：
-                # covert.py 的 XML/JSON 转换会把 tmp_original 改名为 splitext(tmp_original)[0]+".md"
-                # 即 "file.note.tmp" → "file.note.md"
-                if convert_to_md and file_type in (FileType.XML, FileType.JSON):
-                    converted_path = os.path.splitext(tmp_original)[0] + MARKDOWN_SUFFIX
-                    if os.path.exists(converted_path):
-                        os.replace(converted_path, local_file_path)
-                    elif os.path.exists(tmp_original):
-                        # 转换函数没有改名（可能文件为空），直接移动原文件
-                        os.replace(tmp_original, local_file_path)
-                else:
-                    # Markdown 或 OTHER 类型：内容直接写在 tmp_original
-                    final_src = tmp_original
-                    if local_file_path != original_file_path:
-                        # 有些场景下图片迁移可能写到了 local_file_path+".tmp"
-                        tmp_local = local_file_path + ".tmp"
-                        if os.path.exists(tmp_local):
-                            final_src = tmp_local
-                    os.replace(final_src, local_file_path)
-
-                # 清理可能残留的中间文件
-                for leftover in (tmp_original, tmp_original.replace(".tmp", MARKDOWN_SUFFIX)):
-                    if leftover != local_file_path and os.path.exists(leftover):
-                        try:
-                            os.remove(leftover)
-                        except OSError:
-                            pass
-            except BaseException:
-                # 清理所有临时文件，原文件不受影响
-                for p in (tmp_original,
-                          os.path.splitext(tmp_original)[0] + MARKDOWN_SUFFIX,
-                          local_file_path + ".tmp"):
-                    if os.path.exists(p):
-                        try:
-                            os.remove(p)
-                        except OSError:
-                            pass
-                raise
-
-            # 处理图片链接（在文件已到达最终位置后执行）
-            if file_type != FileType.OTHER or youdao_file_suffix == MARKDOWN_SUFFIX:
-                try:
-                    image_pull = ImagePull(self.api, self.smms_secret_token, self.is_relative_path)
-                    image_pull.migration_ydnote_url(local_file_path)
-                except Exception as e:
-                    logging.warning(f"图片链接迁移失败: {e}")
-
-            # 设置文件时间
-            self._set_file_time(local_file_path, create_time / 1000 if create_time else 0,
-                               modify_time / 1000 if modify_time else 0)
+            # 7. 设置文件时间
+            self._set_file_time(local_path,
+                                create_time / 1000 if create_time else 0, mtime_sec)
 
             tip = f"，原格式为 {file_type.name}" if file_type != FileType.OTHER else ""
-            logging.info(f"{file_action.value}「{local_file_path}」{tip}")
-            
+            logging.info(f"{file_action.value}「{local_path}」{tip}")
             return True
 
         except Exception as e:
             logging.error(f"下载文件 {file_name} 失败: {e}")
             return False
+
+    # ---------- download_file 子步骤 ----------
+
+    def _resolve_paths(self, file_name: str, local_dir: str,
+                       file_type: FileType, convert_to_md: bool
+                       ) -> Tuple[str, str]:
+        """返回 (original_file_path, local_file_path)，已做长路径保护。"""
+        original = os.path.join(local_dir, file_name).replace("\\", "/")
+        if file_type != FileType.OTHER and convert_to_md:
+            local = os.path.join(
+                local_dir, os.path.splitext(file_name)[0] + MARKDOWN_SUFFIX
+            ).replace("\\", "/")
+        else:
+            local = original
+        return safe_long_path(original), safe_long_path(local)
+
+    def _determine_action(self, local_path: str, mtime_sec: float,
+                          skip_action_check: bool) -> FileAction:
+        """判断文件操作类型（ADD / UPDATE / SKIP）。"""
+        if skip_action_check:
+            return FileAction.UPDATE if os.path.exists(local_path) else FileAction.ADD
+        return self._get_file_action(local_path, mtime_sec)
+
+    def _atomic_write(self, file_id: str, content: Optional[bytes],
+                      original_path: str, local_path: str,
+                      file_type: FileType, suffix: str,
+                      convert_to_md: bool) -> None:
+        """写入临时文件 → 转换 → 替换为最终文件。失败时清理临时文件。"""
+        tmp_original = original_path + ".tmp"
+        tmp_local = local_path + ".tmp" if local_path != original_path else tmp_original
+        try:
+            self._save_and_convert(file_id, content, tmp_original, tmp_local,
+                                   file_type, suffix, convert_to_md)
+
+            if convert_to_md and file_type in (FileType.XML, FileType.JSON):
+                converted = os.path.splitext(tmp_original)[0] + MARKDOWN_SUFFIX
+                src = converted if os.path.exists(converted) else tmp_original
+                os.replace(src, local_path)
+            else:
+                final_src = tmp_original
+                if local_path != original_path and os.path.exists(tmp_local):
+                    final_src = tmp_local
+                os.replace(final_src, local_path)
+
+            # 清理残留
+            for leftover in (tmp_original, tmp_original.replace(".tmp", MARKDOWN_SUFFIX)):
+                if leftover != local_path and os.path.exists(leftover):
+                    try:
+                        os.remove(leftover)
+                    except OSError:
+                        pass
+        except BaseException:
+            for p in (tmp_original,
+                      os.path.splitext(tmp_original)[0] + MARKDOWN_SUFFIX,
+                      tmp_local):
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+            raise
+
+    def _migrate_images(self, file_type: FileType, suffix: str,
+                        local_path: str) -> None:
+        """在文件到达最终位置后迁移图片链接。"""
+        if file_type != FileType.OTHER or suffix == MARKDOWN_SUFFIX:
+            try:
+                image_pull = ImagePull(self.api, self.smms_secret_token, self.is_relative_path)
+                image_pull.migration_ydnote_url(local_path)
+            except Exception as e:
+                logging.warning(f"图片链接迁移失败: {e}")
 
     def download_folder(self, folder_id: str, folder_name: str, 
                         local_dir: str) -> bool:
@@ -336,14 +338,14 @@ class YoudaoNoteDownload:
         if convert_to_md:
             if file_type == FileType.XML:
                 try:
-                    YoudaoNoteConvert.covert_xml_to_markdown(original_file_path)
+                    YoudaoNoteConvert.convert_xml_to_markdown(original_file_path)
                 except ET.ParseError:
                     logging.info("此 note 笔记为旧格式 HTML，转换为 Markdown...")
-                    YoudaoNoteConvert.covert_html_to_markdown(original_file_path)
+                    YoudaoNoteConvert.convert_html_to_markdown(original_file_path)
                 except Exception as e:
                     logging.warning(f"XML 转换失败，跳过: {e}")
             elif file_type == FileType.JSON:
-                YoudaoNoteConvert.covert_json_to_markdown(original_file_path)
+                YoudaoNoteConvert.convert_json_to_markdown(original_file_path)
 
         # 图片链接迁移由调用方在文件移动到最终位置后执行（见 download_file）
 
@@ -437,28 +439,5 @@ class YoudaoNoteDownload:
             return False
 
 
-def load_config() -> Tuple[Dict, str]:
-    """
-    加载配置文件
-    :return: (config_dict, error_msg)
-    """
-    config_path = os.path.join(get_config_directory(), "config.json")
-    
-    if not os.path.exists(config_path):
-        # 返回默认配置
-        return {
-            "local_dir": "",
-            "ydnote_dir": "",
-            "smms_secret_token": "",
-            "is_relative_path": True
-        }, ""
-    
-    try:
-        with open(config_path, "rb") as f:
-            config_str = f.read().decode("utf-8")
-        config_dict = json.loads(config_str)
-        return config_dict, ""
-    except json.JSONDecodeError as e:
-        return {}, f"config.json 格式错误: {e}"
-    except Exception as e:
-        return {}, f"读取配置失败: {e}"
+
+# load_config 已移至 common.py，此处通过 import 保持向后兼容

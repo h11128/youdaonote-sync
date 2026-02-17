@@ -84,11 +84,13 @@ class YoudaoNoteSearch:
                        exact_match: bool = False) -> List[Dict]:
         """
         根据名称搜索文件或文件夹
-        :param name: 搜索的名称
+        :param name: 搜索的名称（不能为空）
         :param search_type: 搜索类型 ("all", "folder", "file")
         :param exact_match: 是否精确匹配
         :return: 搜索结果列表
         """
+        if not name:
+            raise ValueError("name 不能为空")
         root_id = self.get_root_id()
         results = []
         
