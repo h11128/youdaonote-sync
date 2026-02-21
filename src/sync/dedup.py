@@ -69,19 +69,22 @@ def build_ref_index(root: str) -> Set[str]:
 def build_all_indexes(
     root: str,
     metadata: SyncMetadata = None,
+    hash_cache: Dict[str, str] = None,
 ) -> Tuple[Dict[str, List[str]], Set[str]]:
     """一次 os.walk 同时构建 hash 索引和引用索引。"""
-    return _build_indexes(root, metadata, need_refs=True)
+    return _build_indexes(root, metadata, need_refs=True, hash_cache=hash_cache)
 
 
 def _build_indexes(
     root: str,
     metadata: SyncMetadata = None,
     need_refs: bool = True,
+    hash_cache: Dict[str, str] = None,
 ) -> Tuple[Dict[str, List[str]], Set[str]]:
     """
     内部实现：一次文件系统遍历同时构建 hash 分组和资源引用集合。
     当 need_refs=False 时跳过 Markdown 解析，节省 I/O。
+    hash_cache: sync 阶段已计算的 abs_path → hash 缓存，命中则跳过重算。
     """
     hash_index: Dict[str, List[str]] = defaultdict(list)
     referenced: Set[str] = set()
@@ -96,9 +99,11 @@ def _build_indexes(
             full = safe_long_path(os.path.join(dirpath, f))
             rel = normalize_sep(os.path.relpath(full, root))
 
-            # ---- hash 索引 ----
-            cached_hash = None
-            if metadata:
+            # ---- hash 索引（优先级：hash_cache > metadata cache > 重新计算）----
+            h = None
+            if hash_cache:
+                h = hash_cache.get(full)
+            if not h and metadata:
                 info = metadata.get_file_info(rel)
                 if info and "content_hash" in info:
                     cached_mtime = info.get("local_mtime", 0)
@@ -107,15 +112,15 @@ def _build_indexes(
                     except OSError:
                         continue
                     if current_mtime == cached_mtime:
-                        cached_hash = info["content_hash"]
-
-            if cached_hash:
-                h = cached_hash
-            else:
+                        h = info["content_hash"]
+            if not h:
                 h = compute_content_hash(full)
-                if h and metadata and metadata.get_file_info(rel):
-                    metadata.update_content_hash(rel, h)
-                    updated += 1
+                if h:
+                    if hash_cache is not None:
+                        hash_cache[full] = h
+                    if metadata and metadata.get_file_info(rel):
+                        metadata.update_content_hash(rel, h)
+                        updated += 1
 
             if h:
                 hash_index[h].append(rel)
@@ -344,6 +349,7 @@ def auto_dedup(
     api: "FileDeleter" = None,
     dry_run: bool = False,
     score_func=None,
+    hash_cache: Dict[str, str] = None,
 ) -> Dict:
     """
     自动去重（编排层）。
@@ -353,13 +359,15 @@ def auto_dedup(
     本地自身重复不处理。空文件不处理。
 
     :param api: 用于删除云端文件。不传则只删本地。
+    :param hash_cache: sync 阶段积累的 abs_path → hash 缓存
     """
     stats = {
         "deleted": 0, "cloud_deleted": 0, "kept": 0,
         "skipped": 0, "groups": 0, "protected_refs": 0,
     }
 
-    hash_index, referenced = build_all_indexes(root, metadata)
+    hash_index, referenced = build_all_indexes(root, metadata,
+                                               hash_cache=hash_cache)
     raw_dups = {h: ps for h, ps in hash_index.items() if len(ps) > 1}
     if not raw_dups:
         return stats

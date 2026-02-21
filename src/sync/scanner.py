@@ -7,8 +7,9 @@
 
 import os
 import logging
+import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, TYPE_CHECKING
 
 from src.common import normalize_sep
@@ -46,14 +47,15 @@ def scan_cloud(api: "DirBrowser", dir_id: str, base: str = "",
     files: Dict[str, Dict] = {}
     files_lock = threading.Lock()
 
-    def _fetch_dir(did: str, bpath: str) -> List[tuple]:
-        """获取一个目录的内容，返回子目录列表 [(dir_id, rel_path)]"""
+    def _fetch_dir(did: str, bpath: str) -> tuple:
+        """获取一个目录的内容，返回 (子目录列表, 本目录文件 dict)"""
         subdirs = []
+        local_batch: Dict[str, Dict] = {}
         try:
             entries = api.get_dir_info_by_id(did).get("entries", [])
         except Exception as e:
             logging.error(f"获取云端目录失败: {bpath} - {e}")
-            return subdirs
+            return subdirs, local_batch
 
         for entry in entries:
             fe = entry.get("fileEntry", {})
@@ -73,37 +75,66 @@ def scan_cloud(api: "DirBrowser", dir_id: str, base: str = "",
             }
 
             if info["is_dir"]:
-                with files_lock:
-                    files[rel] = info
+                local_batch[rel] = info
                 subdirs.append((info["id"], rel))
             else:
                 local_name = map_cloud_name(name)
                 local_rel = f"{bpath}/{local_name}".lstrip("/") if bpath else local_name
-                with files_lock:
-                    files[local_rel] = info
+                local_batch[local_rel] = info
 
-        return subdirs
+        with files_lock:
+            files.update(local_batch)
+        return subdirs, local_batch
 
-    # BFS：用线程池并行展开每一层目录
-    current_level = [(dir_id, base)]
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        while current_level:
-            futures = {pool.submit(_fetch_dir, did, bp): (did, bp)
-                       for did, bp in current_level}
-            next_level = []
-            for fut in as_completed(futures):
-                try:
-                    next_level.extend(fut.result())
-                except Exception as e:
-                    did, bp = futures[fut]
-                    logging.error(f"扫描目录异常: {bp} - {e}")
-            current_level = next_level
+    # Queue-based BFS：worker 空闲时立即取下一个目录，无层级等待
+    q: queue.Queue = queue.Queue()
+    pending = threading.Semaphore(0)
+    active = [1]  # 活跃任务计数（用 list 以便在闭包中修改）
+    active_lock = threading.Lock()
+
+    def _worker():
+        while True:
+            pending.acquire()
+            item = q.get()
+            if item is None:
+                q.task_done()
+                break
+            did, bpath = item
+            try:
+                subdirs, _ = _fetch_dir(did, bpath)
+                with active_lock:
+                    active[0] += len(subdirs)
+                for sd in subdirs:
+                    q.put(sd)
+                    pending.release()
+            except Exception as e:
+                logging.error(f"扫描目录异常: {bpath} - {e}")
+            finally:
+                with active_lock:
+                    active[0] -= 1
+                    done = active[0] == 0
+                q.task_done()
+                if done:
+                    for _ in range(workers):
+                        q.put(None)
+                        pending.release()
+
+    q.put((dir_id, base))
+    pending.release()
+
+    threads = []
+    for _ in range(workers):
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join()
 
     return files
 
 
 def scan_local(local_dir: str, base_path: str = "") -> Dict[str, Dict]:
-    """扫描本地目录。
+    """扫描本地目录（顶层子目录并行）。
 
     路径映射规则与 scan_cloud 保持一致：
     - .note/.clip/无扩展名 → 映射为 .md（这些格式下载后会转成 .md）
@@ -112,37 +143,90 @@ def scan_local(local_dir: str, base_path: str = "") -> Dict[str, Dict]:
     """
     if not local_dir:
         raise ValueError("local_dir 不能为空")
-    files: Dict[str, Dict] = {}
     scan_dir = os.path.join(local_dir, base_path) if base_path else local_dir
     if not os.path.exists(scan_dir):
-        return files
+        return {}
 
-    for root, dirs, filenames in os.walk(scan_dir):
-        dirs[:] = [d for d in dirs
-                   if not d.startswith(".")
-                   and d not in LOCAL_ARTIFACT_DIRS]
-        for d in dirs:
-            p = os.path.join(root, d)
-            rel = normalize_sep(os.path.relpath(p, local_dir))
-            files[rel] = {"path": p, "is_dir": True,
-                          "mtime": int(os.path.getmtime(p))}
-        for f in filenames:
-            if f.startswith(".") or ".conflict." in f:
+    # 列出顶层条目
+    try:
+        top_entries = list(os.scandir(scan_dir))
+    except OSError:
+        return {}
+
+    top_dirs = []
+    root_files: Dict[str, Dict] = {}
+
+    for entry in top_entries:
+        if entry.name.startswith("."):
+            continue
+        if entry.is_dir(follow_symlinks=False):
+            if entry.name in LOCAL_ARTIFACT_DIRS:
                 continue
-            p = os.path.join(root, f)
-            _, ext = os.path.splitext(f)
-
-            # 与 scan_cloud 相同的路径映射
-            mapped_name = map_cloud_name(f)
-
-            rel = normalize_sep(os.path.relpath(
-                os.path.join(root, mapped_name), local_dir
-            ))
-
-            # .md 文件优先于 .note/.clip 原始文件
-            if rel in files and ext in (".note", ".clip"):
+            rel = normalize_sep(os.path.relpath(entry.path, local_dir))
+            root_files[rel] = {"path": entry.path, "is_dir": True,
+                               "mtime": int(entry.stat().st_mtime)}
+            top_dirs.append(entry.path)
+        elif entry.is_file(follow_symlinks=False):
+            if ".conflict." in entry.name:
                 continue
+            _add_local_file(entry.path, entry.name, local_dir, root_files)
 
-            files[rel] = {"path": p, "is_dir": False,
-                          "mtime": int(os.path.getmtime(p))}
+    if not top_dirs:
+        return root_files
+
+    # 每个顶层子目录在独立线程中 os.walk
+    results = [root_files]
+    results_lock = threading.Lock()
+
+    def _walk_subdir(subdir: str):
+        partial: Dict[str, Dict] = {}
+        for root, dirs, filenames in os.walk(subdir):
+            dirs[:] = [d for d in dirs
+                       if not d.startswith(".")
+                       and d not in LOCAL_ARTIFACT_DIRS]
+            for d in dirs:
+                p = os.path.join(root, d)
+                rel = normalize_sep(os.path.relpath(p, local_dir))
+                partial[rel] = {"path": p, "is_dir": True,
+                                "mtime": int(os.path.getmtime(p))}
+            for f in filenames:
+                if f.startswith(".") or ".conflict." in f:
+                    continue
+                _add_local_file(os.path.join(root, f), f, local_dir, partial)
+        with results_lock:
+            results.append(partial)
+
+    workers = min(len(top_dirs), os.cpu_count() or 4, 8)
+    if workers <= 1:
+        _walk_subdir(top_dirs[0])
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [pool.submit(_walk_subdir, sd) for sd in top_dirs]
+            for fut in futs:
+                try:
+                    fut.result()
+                except Exception as e:
+                    logging.error(f"本地扫描异常: {e}")
+
+    files: Dict[str, Dict] = {}
+    for partial in results:
+        files.update(partial)
     return files
+
+
+def _add_local_file(path: str, name: str, local_dir: str,
+                    target: Dict[str, Dict]) -> None:
+    """将一个本地文件加入扫描结果 dict。"""
+    _, ext = os.path.splitext(name)
+    mapped_name = map_cloud_name(name)
+    rel = normalize_sep(os.path.relpath(
+        os.path.join(os.path.dirname(path), mapped_name), local_dir
+    ))
+    if rel in target and ext in (".note", ".clip"):
+        return
+    try:
+        st = os.stat(path)
+    except OSError:
+        return
+    target[rel] = {"path": path, "is_dir": False,
+                   "mtime": int(st.st_mtime), "size": st.st_size}

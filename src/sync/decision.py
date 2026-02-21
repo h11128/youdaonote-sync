@@ -18,6 +18,7 @@ def calibrate_metadata(
     metadata: SyncMetadata,
     cloud_files: Dict,
     local_files: Dict,
+    hash_cache: Dict[str, str] = None,
 ) -> int:
     """
     自动校准元数据：对于云端和本地都存在但元数据缺失的文件/目录，
@@ -25,6 +26,7 @@ def calibrate_metadata(
 
     只处理"两端都存在 + 无元数据"的情况，"只有一端"的仍走正常同步逻辑。
 
+    :param hash_cache: 可选的 abs_path → hash 缓存，计算后写入以供后续模块复用
     :return: 校准的条目数
     """
     calibrated = 0
@@ -34,23 +36,24 @@ def calibrate_metadata(
         local = local_files.get(rel)
 
         if cloud.get("is_dir"):
-            # 目录：只要云端有且元数据缺失就记录
             if not metadata.get_dir_id(rel) and cloud.get("id"):
                 metadata.set_dir_info(rel, cloud["id"], cloud.get("parent_id"))
                 calibrated += 1
             continue
 
-        # 文件：两端都有但元数据缺失或不完整时建立基线
         if local is None:
             continue
         meta = metadata.get_file_info(rel)
-        # 元数据完整（file_id 非空且 local_mtime 非零）时跳过
         if (meta is not None
                 and meta.get("file_id")
                 and meta.get("local_mtime", 0) > 0):
             continue
 
-        content_hash = compute_content_hash(local["path"])
+        local_path = local["path"]
+        content_hash = (hash_cache.get(local_path) if hash_cache else None) \
+                       or compute_content_hash(local_path)
+        if content_hash and hash_cache is not None:
+            hash_cache[local_path] = content_hash
         metadata.set_file_info(
             local_path=rel,
             file_id=cloud["id"],

@@ -66,6 +66,7 @@ class SyncManager:
         self._lock = threading.Lock()
         self._meta_dirty = 0
         self._git = git or GitHelper(local_dir)
+        self._hash_cache: Dict[str, str] = {}  # abs_path → content_hash
 
     # ========== 内部辅助 ==========
 
@@ -89,18 +90,19 @@ class SyncManager:
     def _record_file_change(self, item: SyncItem, stat_key: str,
                             local_mtime: int = None,
                             content_hash: str = None) -> None:
-        """在锁内记录一次文件同步成功：更新元数据 + 统计 + 变动列表。"""
+        """记录一次文件同步成功：更新元数据 + 统计 + 变动列表。"""
+        # metadata 自身是线程安全的，不需要 engine lock
+        if stat_key == "downloaded":
+            self.metadata.set_file_info(
+                item.relative_path, item.cloud_id, item.cloud_mtime,
+                local_mtime, item.cloud_parent_id, item.domain,
+                content_hash=content_hash,
+                create_time=item.cloud_ctime,
+            )
+        elif stat_key == "uploaded" and content_hash:
+            self.metadata.update_content_hash(
+                item.relative_path, content_hash)
         with self._lock:
-            if stat_key == "downloaded":
-                self.metadata.set_file_info(
-                    item.relative_path, item.cloud_id, item.cloud_mtime,
-                    local_mtime, item.cloud_parent_id, item.domain,
-                    content_hash=content_hash,
-                    create_time=item.cloud_ctime,
-                )
-            elif stat_key == "uploaded" and content_hash:
-                self.metadata.update_content_hash(
-                    item.relative_path, content_hash)
             self._try_flush_metadata()
             self.stats[stat_key] += 1
             self._changed_paths.append(item.local_path)
@@ -123,6 +125,7 @@ class SyncManager:
         logging.info(f"开始同步: 方向={direction.value}, 本地={self.local_dir}")
         self.stats = empty_stats()
         self._changed_paths = []
+        self._hash_cache = {}
 
         items = self._collect_items(cloud_dir_id, cloud_path, dry_run=dry_run)
         items = filter_by_direction(items, direction)
@@ -160,7 +163,8 @@ class SyncManager:
         from src.sync.dedup import auto_dedup
         try:
             stats = auto_dedup(self.local_dir, metadata=self.metadata,
-                               api=self.api, dry_run=dry_run)
+                               api=self.api, dry_run=dry_run,
+                               hash_cache=self._hash_cache)
             deleted = stats.get("deleted", 0)
             if deleted > 0:
                 logging.info(f"去重: 删除了 {deleted} 个重复文件")
@@ -182,9 +186,11 @@ class SyncManager:
             cloud_files = cloud_future.result()
             local_files = local_future.result()
 
-        calibrate_metadata(self.metadata, cloud_files, local_files)
+        calibrate_metadata(self.metadata, cloud_files, local_files,
+                           hash_cache=self._hash_cache)
         reconcile_moves(cloud_files, local_files, self.metadata,
-                        self.local_dir, dry_run=dry_run)
+                        self.local_dir, dry_run=dry_run,
+                        hash_cache=self._hash_cache)
 
         all_paths = set(cloud_files.keys()) | set(local_files.keys())
         return [
@@ -219,18 +225,36 @@ class SyncManager:
         if not action_items:
             return
 
-        has_upload = any(i.action == SyncAction.UPLOAD for i in action_items)
-        workers = self.UPLOAD_WORKERS if has_upload else self.DOWNLOAD_WORKERS
+        uploads = [i for i in action_items
+                   if i.action == SyncAction.UPLOAD]
+        downloads = [i for i in action_items
+                     if i.action in (SyncAction.DOWNLOAD, SyncAction.CONFLICT)]
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(self._execute_file, item, direction): item
-                       for item in action_items}
-            for fut in as_completed(futures):
-                try:
-                    fut.result()
-                except Exception as e:
-                    item = futures[fut]
-                    self._record_error(item.relative_path, f"执行异常 - {e}")
+        # 上传和下载分开并发：不同瓶颈（API 速率 vs 网络带宽）
+        all_futures: Dict = {}
+        pools = []
+        if uploads:
+            up_pool = ThreadPoolExecutor(max_workers=self.UPLOAD_WORKERS)
+            pools.append(up_pool)
+            for item in uploads:
+                all_futures[up_pool.submit(
+                    self._execute_file, item, direction)] = item
+        if downloads:
+            dl_pool = ThreadPoolExecutor(max_workers=self.DOWNLOAD_WORKERS)
+            pools.append(dl_pool)
+            for item in downloads:
+                all_futures[dl_pool.submit(
+                    self._execute_file, item, direction)] = item
+
+        for fut in as_completed(all_futures):
+            try:
+                fut.result()
+            except Exception as e:
+                item = all_futures[fut]
+                self._record_error(item.relative_path, f"执行异常 - {e}")
+
+        for p in pools:
+            p.shutdown(wait=False)
 
     def _execute_file(self, item: SyncItem, direction: SyncDirection) -> None:
         """分发单个文件的同步操作（在线程池内调用）。"""
@@ -282,6 +306,8 @@ class SyncManager:
             except OSError:
                 local_mtime = item.cloud_mtime
             content_hash = compute_content_hash(item.local_path)
+            if content_hash:
+                self._hash_cache[item.local_path] = content_hash
             self._record_file_change(
                 item, "downloaded",
                 local_mtime=local_mtime, content_hash=content_hash)
@@ -294,7 +320,8 @@ class SyncManager:
             self._record_error(item.relative_path, "本地文件不存在")
             return
 
-        content_hash = compute_content_hash(item.local_path)
+        content_hash = (self._hash_cache.get(item.local_path)
+                        or compute_content_hash(item.local_path))
         if content_hash:
             with self._lock:
                 existing = self.metadata.find_cloud_file_by_hash(

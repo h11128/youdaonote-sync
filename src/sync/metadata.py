@@ -28,8 +28,10 @@ class SyncMetadata:
             get_config_directory(), "sync_metadata.json"
         )
         self._data: Dict[str, Any] = {"files": {}, "directories": {}}
-        # 反向索引：content_hash → 第一个有 file_id 的 path（加速 find_cloud_file_by_hash）
-        self._hash_index: Dict[str, str] = {}
+        # 反向索引（全部在 load 时重建，写操作时增量维护）
+        self._hash_index: Dict[str, List[str]] = {}   # content_hash → [paths with file_id]
+        self._file_id_index: Dict[str, str] = {}      # file_id → path
+        self._dir_id_index: Dict[str, str] = {}       # dir_id → path
         self._lock = threading.Lock()
         self.load()
 
@@ -49,7 +51,7 @@ class SyncMetadata:
                 self._data = {"files": {}, "directories": {}}
         else:
             self._data = {"files": {}, "directories": {}}
-        self._rebuild_hash_index()
+        self._rebuild_indexes()
 
     def save(self) -> bool:
         """
@@ -96,15 +98,22 @@ class SyncMetadata:
         
         return path
 
-    def _rebuild_hash_index(self) -> None:
-        """从 _data 重建 content_hash → path 的反向索引"""
+    def _rebuild_indexes(self) -> None:
+        """从 _data 重建所有反向索引"""
         self._hash_index.clear()
+        self._file_id_index.clear()
+        self._dir_id_index.clear()
         for path, info in self._data.get("files", {}).items():
+            fid = info.get("file_id")
+            if fid:
+                self._file_id_index[fid] = path
             h = info.get("content_hash")
-            if h and info.get("file_id"):
-                # 同一个 hash 可能对应多个路径，索引只存一个就够了
-                if h not in self._hash_index:
-                    self._hash_index[h] = path
+            if h and fid:
+                self._hash_index.setdefault(h, []).append(path)
+        for path, info in self._data.get("directories", {}).items():
+            did = info.get("dir_id")
+            if did:
+                self._dir_id_index[did] = path
 
     # ========== 文件相关方法 ==========
 
@@ -174,6 +183,10 @@ class SyncMetadata:
                 else:
                     local_mtime = cloud_mtime
 
+            old_info = self._data["files"].get(path)
+            old_fid = old_info.get("file_id") if old_info else None
+            old_hash = old_info.get("content_hash") if old_info else None
+
             self._data["files"][path] = {
                 "file_id": file_id,
                 "cloud_mtime": cloud_mtime,
@@ -186,10 +199,29 @@ class SyncMetadata:
                 self._data["files"][path]["domain"] = domain
             if content_hash is not None:
                 self._data["files"][path]["content_hash"] = content_hash
-                if file_id:
-                    self._hash_index[content_hash] = path
             if create_time is not None and create_time > 0:
                 self._data["files"][path]["create_time"] = create_time
+
+            # 维护 file_id 反向索引
+            if old_fid and old_fid != file_id:
+                self._file_id_index.pop(old_fid, None)
+            if file_id:
+                self._file_id_index[file_id] = path
+
+            # 维护 hash 反向索引
+            if old_hash and old_hash != content_hash:
+                lst = self._hash_index.get(old_hash)
+                if lst:
+                    try:
+                        lst.remove(path)
+                    except ValueError:
+                        pass
+                    if not lst:
+                        del self._hash_index[old_hash]
+            if content_hash and file_id:
+                self._hash_index.setdefault(content_hash, [])
+                if path not in self._hash_index[content_hash]:
+                    self._hash_index[content_hash].append(path)
 
     def remove_file_info(self, local_path: str) -> None:
         """删除指定路径的文件元数据（用于文件移动后清理旧记录）。"""
@@ -197,10 +229,7 @@ class SyncMetadata:
             path = self._normalize_path(local_path)
             removed = self._data["files"].pop(path, None)
             if removed:
-                # 清理 hash 索引
-                ch = removed.get("content_hash")
-                if ch and self._hash_index.get(ch) == path:
-                    del self._hash_index[ch]
+                self._remove_from_indexes(path, removed)
 
     def update_local_mtime(self, local_path: str, mtime: int) -> None:
         """
@@ -234,16 +263,25 @@ class SyncMetadata:
         """
         with self._lock:
             path = self._normalize_path(local_path)
-            if path in self._data["files"]:
-                h = self._data["files"][path].get("content_hash")
-                del self._data["files"][path]
-                # 清理反向索引，如果其他路径也有相同 hash 则重新指向
-                if h and self._hash_index.get(h) == path:
+            removed = self._data["files"].pop(path, None)
+            if removed:
+                self._remove_from_indexes(path, removed)
+
+    def _remove_from_indexes(self, path: str, info: Dict) -> None:
+        """从所有反向索引中移除一个文件条目（在 _lock 内调用）。"""
+        fid = info.get("file_id")
+        if fid and self._file_id_index.get(fid) == path:
+            del self._file_id_index[fid]
+        h = info.get("content_hash")
+        if h:
+            lst = self._hash_index.get(h)
+            if lst:
+                try:
+                    lst.remove(path)
+                except ValueError:
+                    pass
+                if not lst:
                     del self._hash_index[h]
-                    for other_path, other_info in self._data["files"].items():
-                        if other_info.get("content_hash") == h and other_info.get("file_id"):
-                            self._hash_index[h] = other_path
-                            break
 
     def get_all_files(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -278,9 +316,14 @@ class SyncMetadata:
         """
         with self._lock:
             path = self._normalize_path(local_path)
+            old_info = self._data["directories"].get(path)
+            old_did = old_info.get("dir_id") if old_info else None
+            if old_did and old_did != dir_id:
+                self._dir_id_index.pop(old_did, None)
             self._data["directories"][path] = {"dir_id": dir_id}
             if parent_id is not None:
                 self._data["directories"][path]["parent_id"] = parent_id
+            self._dir_id_index[dir_id] = path
 
     def remove_dir(self, local_path: str) -> None:
         """
@@ -290,8 +333,11 @@ class SyncMetadata:
         """
         with self._lock:
             path = self._normalize_path(local_path)
-            if path in self._data["directories"]:
-                del self._data["directories"][path]
+            removed = self._data["directories"].pop(path, None)
+            if removed:
+                did = removed.get("dir_id")
+                if did and self._dir_id_index.get(did) == path:
+                    del self._dir_id_index[did]
 
     def get_all_dirs(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -306,29 +352,23 @@ class SyncMetadata:
 
     def find_by_file_id(self, file_id: str) -> Optional[str]:
         """
-        根据云端文件 ID 查找本地路径
+        根据云端文件 ID 查找本地路径（O(1) 反向索引）
         
         :param file_id: 云端文件 ID
         :return: 本地文件路径，不存在则返回 None
         """
         with self._lock:
-            for path, info in self._data["files"].items():
-                if info.get("file_id") == file_id:
-                    return path
-            return None
+            return self._file_id_index.get(file_id)
 
     def find_by_dir_id(self, dir_id: str) -> Optional[str]:
         """
-        根据云端目录 ID 查找本地路径
+        根据云端目录 ID 查找本地路径（O(1) 反向索引）
         
         :param dir_id: 云端目录 ID
         :return: 本地目录路径，不存在则返回 None
         """
         with self._lock:
-            for path, info in self._data["directories"].items():
-                if info.get("dir_id") == dir_id:
-                    return path
-            return None
+            return self._dir_id_index.get(dir_id)
 
     # ========== 内容 Hash 相关 ==========
 
@@ -342,20 +382,25 @@ class SyncMetadata:
         """更新文件的 content_hash"""
         with self._lock:
             path = self._normalize_path(local_path)
-            if path in self._data["files"]:
-                old_hash = self._data["files"][path].get("content_hash")
-                self._data["files"][path]["content_hash"] = content_hash
-                # 清理旧 hash 的反向索引
-                if old_hash and old_hash != content_hash and self._hash_index.get(old_hash) == path:
-                    del self._hash_index[old_hash]
-                    # 尝试让旧 hash 指向其他持有该 hash 的文件
-                    for other_path, other_info in self._data["files"].items():
-                        if other_path != path and other_info.get("content_hash") == old_hash and other_info.get("file_id"):
-                            self._hash_index[old_hash] = other_path
-                            break
-                # 添加新 hash 的反向索引
-                if self._data["files"][path].get("file_id"):
-                    self._hash_index[content_hash] = path
+            info = self._data["files"].get(path)
+            if not info:
+                return
+            old_hash = info.get("content_hash")
+            info["content_hash"] = content_hash
+            has_fid = bool(info.get("file_id"))
+            if old_hash and old_hash != content_hash:
+                lst = self._hash_index.get(old_hash)
+                if lst:
+                    try:
+                        lst.remove(path)
+                    except ValueError:
+                        pass
+                    if not lst:
+                        del self._hash_index[old_hash]
+            if content_hash and has_fid:
+                self._hash_index.setdefault(content_hash, [])
+                if path not in self._hash_index[content_hash]:
+                    self._hash_index[content_hash].append(path)
 
     def get_content_hash(self, local_path: str) -> Optional[str]:
         """获取文件的 content_hash"""
@@ -367,7 +412,7 @@ class SyncMetadata:
     def find_cloud_file_by_hash(self, content_hash: str, exclude_path: str = None) -> Optional[str]:
         """
         查找是否已有相同 content_hash 的云端文件（有 file_id 的）。
-        使用反向索引实现 O(1) 查找。
+        使用反向索引 hash → [paths] 实现快速查找。
 
         :param content_hash: 要查找的 hash
         :param exclude_path: 排除的路径（避免匹配自己）
@@ -376,31 +421,16 @@ class SyncMetadata:
         with self._lock:
             if not content_hash:
                 return None
-            hit = self._hash_index.get(content_hash)
-            if not hit:
+            paths = self._hash_index.get(content_hash)
+            if not paths:
                 return None
             exclude = self._normalize_path(exclude_path) if exclude_path else None
-            if exclude and hit == exclude:
-                # 索引命中的恰好是自己，回退到线性查找（罕见情况）
-                for path, info in self._data["files"].items():
-                    if path == exclude:
-                        continue
-                    if info.get("content_hash") == content_hash and info.get("file_id"):
-                        return path
-                return None
-            # 验证索引条目仍然有效
-            info = self._data["files"].get(hit)
-            if info and info.get("content_hash") == content_hash and info.get("file_id"):
-                return hit
-            # 索引过期，回退线性查找并修复
-            for path, info in self._data["files"].items():
-                if exclude and path == exclude:
+            for p in paths:
+                if exclude and p == exclude:
                     continue
-                if info.get("content_hash") == content_hash and info.get("file_id"):
-                    self._hash_index[content_hash] = path
-                    return path
-            # 清除无效索引
-            self._hash_index.pop(content_hash, None)
+                info = self._data["files"].get(p)
+                if info and info.get("file_id"):
+                    return p
             return None
 
     def find_duplicates_by_hash(self) -> Dict[str, List[str]]:

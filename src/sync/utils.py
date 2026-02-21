@@ -123,15 +123,25 @@ def print_preview(item: SyncItem) -> None:
 
 
 def print_dryrun_summary(items: List[SyncItem]) -> None:
-    """输出 dry-run 的分组统计摘要。"""
+    """输出 dry-run 的分组统计摘要（单次遍历分桶）。"""
     from collections import Counter
 
-    upload_files = [i for i in items if i.action == SyncAction.UPLOAD and not i.is_dir]
-    upload_dirs = [i for i in items if i.action == SyncAction.UPLOAD and i.is_dir]
-    download_files = [i for i in items if i.action == SyncAction.DOWNLOAD and not i.is_dir]
-    download_dirs = [i for i in items if i.action == SyncAction.DOWNLOAD and i.is_dir]
-    conflicts = [i for i in items if i.action == SyncAction.CONFLICT]
-    skip_count = sum(1 for i in items if i.action == SyncAction.SKIP)
+    upload_files: List[SyncItem] = []
+    upload_dirs: List[SyncItem] = []
+    download_files: List[SyncItem] = []
+    download_dirs: List[SyncItem] = []
+    conflicts: List[SyncItem] = []
+    skip_count = 0
+
+    for i in items:
+        if i.action == SyncAction.UPLOAD:
+            (upload_dirs if i.is_dir else upload_files).append(i)
+        elif i.action == SyncAction.DOWNLOAD:
+            (download_dirs if i.is_dir else download_files).append(i)
+        elif i.action == SyncAction.CONFLICT:
+            conflicts.append(i)
+        elif i.action == SyncAction.SKIP:
+            skip_count += 1
 
     print()
     print("=" * 60)
@@ -143,23 +153,17 @@ def print_dryrun_summary(items: List[SyncItem]) -> None:
     print(f"  跳过: {skip_count}")
     print(f"  总计: {len(items)}")
 
-    # 上传文件按顶层目录聚合
     if upload_files:
         print()
         print(f"  上传文件按目录:")
-        by_top = Counter()
-        for i in upload_files:
-            by_top[i.relative_path.split("/")[0]] += 1
+        by_top = Counter(i.relative_path.split("/")[0] for i in upload_files)
         for top, cnt in sorted(by_top.items(), key=lambda x: -x[1]):
             print(f"    {top}: {cnt}")
 
-    # 下载文件按顶层目录聚合
     if download_files:
         print()
         print(f"  下载文件按目录:")
-        by_top = Counter()
-        for i in download_files:
-            by_top[i.relative_path.split("/")[0]] += 1
+        by_top = Counter(i.relative_path.split("/")[0] for i in download_files)
         for top, cnt in sorted(by_top.items(), key=lambda x: -x[1]):
             print(f"    {top}: {cnt}")
 
@@ -170,10 +174,15 @@ def print_dryrun_summary(items: List[SyncItem]) -> None:
             print(f"    {i.relative_path}")
 
 
+_CHUNKED_HASH_THRESHOLD = 1024 * 1024  # 1MB 以上用分块读取
+
+
 def compute_content_hash(file_path: str) -> Optional[str]:
     """
     计算文件的 normalized content hash（MD5）。
     去掉 CRLF → LF、BOM 差异后计算，这样同内容不同换行符的文件 hash 一致。
+
+    小文件（≤ 1MB）全量读取；大文件分块读取以避免内存峰值。
 
     :param file_path: 文件绝对路径（不能为空）
     :return: MD5 hex string，文件不存在或读取失败返回 None
@@ -181,12 +190,53 @@ def compute_content_hash(file_path: str) -> Optional[str]:
     if not file_path:
         raise ValueError("file_path 不能为空")
     try:
-        with open(file_path, "rb") as f:
-            data = f.read()
-        normalized = data.replace(b"\r\n", b"\n").replace(b"\xef\xbb\xbf", b"")
-        return hashlib.md5(normalized).hexdigest()
+        size = os.path.getsize(file_path)
+        if size <= _CHUNKED_HASH_THRESHOLD:
+            return _hash_small_file(file_path)
+        return _hash_large_file(file_path)
     except Exception:
         return None
+
+
+def _hash_small_file(file_path: str) -> str:
+    with open(file_path, "rb") as f:
+        data = f.read()
+    normalized = data.replace(b"\r\n", b"\n").replace(b"\xef\xbb\xbf", b"")
+    return hashlib.md5(normalized).hexdigest()
+
+
+def _hash_large_file(file_path: str, chunk_size: int = 256 * 1024) -> str:
+    """分块读取大文件，处理跨 chunk 边界的 CRLF。"""
+    h = hashlib.md5()
+    with open(file_path, "rb") as f:
+        first = True
+        carry_cr = False
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                if carry_cr:
+                    h.update(b"\r")
+                break
+
+            if first:
+                if chunk.startswith(b"\xef\xbb\xbf"):
+                    chunk = chunk[3:]
+                first = False
+
+            if carry_cr:
+                if chunk[0:1] == b"\n":
+                    chunk = b"\n" + chunk[1:]
+                else:
+                    chunk = b"\r" + chunk
+                carry_cr = False
+
+            if chunk.endswith(b"\r"):
+                chunk = chunk[:-1]
+                carry_cr = True
+
+            chunk = chunk.replace(b"\r\n", b"\n")
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def backup_file(file_path: str) -> Optional[str]:
