@@ -78,11 +78,11 @@ def decide_action(
     if not local_exists and cloud_exists:
         return SyncAction.DOWNLOAD
 
-    local_changed = meta_local_mtime is None or (local_mtime and local_mtime > meta_local_mtime)
-    cloud_changed = meta_cloud_mtime is None or (cloud_mtime and cloud_mtime > meta_cloud_mtime)
+    local_changed = meta_local_mtime is None or (local_mtime is not None and local_mtime > meta_local_mtime)
+    cloud_changed = meta_cloud_mtime is None or (cloud_mtime is not None and cloud_mtime > meta_cloud_mtime)
 
     if local_changed and cloud_changed:
-        if local_mtime and cloud_mtime:
+        if local_mtime is not None and cloud_mtime is not None:
             if local_mtime > cloud_mtime:
                 return SyncAction.UPLOAD
             if cloud_mtime > local_mtime:
@@ -96,13 +96,36 @@ def decide_action(
     return SyncAction.SKIP
 
 
-def filter_by_direction(items: List[SyncItem], direction: SyncDirection) -> List[SyncItem]:
-    """按同步方向过滤 items。"""
-    if direction == SyncDirection.PULL:
-        return [i for i in items if i.action in (SyncAction.DOWNLOAD, SyncAction.SKIP)]
-    if direction == SyncDirection.PUSH:
-        return [i for i in items if i.action in (SyncAction.UPLOAD, SyncAction.SKIP)]
-    return items
+def filter_by_direction(
+    items: List[SyncItem], direction: SyncDirection,
+) -> tuple:
+    """按同步方向过滤 items，同时统计跳过数。
+
+    返回 (action_items, skip_count)，action_items 不包含 SKIP 项。
+    """
+    if direction == SyncDirection.BOTH:
+        action = []
+        skipped = 0
+        for i in items:
+            if i.action == SyncAction.SKIP:
+                skipped += 1
+            else:
+                action.append(i)
+        return action, skipped
+
+    allowed = (
+        {SyncAction.DOWNLOAD, SyncAction.CONFLICT}
+        if direction == SyncDirection.PULL
+        else {SyncAction.UPLOAD}
+    )
+    action = []
+    skipped = 0
+    for i in items:
+        if i.action in allowed:
+            action.append(i)
+        else:
+            skipped += 1
+    return action, skipped
 
 
 def empty_stats() -> Dict:
@@ -176,11 +199,24 @@ def print_dryrun_summary(items: List[SyncItem]) -> None:
 
 _CHUNKED_HASH_THRESHOLD = 1024 * 1024  # 1MB 以上用分块读取
 
+_BINARY_EXTS = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico",
+    ".pdf", ".amr", ".mp3", ".mp4", ".wav", ".zip", ".rar", ".7z",
+    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+})
+
+
+def _is_text_file(file_path: str) -> bool:
+    _, ext = os.path.splitext(file_path)
+    return ext.lower() not in _BINARY_EXTS
+
 
 def compute_content_hash(file_path: str) -> Optional[str]:
     """
-    计算文件的 normalized content hash（MD5）。
-    去掉 CRLF → LF、BOM 差异后计算，这样同内容不同换行符的文件 hash 一致。
+    计算文件内容的 MD5 hash。
+
+    文本文件：去掉 CRLF → LF、BOM 差异后计算（同内容不同换行符 → 相同 hash）。
+    二进制文件：直接计算原始字节的 hash（避免错误修改二进制内容）。
 
     小文件（≤ 1MB）全量读取；大文件分块读取以避免内存峰值。
 
@@ -191,25 +227,49 @@ def compute_content_hash(file_path: str) -> Optional[str]:
         raise ValueError("file_path 不能为空")
     try:
         size = os.path.getsize(file_path)
+        if not _is_text_file(file_path):
+            return _hash_binary_file(file_path, size)
         if size <= _CHUNKED_HASH_THRESHOLD:
-            return _hash_small_file(file_path)
-        return _hash_large_file(file_path)
+            return _hash_small_text_file(file_path)
+        return _hash_large_text_file(file_path)
     except Exception:
         return None
 
 
-def _hash_small_file(file_path: str) -> str:
+def _hash_binary_file(file_path: str, size: int,
+                      chunk_size: int = 256 * 1024) -> str:
+    """二进制文件 hash：小文件全量读，大文件用 mmap 零拷贝。"""
+    import mmap
+    h = hashlib.md5()
+    with open(file_path, "rb") as f:
+        if size <= _CHUNKED_HASH_THRESHOLD:
+            h.update(f.read())
+        elif size > 0:
+            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                h.update(mm)
+        # size == 0: empty file, h stays as initial
+    return h.hexdigest()
+
+
+def _hash_small_text_file(file_path: str) -> str:
     with open(file_path, "rb") as f:
         data = f.read()
-    normalized = data.replace(b"\r\n", b"\n").replace(b"\xef\xbb\xbf", b"")
+    normalized = data.replace(b"\r\n", b"\n")
+    if normalized.startswith(b"\xef\xbb\xbf"):
+        normalized = normalized[3:]
     return hashlib.md5(normalized).hexdigest()
 
 
-def _hash_large_file(file_path: str, chunk_size: int = 256 * 1024) -> str:
-    """分块读取大文件，处理跨 chunk 边界的 CRLF。"""
+def _hash_large_text_file(file_path: str,
+                          chunk_size: int = 8 * 1024 * 1024) -> str:
+    """大文本文件 hash：分块读取 + 流式 CRLF/BOM 规范化。
+
+    不使用 mmap（CRLF 规范化需要内容感知，无法零拷贝）。
+    分块处理时需要特殊处理 chunk 边界处被拆开的 \\r\\n 和文件头的 BOM。
+    """
     h = hashlib.md5()
     with open(file_path, "rb") as f:
-        first = True
+        first_chunk = True
         carry_cr = False
         while True:
             chunk = f.read(chunk_size)
@@ -218,24 +278,21 @@ def _hash_large_file(file_path: str, chunk_size: int = 256 * 1024) -> str:
                     h.update(b"\r")
                 break
 
-            if first:
-                if chunk.startswith(b"\xef\xbb\xbf"):
-                    chunk = chunk[3:]
-                first = False
-
             if carry_cr:
                 if chunk[0:1] == b"\n":
-                    chunk = b"\n" + chunk[1:]
+                    h.update(b"\n")
+                    chunk = chunk[1:]
                 else:
-                    chunk = b"\r" + chunk
-                carry_cr = False
-
-            if chunk.endswith(b"\r"):
+                    h.update(b"\r")
+            carry_cr = chunk.endswith(b"\r")
+            if carry_cr:
                 chunk = chunk[:-1]
-                carry_cr = True
 
-            chunk = chunk.replace(b"\r\n", b"\n")
-            h.update(chunk)
+            normalized = chunk.replace(b"\r\n", b"\n")
+            if first_chunk:
+                normalized = normalized.replace(b"\xef\xbb\xbf", b"", 1)
+                first_chunk = False
+            h.update(normalized)
     return h.hexdigest()
 
 
@@ -248,7 +305,7 @@ def backup_file(file_path: str) -> Optional[str]:
     """
     if not os.path.exists(file_path):
         return None
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     base, ext = os.path.splitext(file_path)
     backup_path = f"{base}.conflict.{ts}{ext}"
     try:

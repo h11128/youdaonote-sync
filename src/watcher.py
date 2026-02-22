@@ -52,7 +52,7 @@ class SyncWatcher:
         self._sync_manager = sync_manager or SyncManager(api, local_dir)
         self._pending_lock = threading.Lock()
         self._pending_local_changes: Dict[str, float] = {}
-        self._syncing = False  # 防止重叠同步
+        self._sync_lock = threading.Lock()
         self._running = False
 
     def start(self) -> None:
@@ -133,11 +133,10 @@ class SyncWatcher:
         self._running = False
 
     def _do_sync(self, reason: str) -> None:
-        """执行一次同步（防止重叠）"""
-        if self._syncing:
+        """执行一次同步（用 Lock 防止重叠，比 bool 标志更安全）"""
+        if not self._sync_lock.acquire(blocking=False):
             logging.debug(f"跳过同步（上一次尚未结束）: {reason}")
             return
-        self._syncing = True
         now_str = datetime.now().strftime("%H:%M:%S")
         print(f"\n[{now_str}] {reason}")
         try:
@@ -159,4 +158,4 @@ class SyncWatcher:
             logging.error(f"同步失败: {e}")
             print(f"   同步失败: {e}")
         finally:
-            self._syncing = False
+            self._sync_lock.release()

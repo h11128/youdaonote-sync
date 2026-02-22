@@ -7,7 +7,7 @@
 import logging
 from typing import Tuple
 
-import requests
+import httpx
 
 
 class ImageUpload:
@@ -41,10 +41,11 @@ class ImageUpload:
             "将下载图片到本地".format(image_url)
         )
         try:
-            res_json = requests.post(
-                upload_api_url, headers=headers, files=files, timeout=5
+            res_json = httpx.post(
+                upload_api_url, headers=headers, files=files,
+                timeout=5.0, follow_redirects=True,
             ).json()
-        except requests.exceptions.ProxyError as err:
+        except httpx.ProxyError as err:
             error_msg = "网络错误，上传「{}」到 SM.MS 失败！将下载图片到本地。错误提示：{}".format(
                 image_url, format(err)
             )

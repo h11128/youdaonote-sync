@@ -70,8 +70,16 @@ def build_all_indexes(
     root: str,
     metadata: SyncMetadata = None,
     hash_cache: Dict[str, str] = None,
+    local_files: Dict[str, Dict] = None,
 ) -> Tuple[Dict[str, List[str]], Set[str]]:
-    """一次 os.walk 同时构建 hash 索引和引用索引。"""
+    """构建 hash 索引和引用索引。
+
+    如果提供了 local_files（scan_local 的结果），直接基于已知文件列表构建，
+    避免重复 os.walk。否则回退到文件系统遍历。
+    """
+    if local_files is not None:
+        return _build_indexes_from_scan(root, local_files, metadata,
+                                        hash_cache=hash_cache)
     return _build_indexes(root, metadata, need_refs=True, hash_cache=hash_cache)
 
 
@@ -150,6 +158,71 @@ def _build_indexes(
     if updated > 0 and metadata:
         metadata.save()
 
+    return hash_index, referenced
+
+
+def _build_indexes_from_scan(
+    root: str,
+    local_files: Dict[str, Dict],
+    metadata: SyncMetadata = None,
+    hash_cache: Dict[str, str] = None,
+) -> Tuple[Dict[str, List[str]], Set[str]]:
+    """基于 scan_local 已有的文件列表构建索引，跳过 os.walk。"""
+    hash_index: Dict[str, List[str]] = defaultdict(list)
+    referenced: Set[str] = set()
+    updated = 0
+
+    for rel, info in local_files.items():
+        if info.get("is_dir"):
+            continue
+        full = info.get("path") or os.path.join(root, rel)
+        f = os.path.basename(rel)
+        if f.startswith(".") or ".conflict." in f:
+            continue
+
+        h = None
+        if hash_cache:
+            h = hash_cache.get(full)
+        if not h and metadata:
+            meta_info = metadata.get_file_info(rel)
+            if meta_info and "content_hash" in meta_info:
+                cached_mtime = meta_info.get("local_mtime", 0)
+                current_mtime = info.get("mtime", 0)
+                if current_mtime == cached_mtime:
+                    h = meta_info["content_hash"]
+        if not h:
+            h = compute_content_hash(full)
+            if h:
+                if hash_cache is not None:
+                    hash_cache[full] = h
+                if metadata and metadata.get_file_info(rel):
+                    metadata.update_content_hash(rel, h)
+                    updated += 1
+        if h:
+            hash_index[h].append(rel)
+
+        if f.endswith(".md"):
+            md_dir = os.path.dirname(full)
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                    content = fh.read()
+            except Exception:
+                continue
+            for m in _MD_REF_RE.finditer(content):
+                ref_path = m.group(1) or m.group(2)
+                if not ref_path:
+                    continue
+                if ref_path.startswith(("http://", "https://", "data:", "note://",
+                                        "ftp://", "mailto:", "//", "\\\\")):
+                    continue
+                if "://" in ref_path or (len(ref_path) > 2 and ":" in ref_path[2:]):
+                    continue
+                abs_ref = os.path.normpath(os.path.join(md_dir, ref_path))
+                rel_ref = normalize_sep(os.path.relpath(abs_ref, root))
+                referenced.add(rel_ref)
+
+    if updated > 0 and metadata:
+        metadata.save()
     return hash_index, referenced
 
 
@@ -350,6 +423,7 @@ def auto_dedup(
     dry_run: bool = False,
     score_func=None,
     hash_cache: Dict[str, str] = None,
+    local_files: Dict[str, Dict] = None,
 ) -> Dict:
     """
     自动去重（编排层）。
@@ -360,6 +434,7 @@ def auto_dedup(
 
     :param api: 用于删除云端文件。不传则只删本地。
     :param hash_cache: sync 阶段积累的 abs_path → hash 缓存
+    :param local_files: scan_local 的结果（可选），避免重复遍历文件系统
     """
     stats = {
         "deleted": 0, "cloud_deleted": 0, "kept": 0,
@@ -367,7 +442,8 @@ def auto_dedup(
     }
 
     hash_index, referenced = build_all_indexes(root, metadata,
-                                               hash_cache=hash_cache)
+                                               hash_cache=hash_cache,
+                                               local_files=local_files)
     raw_dups = {h: ps for h, ps in hash_index.items() if len(ps) > 1}
     if not raw_dups:
         return stats

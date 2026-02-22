@@ -3,80 +3,67 @@ import logging
 from typing import Tuple
 
 
-class JsonConvert(object):
-    """
-    json 转换规则
-    """
+# 有道云 JSON 笔记的字段语义映射
+F_ATTRS = "4"       # 元素属性（链接 URL、语言、列表类型等）
+F_CHILDREN = "5"    # 子元素列表
+F_TYPE = "6"        # 元素类型标识（h/im/a/cd/la/q/l/t 等）
+F_SPANS = "7"       # 文本 span 列表
+F_TEXT = "8"         # span 中的文本内容
+F_TEXT_ATTRS = "9"   # span 的文本样式属性
+F_ATTR_TYPE = "2"    # 样式属性的类型标识（b=粗体, i=斜体）
 
-    def _get_common_text(self, content: dict) -> Tuple[list, str]:
-        """获取通常文本
-        :return
-            text(text): 文本内容
-        """
+
+class JsonConvert(object):
+    """有道云 JSON 笔记转 Markdown"""
+
+    def _get_common_text(self, content: dict) -> str:
         all_text = ""
-        # 5 内容
-        five_contents = content.get("5")
-        # 判断是否是普通文本
-        if five_contents:
-            seven_contents = five_contents[0].get("7")
-            if not seven_contents:
+        children = content.get(F_CHILDREN)
+        if children:
+            spans = children[0].get(F_SPANS)
+            if not spans:
                 return all_text
-            for seven_content in seven_contents:
-                # 8 文本
-                text = seven_content.get("8")
-                # 9 文本属性
-                text_attrs = seven_content.get("9")
+            for span in spans:
+                text = span.get(F_TEXT)
+                text_attrs = span.get(F_TEXT_ATTRS)
                 if text and text_attrs:
                     text = self._convert_text_attribute(text, text_attrs)
                 all_text += text
         return all_text
 
     def _convert_text_attribute(self, text: str, text_attrs: list):
-        """文本属性"""
-
         if isinstance(text_attrs, list) and text_attrs and text:
             for attr in text_attrs:
-                if attr["2"] == "b":
-                    # 粗体
+                if attr[F_ATTR_TYPE] == "b":
                     text = f"**{text}**"
-                elif attr["2"] == "i":
-                    # 斜体
+                elif attr[F_ATTR_TYPE] == "i":
                     text = f"*{text}*"
-
         return text
 
     def convert_text_func(self, content) -> str:
         """正常文本、粗体、斜体、删除线、链接"""
         all_text = ""
-        one_five_contents = content.get("5")
-        if one_five_contents:
-            for one_five_content in one_five_contents:
-                # 包含 6 和 7
-                two_five_contents = one_five_content.get("5")
-                # 文本类型
-                text_type = one_five_content.get("6")
-                # 文本和属性
-                seven_contents = one_five_content.get("7")
+        one_children = content.get(F_CHILDREN)
+        if one_children:
+            for child in one_children:
+                two_children = child.get(F_CHILDREN)
+                text_type = child.get(F_TYPE)
+                spans = child.get(F_SPANS)
 
-                # 获取文本和属性
-                if seven_contents and not two_five_contents:
+                if spans and not two_children:
                     text = ""
-                    for seven_content in seven_contents:
-                        # 8 文本
-                        raw = seven_content.get("8")
-                        # 9 文本属性
-                        text_attrs = seven_content.get("9")
+                    for span in spans:
+                        raw = span.get(F_TEXT)
+                        text_attrs = span.get(F_TEXT_ATTRS)
                         if raw and text_attrs:
                             raw = self._convert_text_attribute(raw, text_attrs)
                         text += raw
 
-                # 链接类型
-                elif text_type == "li" and two_five_contents:
-                    source_text = self._get_common_text(one_five_content)
-                    # 附加信息
-                    four_contents = one_five_content.get("4")
-                    if four_contents:
-                        hf = four_contents.get("hf")
+                elif text_type == "li" and two_children:
+                    source_text = self._get_common_text(child)
+                    attrs = child.get(F_ATTRS)
+                    if attrs:
+                        hf = attrs.get("hf")
                         text = f"[{source_text}]({hf})"
                     else:
                         text = ""
@@ -88,8 +75,8 @@ class JsonConvert(object):
 
     def convert_h_func(self, content) -> str:
         """标题"""
-        four = content.get("4") or {}
-        type_name = four.get("l")
+        attrs = content.get(F_ATTRS) or {}
+        type_name = attrs.get("l")
         text = self._get_common_text(content=content)
         if text and type_name:
             level_str = type_name.replace("h", "")
@@ -102,75 +89,67 @@ class JsonConvert(object):
 
     def convert_im_func(self, content):
         """图片"""
-        four = content.get("4") or {}
-        image_url = four.get("u", "")
-        return "![]({image_url})".format(image_url=image_url)
+        attrs = content.get(F_ATTRS) or {}
+        image_url = attrs.get("u", "")
+        return f"![]({image_url})"
 
     def convert_a_func(self, content):
         """附件"""
-        four = content.get("4") or {}
-        fn = four.get("fn", "")
-        fl = four.get("re", "")
-        return "[{text}]({resource_url})".format(text=fn, resource_url=fl)
+        attrs = content.get(F_ATTRS) or {}
+        fn = attrs.get("fn", "")
+        fl = attrs.get("re", "")
+        return f"[{fn}]({fl})"
 
     def convert_cd_func(self, content):
         """代码块"""
-        four = content.get("4") or {}
-        language = four.get("la", "")
-        codes: list = content.get("5") or []
+        attrs = content.get(F_ATTRS) or {}
+        language = attrs.get("la", "")
+        codes: list = content.get(F_CHILDREN) or []
         code_block = ""
         for code in codes:
             text = self._get_common_text(code)
             code_block += text + "\n"
-
-        return "```{language}\n{code_block}```".format(
-            language=language, code_block=code_block
-        )
+        return f"```{language}\n{code_block}```"
 
     def convert_la_func(self, content):
         """高亮块"""
-        lines: list = content.get("5")
+        lines: list = content.get(F_CHILDREN)
         highlight_block = ""
         for line in lines:
             text = self._get_common_text(line)
             highlight_block += text + "\n"
-
-        return "```\n{highlight_block}```".format(highlight_block=highlight_block)
+        return f"```\n{highlight_block}```"
 
     def convert_q_func(self, content):
         """引用"""
-        q_text_list = content.get("5") or []
+        q_text_list = content.get(F_CHILDREN) or []
         text = ""
         for q_text_dict in q_text_list:
             q_text = self._get_common_text(q_text_dict)
-            # 去除第一行的换行
             q_text = q_text.replace("\n", "")
-            text += "> {q_text}\n".format(q_text=q_text)
+            text += f"> {q_text}\n"
         return text
 
     def convert_l_func(self, content):
-        """有序列表和无序列表，有序列表转成无序列表"""
+        """有序列表和无序列表"""
         text = self._get_common_text(content=content)
-        four = content.get("4") or {}
-        is_ordered = four.get("lt", "unordered")
+        attrs = content.get(F_ATTRS) or {}
+        is_ordered = attrs.get("lt", "unordered")
         if is_ordered == "unordered":
-            level = four.get("ll", 1) or 1
-            return "\t" * (level - 1) + "- {text}".format(text=text)
+            level = attrs.get("ll", 1) or 1
+            return "\t" * (level - 1) + f"- {text}"
         elif is_ordered == "ordered":
-            return "1. {text}".format(text=text)
+            return f"1. {text}"
 
     def convert_t_func(self, content):
-        """
-        表格转换
-        """
-        nl = "\n"
-        tr_list = content.get("5") or []
+        """表格转换"""
+        tr_list = content.get(F_CHILDREN) or []
         if not tr_list:
             return ""
         table_lines = ""
 
         for index, tc in enumerate(tr_list):
-            table_content_list = tc.get("5") or []
+            table_content_list = tc.get(F_CHILDREN) or []
             table_content_len = len(table_content_list)
             if index == 1:
                 table_line = "| -- " * table_content_len + "|\n| "
@@ -178,14 +157,14 @@ class JsonConvert(object):
                 table_line = "| "
             for table_content in table_content_list:
                 try:
-                    inner_5 = (table_content.get("5") or [{}])[0]
-                    inner_5_2 = (inner_5.get("5") or [{}])[0]
-                    table_text_list = inner_5_2.get("7")
-                    table_text = table_text_list[0].get("8", " ") if table_text_list else " "
+                    inner = (table_content.get(F_CHILDREN) or [{}])[0]
+                    inner2 = (inner.get(F_CHILDREN) or [{}])[0]
+                    spans = inner2.get(F_SPANS)
+                    table_text = spans[0].get(F_TEXT, " ") if spans else " "
                 except (IndexError, AttributeError, TypeError):
                     table_text = " "
                 table_line = table_line + table_text + " | "
-            table_lines = table_lines + table_line + f"{nl}"
+            table_lines = table_lines + table_line + "\n"
         return table_lines
 
 
@@ -197,18 +176,18 @@ def json_bytes_to_markdown(data: bytes) -> str:
         logging.error(e)
         return ""
 
-    json_contents = json_data.get("5")
+    json_contents = json_data.get(F_CHILDREN)
     if not json_contents:
-        logging.warning("JSON 笔记缺少 '5' 内容字段，跳过转换")
+        logging.warning("JSON 笔记缺少内容字段，跳过转换")
         return ""
 
     converter = JsonConvert()
     new_content_list = []
     for content in json_contents:
-        ctype = content.get("6")
+        ctype = content.get(F_TYPE)
         if ctype:
             convert_func = getattr(
-                converter, "convert_{}_func".format(ctype), None
+                converter, f"convert_{ctype}_func", None
             )
             if not convert_func:
                 line_content = converter.convert_text_func(content)

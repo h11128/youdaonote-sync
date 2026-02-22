@@ -9,7 +9,7 @@ import os
 import shutil
 import logging
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from src.sync.metadata import SyncMetadata
 from src.sync.utils import compute_content_hash
@@ -62,8 +62,21 @@ def _detect_cloud_moves(
             old_abs = os.path.join(local_dir, local_rel)
             new_abs = os.path.join(local_dir, cloud_new)
             if os.path.exists(old_abs):
-                os.makedirs(os.path.dirname(new_abs), exist_ok=True)
-                shutil.move(old_abs, new_abs)
+                try:
+                    os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+                    shutil.move(old_abs, new_abs)
+                except OSError as e:
+                    logging.error(f"移动文件失败: {old_abs} → {new_abs} - {e}")
+                    local_files[local_rel] = local_files.pop(cloud_new)
+                    only_local.add(local_rel)
+                    only_cloud.add(cloud_new)
+                    continue
+            else:
+                logging.warning(f"源文件不存在，跳过移动: {old_abs}")
+                local_files[local_rel] = local_files.pop(cloud_new)
+                only_local.add(local_rel)
+                only_cloud.add(cloud_new)
+                continue
             local_files[cloud_new]["path"] = new_abs
 
             ci = cloud_files[cloud_new]
@@ -144,7 +157,7 @@ def _detect_cross_dir_duplicates(
     metadata: SyncMetadata,
     local_dir: str,
     dry_run: bool,
-    hash_cache: Dict[str, str] = None,
+    hash_cache: Optional[Dict[str, str]] = None,
 ) -> int:
     """跨目录重复检测：上传候选和下载候选中同名或同内容的文件。
 
@@ -218,12 +231,13 @@ def _detect_cross_dir_duplicates(
             norm = normalize_filename(os.path.basename(cp)).lower()
             cloud_name_index[norm].append(cp)
 
+        _MAX_NAME_CANDIDATES = 10
         for lp in list(remaining_local):
             norm = normalize_filename(os.path.basename(lp)).lower()
             if norm in _GENERIC_NAMES:
                 continue
             candidates = cloud_name_index.get(norm, [])
-            if not candidates:
+            if not candidates or len(candidates) > _MAX_NAME_CANDIDATES:
                 continue
 
             best_cp = None
@@ -264,8 +278,21 @@ def _detect_cross_dir_duplicates(
             old_abs = os.path.join(local_dir, local_path)
             new_abs = os.path.join(local_dir, cloud_path)
             if os.path.exists(old_abs):
-                os.makedirs(os.path.dirname(new_abs), exist_ok=True)
-                shutil.move(old_abs, new_abs)
+                try:
+                    os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+                    shutil.move(old_abs, new_abs)
+                except OSError as e:
+                    logging.error(f"移动文件失败: {old_abs} → {new_abs} - {e}")
+                    local_files[local_path] = local_files.pop(cloud_path)
+                    only_local.add(local_path)
+                    only_cloud.add(cloud_path)
+                    continue
+            else:
+                logging.warning(f"源文件不存在，跳过移动: {old_abs}")
+                local_files[local_path] = local_files.pop(cloud_path)
+                only_local.add(local_path)
+                only_cloud.add(cloud_path)
+                continue
             local_files[cloud_path]["path"] = new_abs
 
             ci = cloud_files[cloud_path]
@@ -293,7 +320,7 @@ def reconcile_moves(
     metadata: SyncMetadata,
     local_dir: str,
     dry_run: bool = False,
-    hash_cache: Dict[str, str] = None,
+    hash_cache: Optional[Dict[str, str]] = None,
 ) -> int:
     """检测并处理文件移动/重命名（编排层）。
 

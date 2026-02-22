@@ -239,7 +239,7 @@ def cmd_moves(args):
     calibrate_metadata(meta, cloud_files, local_files)
 
     items = mgr._collect_items(cloud_dir_id, "")
-    items = filter_by_direction(items, SyncDirection.BOTH)
+    items, _ = filter_by_direction(items, SyncDirection.BOTH)
 
     uploads = sorted([i for i in items if i.action == SyncAction.UPLOAD and not i.is_dir],
                      key=lambda x: x.relative_path)
@@ -391,7 +391,7 @@ def cmd_decision(args):
         print("=" * 60)
 
         items = mgr._collect_items(cloud_dir_id, "")
-        items = filter_by_direction(items, SyncDirection.BOTH)
+        items, _ = filter_by_direction(items, SyncDirection.BOTH)
         filtered = [i for i in items
                     if i.action == SyncAction.UPLOAD
                     and i.relative_path.startswith(args.prefix)

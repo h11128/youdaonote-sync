@@ -1,16 +1,19 @@
 """
 云端/本地文件扫描
 
-提供 scan_cloud() 和 scan_local() 两个入口，
+提供 scan_cloud() / async_scan_cloud() / scan_local() 三个入口，
 以及 map_cloud_name() 统一路径映射逻辑。
 """
 
+import asyncio
 import os
 import logging
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, TYPE_CHECKING
+
+import httpx
 
 from src.common import normalize_sep
 
@@ -91,6 +94,7 @@ def scan_cloud(api: "DirBrowser", dir_id: str, base: str = "",
     pending = threading.Semaphore(0)
     active = [1]  # 活跃任务计数（用 list 以便在闭包中修改）
     active_lock = threading.Lock()
+    visited: set = {dir_id}
 
     def _worker():
         while True:
@@ -102,9 +106,14 @@ def scan_cloud(api: "DirBrowser", dir_id: str, base: str = "",
             did, bpath = item
             try:
                 subdirs, _ = _fetch_dir(did, bpath)
+                new_dirs = []
                 with active_lock:
-                    active[0] += len(subdirs)
-                for sd in subdirs:
+                    for sd_id, sd_path in subdirs:
+                        if sd_id not in visited:
+                            visited.add(sd_id)
+                            new_dirs.append((sd_id, sd_path))
+                    active[0] += len(new_dirs)
+                for sd in new_dirs:
                     q.put(sd)
                     pending.release()
             except Exception as e:
@@ -129,6 +138,91 @@ def scan_cloud(api: "DirBrowser", dir_id: str, base: str = "",
         threads.append(t)
     for t in threads:
         t.join()
+
+    return files
+
+
+async def async_scan_cloud(
+    client: httpx.AsyncClient,
+    dir_url_template: str,
+    page_size: int,
+    cstk: str,
+    dir_id: str,
+    base: str = "",
+    max_concurrent: int = DEFAULT_SCAN_WORKERS,
+) -> Dict[str, Dict]:
+    """异步并发获取云端文件列表（BFS + asyncio.Semaphore）。
+
+    与 scan_cloud() 返回格式完全一致，但使用 httpx.AsyncClient 实现真正的异步 I/O。
+
+    :param client: httpx.AsyncClient 实例
+    :param dir_url_template: 目录列表 URL 模板（含 {dir_id}, {page_size}, {cstk}）
+    :param page_size: 每页条目数
+    :param cstk: 认证 token
+    :param dir_id: 根目录 ID
+    :param base: 路径前缀
+    :param max_concurrent: 最大并发数
+    """
+    if not dir_id:
+        raise ValueError("dir_id 不能为空")
+
+    files: Dict[str, Dict] = {}
+    sem = asyncio.Semaphore(max_concurrent)
+
+    async def _fetch_dir(did: str, bpath: str) -> List[tuple]:
+        async with sem:
+            url = dir_url_template.format(dir_id=did, page_size=page_size, cstk=cstk)
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as e:
+                logging.error(f"获取云端目录失败: {bpath} - {e}")
+                return []
+
+        subdirs: List[tuple] = []
+        for entry in data.get("entries", []):
+            fe = entry.get("fileEntry", {})
+            name = fe.get("name", "")
+            if name.startswith("."):
+                continue
+
+            rel = f"{bpath}/{name}".lstrip("/") if bpath else name
+            info = {
+                "id": fe.get("id", ""),
+                "parent_id": did,
+                "name": name,
+                "is_dir": fe.get("dir", False),
+                "mtime": fe.get("modifyTimeForSort", 0),
+                "ctime": fe.get("createTimeForSort", 0),
+                "domain": fe.get("domain", 1),
+            }
+
+            if info["is_dir"]:
+                files[rel] = info
+                subdirs.append((info["id"], rel))
+            else:
+                local_name = map_cloud_name(name)
+                local_rel = f"{bpath}/{local_name}".lstrip("/") if bpath else local_name
+                files[local_rel] = info
+
+        return subdirs
+
+    # BFS: 逐层并发扫描（visited 防止循环引用导致死循环）
+    visited: set = {dir_id}
+    pending = [(dir_id, base)]
+    while pending:
+        tasks = [_fetch_dir(did, bp) for did, bp in pending]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        pending = []
+        for result in results:
+            if isinstance(result, BaseException):
+                logging.error(f"扫描目录异常: {result}")
+                continue
+            for sub_id, sub_path in result:
+                if sub_id not in visited:
+                    visited.add(sub_id)
+                    pending.append((sub_id, sub_path))
 
     return files
 

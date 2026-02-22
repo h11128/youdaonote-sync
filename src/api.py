@@ -1,12 +1,11 @@
 import json
 import logging
 import os
-import threading
 import time
 import uuid
+from urllib.parse import quote as url_quote
 
-import requests
-from requests.adapters import HTTPAdapter
+import httpx
 
 from src.common import get_config_directory, NoteDomain
 
@@ -42,42 +41,48 @@ class YoudaoNoteApi(object):
         "https://note.youdao.com/yws/api/personal/file?method=create&keyfrom=web&cstk={cstk}"
     )
 
-    # 连接池配置：并发 worker 最多 ~18 个线程，给一些余量
-    POOL_CONNECTIONS = 20
     POOL_MAXSIZE = 20
-    # 默认 HTTP 超时（连接超时, 读取超时），秒
-    DEFAULT_TIMEOUT = (10, 60)
+    DEFAULT_TIMEOUT = httpx.Timeout(10.0, read=60.0)
 
     def __init__(self, cookies_path=None):
         """
         初始化
         :param cookies_path:
         """
-        self.session = requests.session()
-        # 增大连接池，适配并发扫描/下载/上传
-        adapter = HTTPAdapter(
-            pool_connections=self.POOL_CONNECTIONS,
-            pool_maxsize=self.POOL_MAXSIZE,
+        transport = httpx.HTTPTransport(retries=3)
+        self.session = httpx.Client(
+            transport=transport,
+            timeout=self.DEFAULT_TIMEOUT,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/100.0.4896.88 Safari/537.36"
+                ),
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "sec-ch-ua": '" Not A;Brand";v="99", "Chromium";v="100", "Google Chrome";v="100"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"macOS"',
+            },
+            follow_redirects=True,
         )
-        self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
-        self._session_lock = threading.Lock()
-        self.session.headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/100.0.4896.88 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "sec-ch-ua": '" Not A;Brand";v="99", "Chromium";v="100", "Google Chrome";v="100"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"macOS"',
-        }
         self.cookies_path = (
             cookies_path
             if cookies_path
             else os.path.join(get_config_directory(), "cookies.json")
         )
         self.cstk = None
+
+    def create_async_client(self) -> httpx.AsyncClient:
+        """创建共享认证配置的异步 HTTP 客户端（用于 engine 的 async 内循环）。"""
+        return httpx.AsyncClient(
+            transport=httpx.AsyncHTTPTransport(retries=3),
+            timeout=self.DEFAULT_TIMEOUT,
+            headers=dict(self.session.headers),
+            cookies=self.session.cookies,
+            follow_redirects=True,
+        )
 
     def login_by_cookies(self) -> str:
         """
@@ -96,7 +101,7 @@ class YoudaoNoteApi(object):
             if not isinstance(cookie, list) or len(cookie) < 4:
                 continue
             self.session.cookies.set(
-                name=cookie[0], value=cookie[1], domain=cookie[2], path=cookie[3]
+                cookie[0], cookie[1], domain=cookie[2], path=cookie[3]
             )
 
         # 遍历查找 YNOTE_CSTK（不假设位于第一项）
@@ -116,8 +121,7 @@ class YoudaoNoteApi(object):
         :param files:
         :return: response
         """
-        with self._session_lock:
-            resp = self.session.post(url, data=data, files=files, timeout=self.DEFAULT_TIMEOUT)
+        resp = self.session.post(url, data=data, files=files)
         resp.raise_for_status()
         return resp
 
@@ -127,8 +131,7 @@ class YoudaoNoteApi(object):
         :param url:
         :return: response
         """
-        with self._session_lock:
-            resp = self.session.get(url, timeout=self.DEFAULT_TIMEOUT)
+        resp = self.session.get(url)
         resp.raise_for_status()
         return resp
 
@@ -345,7 +348,7 @@ class YoudaoNoteApi(object):
         now = int(time.time())
         url = (
             f"https://note.youdao.com/yws/api/personal/sync?method=push"
-            f"&name={requests.utils.quote(new_name)}"
+            f"&name={url_quote(new_name)}"
             f"&fileId={file_id}"
             f"&domain={domain}"
             f"&rootVersion=-1"

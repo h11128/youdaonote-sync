@@ -45,30 +45,42 @@ class YoudaoNoteUpload:
     def ensure_parent_dir(self, rel_path: str) -> Optional[str]:
         """
         确保文件的父目录在云端存在并返回其 ID。
-        递归创建不存在的中间目录。
-        
+        迭代创建不存在的中间目录（从根往下逐级创建）。
+
         :param rel_path: 文件或目录的相对路径
         :return: 父目录 ID，失败返回 None
         """
         parent_rel = normalize_sep(os.path.dirname(rel_path))
-        
         if not parent_rel:
-            # 顶层 → 返回根目录 ID
             return self.api.get_root_id()
-        
-        # 元数据里已有记录
+
         cached_id = self.metadata.get_dir_id(parent_rel)
         if cached_id:
             return cached_id
-        
-        # 先确保祖先存在
-        grandparent_id = self.ensure_parent_dir(parent_rel)
-        if not grandparent_id:
-            return None
-        
-        # 创建本级目录
-        dir_name = os.path.basename(parent_rel)
-        return self.ensure_cloud_dir(dir_name, grandparent_id, parent_rel)
+
+        # 收集需要创建的层级（从目标往上找到已有或根目录为止）
+        to_create = []
+        current = parent_rel
+        while current:
+            existing = self.metadata.get_dir_id(current)
+            if existing:
+                break
+            to_create.append(current)
+            current = normalize_sep(os.path.dirname(current))
+
+        # current 为空说明到了根目录
+        parent_id = self.metadata.get_dir_id(current) if current else self.api.get_root_id()
+        if not parent_id:
+            parent_id = self.api.get_root_id()
+
+        # 从上到下逐级创建
+        for dir_rel in reversed(to_create):
+            dir_name = os.path.basename(dir_rel)
+            parent_id = self.ensure_cloud_dir(dir_name, parent_id, dir_rel)
+            if not parent_id:
+                return None
+
+        return parent_id
 
     def upload_file(
         self,

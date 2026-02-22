@@ -182,7 +182,7 @@ def cmd_dir_upload(args):
     local_files = scan_local(LOCAL_DIR, "")
 
     items = mgr._collect_items(cloud_dir_id, "")
-    items = filter_by_direction(items, SyncDirection.BOTH)
+    items, _ = filter_by_direction(items, SyncDirection.BOTH)
 
     upload_dirs = [i for i in items if i.action == SyncAction.UPLOAD and i.is_dir]
 

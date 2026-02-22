@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from enum import Enum
 from typing import Dict, Optional, Tuple, TYPE_CHECKING
 
-import requests
+import httpx
 
 if TYPE_CHECKING:
     from src.protocols import DownloadFileApi
@@ -129,7 +129,7 @@ class YoudaoNoteDownload:
             logging.info(f"{file_action.value}「{local_path}」{tip}")
             return True
 
-        except (OSError, requests.RequestException, RuntimeError) as e:
+        except (OSError, httpx.HTTPError, RuntimeError) as e:
             logging.error(f"下载文件 {file_name} 失败: {e}")
             return False
 

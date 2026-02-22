@@ -63,7 +63,7 @@ def main():
     mgr = SyncManager(api, LOCAL_DIR, meta)
     cloud_dir_id = api.get_root_id()
     items = mgr._collect_items(cloud_dir_id, "")
-    items = filter_by_direction(items, SyncDirection.BOTH)
+    items, _ = filter_by_direction(items, SyncDirection.BOTH)
 
     from collections import Counter
     action_count = Counter()

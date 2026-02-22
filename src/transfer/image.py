@@ -5,7 +5,7 @@ from typing import Tuple, TYPE_CHECKING
 from urllib import parse
 from urllib.parse import urlparse
 
-import requests
+import httpx
 
 if TYPE_CHECKING:
     from src.protocols import HttpClient
@@ -35,7 +35,7 @@ class AssetDownloader:
         """下载 URL 到本地，返回本地路径。失败返回空字符串。"""
         try:
             response = self.api.http_get(url)
-        except requests.exceptions.ProxyError as err:
+        except (httpx.ProxyError, httpx.ConnectError) as err:
             error_msg = "网络错误，「{}」下载失败。错误提示：{}".format(url, format(err))
             logging.warning(error_msg)
             return ""

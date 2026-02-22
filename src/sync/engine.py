@@ -5,16 +5,16 @@
 支持：冲突备份、Git 自动提交
 
 扫描、决策、移动检测、工具函数分别位于同包的：
-- scanner.py  — scan_cloud / scan_local / map_cloud_name
+- scanner.py  — scan_cloud / async_scan_cloud / scan_local / map_cloud_name
 - decision.py — calibrate_metadata / build_item
 - moves.py    — normalize_filename / reconcile_moves
 - utils.py    — SyncDirection / SyncAction / SyncItem / decide_action 等
 """
 
+import asyncio
 import os
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 
 from typing import TYPE_CHECKING
@@ -31,7 +31,7 @@ from src.sync.utils import (
     print_preview, print_dryrun_summary, backup_file,
     compute_content_hash,
 )
-from src.sync.scanner import scan_cloud, scan_local
+from src.sync.scanner import async_scan_cloud, scan_local
 from src.sync.decision import calibrate_metadata, build_item
 from src.sync.moves import reconcile_moves
 
@@ -43,7 +43,7 @@ class SyncManager:
     SCAN_WORKERS = 8          # 云端目录扫描并发数
     DOWNLOAD_WORKERS = 10     # 文件下载并发数
     UPLOAD_WORKERS = 5        # 文件上传并发数
-    METADATA_SAVE_BATCH = 50  # 每操作 N 个文件保存一次元数据
+    METADATA_SAVE_BATCH = 200 # 每操作 N 个文件保存一次元数据
 
     def __init__(self, api: "SyncApi", local_dir: str,
                  metadata: SyncMetadata = None,
@@ -118,7 +118,13 @@ class SyncManager:
         auto_git: bool = True,
         auto_dedup: bool = True,
     ) -> Dict:
-        """执行同步，返回统计信息"""
+        """执行同步，返回统计信息。
+
+        内部使用 asyncio 调度：
+        - 云端扫描：真正 async（httpx.AsyncClient）
+        - 本地扫描：asyncio.to_thread
+        - 下载/上传：asyncio.to_thread + Semaphore 控制并发
+        """
         if not cloud_dir_id:
             cloud_dir_id = self.api.get_root_id()
 
@@ -126,16 +132,9 @@ class SyncManager:
         self.stats = empty_stats()
         self._changed_paths = []
         self._hash_cache = {}
+        self._local_files = None
 
-        items = self._collect_items(cloud_dir_id, cloud_path, dry_run=dry_run)
-        items = filter_by_direction(items, direction)
-
-        if dry_run:
-            for item in items:
-                print_preview(item)
-            print_dryrun_summary(items)
-        else:
-            self._execute_all(items, direction)
+        asyncio.run(self._async_main(cloud_dir_id, cloud_path, direction, dry_run))
 
         # 保存残余的未保存元数据
         if self._meta_dirty > 0:
@@ -158,13 +157,28 @@ class SyncManager:
 
         return self.stats
 
+    async def _async_main(self, cloud_dir_id: str, cloud_path: str,
+                          direction: SyncDirection, dry_run: bool) -> None:
+        """asyncio 主流程：扫描 → 决策 → 执行。"""
+        all_items = await self._async_collect_items(cloud_dir_id, cloud_path, dry_run)
+        items, skip_count = filter_by_direction(all_items, direction)
+        self.stats["skipped"] += skip_count
+
+        if dry_run:
+            for item in items:
+                print_preview(item)
+            print_dryrun_summary(all_items)
+        else:
+            await self._async_execute_all(items, direction)
+
     def _run_dedup(self, dry_run: bool = False) -> Dict:
-        """执行基于内容 hash 的去重扫描"""
+        """执行基于内容 hash 的去重扫描（复用 scan_local 结果避免重复遍历）"""
         from src.sync.dedup import auto_dedup
         try:
             stats = auto_dedup(self.local_dir, metadata=self.metadata,
                                api=self.api, dry_run=dry_run,
-                               hash_cache=self._hash_cache)
+                               hash_cache=self._hash_cache,
+                               local_files=self._local_files)
             deleted = stats.get("deleted", 0)
             if deleted > 0:
                 logging.info(f"去重: 删除了 {deleted} 个重复文件")
@@ -176,21 +190,25 @@ class SyncManager:
 
     # ========== 收集差异 ==========
 
-    def _collect_items(self, cloud_dir_id: str, cloud_path: str,
-                       dry_run: bool = False) -> List[SyncItem]:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            cloud_future = pool.submit(
-                scan_cloud, self.api, cloud_dir_id, cloud_path,
-                self.SCAN_WORKERS)
-            local_future = pool.submit(scan_local, self.local_dir, cloud_path)
-            cloud_files = cloud_future.result()
-            local_files = local_future.result()
+    async def _async_collect_items(self, cloud_dir_id: str,
+                                   cloud_path: str,
+                                   dry_run: bool = False) -> List[SyncItem]:
+        """并发扫描云端（async）和本地（线程），然后做决策。"""
+        async with self.api.create_async_client() as aclient:
+            cloud_task = async_scan_cloud(
+                aclient, self.api.DIR_MES_URL, self.api.DIR_PAGE_SIZE,
+                self.api.cstk, cloud_dir_id, cloud_path, self.SCAN_WORKERS,
+            )
+            local_task = asyncio.to_thread(scan_local, self.local_dir, cloud_path)
+            cloud_files, local_files = await asyncio.gather(cloud_task, local_task)
 
         calibrate_metadata(self.metadata, cloud_files, local_files,
                            hash_cache=self._hash_cache)
         reconcile_moves(cloud_files, local_files, self.metadata,
                         self.local_dir, dry_run=dry_run,
                         hash_cache=self._hash_cache)
+
+        self._local_files = local_files
 
         all_paths = set(cloud_files.keys()) | set(local_files.keys())
         return [
@@ -201,60 +219,46 @@ class SyncManager:
 
     # ========== 执行 ==========
 
-    def _execute_all(self, items: List[SyncItem],
-                     direction: SyncDirection) -> None:
-        """并发执行同步操作"""
+    async def _async_execute_all(self, items: List[SyncItem],
+                                 direction: SyncDirection) -> None:
+        """异步并发执行同步操作（items 已不含 SKIP 项）。
+
+        下载/上传通过 asyncio.to_thread 在线程中运行，Semaphore 控制并发。
+        """
         dir_items = [i for i in items if i.is_dir]
         file_items = [i for i in items if not i.is_dir]
 
-        # 串行处理目录（需要确保父目录先于子目录创建）
         for item in dir_items:
             self._execute_dir(item)
 
-        # 分离需要操作的文件
-        action_items = []
-        skip_count = 0
-        for item in file_items:
-            if item.action == SyncAction.SKIP:
-                skip_count += 1
-            else:
-                action_items.append(item)
-        if skip_count:
-            self._inc_stat("skipped", skip_count)
-
-        if not action_items:
+        if not file_items:
             return
 
-        uploads = [i for i in action_items
+        uploads = [i for i in file_items
                    if i.action == SyncAction.UPLOAD]
-        downloads = [i for i in action_items
+        downloads = [i for i in file_items
                      if i.action in (SyncAction.DOWNLOAD, SyncAction.CONFLICT)]
 
-        # 上传和下载分开并发：不同瓶颈（API 速率 vs 网络带宽）
-        all_futures: Dict = {}
-        pools = []
-        if uploads:
-            up_pool = ThreadPoolExecutor(max_workers=self.UPLOAD_WORKERS)
-            pools.append(up_pool)
-            for item in uploads:
-                all_futures[up_pool.submit(
-                    self._execute_file, item, direction)] = item
-        if downloads:
-            dl_pool = ThreadPoolExecutor(max_workers=self.DOWNLOAD_WORKERS)
-            pools.append(dl_pool)
-            for item in downloads:
-                all_futures[dl_pool.submit(
-                    self._execute_file, item, direction)] = item
+        dl_sem = asyncio.Semaphore(self.DOWNLOAD_WORKERS)
+        ul_sem = asyncio.Semaphore(self.UPLOAD_WORKERS)
 
-        for fut in as_completed(all_futures):
-            try:
-                fut.result()
-            except Exception as e:
-                item = all_futures[fut]
-                self._record_error(item.relative_path, f"执行异常 - {e}")
+        async def _run_download(item: SyncItem) -> None:
+            async with dl_sem:
+                await asyncio.to_thread(self._execute_file, item, direction)
 
-        for p in pools:
-            p.shutdown(wait=False)
+        async def _run_upload(item: SyncItem) -> None:
+            async with ul_sem:
+                await asyncio.to_thread(self._execute_file, item, direction)
+
+        tasks = []
+        tasks.extend(_run_download(i) for i in downloads)
+        tasks.extend(_run_upload(i) for i in uploads)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                item = (downloads + uploads)[i]
+                self._record_error(item.relative_path, f"执行异常 - {result}")
 
     def _execute_file(self, item: SyncItem, direction: SyncDirection) -> None:
         """分发单个文件的同步操作（在线程池内调用）。"""
@@ -307,7 +311,8 @@ class SyncManager:
                 local_mtime = item.cloud_mtime
             content_hash = compute_content_hash(item.local_path)
             if content_hash:
-                self._hash_cache[item.local_path] = content_hash
+                with self._lock:
+                    self._hash_cache[item.local_path] = content_hash
             self._record_file_change(
                 item, "downloaded",
                 local_mtime=local_mtime, content_hash=content_hash)
@@ -320,8 +325,9 @@ class SyncManager:
             self._record_error(item.relative_path, "本地文件不存在")
             return
 
-        content_hash = (self._hash_cache.get(item.local_path)
-                        or compute_content_hash(item.local_path))
+        with self._lock:
+            cached_hash = self._hash_cache.get(item.local_path)
+        content_hash = cached_hash or compute_content_hash(item.local_path)
         if content_hash:
             with self._lock:
                 existing = self.metadata.find_cloud_file_by_hash(

@@ -41,12 +41,12 @@ class SyncMetadataTest(unittest.TestCase):
         self.meta = SyncMetadata(metadata_path=self.metadata_path)
 
     def tearDown(self):
-        if os.path.exists(self.metadata_path):
-            os.remove(self.metadata_path)
-        os.rmdir(self.tmpdir)
+        import shutil
+        self.meta.close()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_save_and_load(self):
-        """保存后重新加载，数据一致"""
+        """保存后重新打开，数据一致"""
         # Given
         self.meta.set_file_info("a/b.md", "WEB123", cloud_mtime=1000, local_mtime=1000)
 
@@ -56,6 +56,7 @@ class SyncMetadataTest(unittest.TestCase):
 
         # Then
         self.assertEqual(reloaded.get_file_id("a/b.md"), "WEB123")
+        reloaded.close()
 
     def test_set_and_get_file_info(self):
         """设置文件信息后能正确读取"""
@@ -159,17 +160,18 @@ class SyncMetadataTest(unittest.TestCase):
         # Then
         self.assertIsNotNone(self.meta.get_file_info("a/b/c.md"))
 
-    def test_load_corrupt_file(self):
-        """加载损坏的 JSON 文件不会崩溃"""
-        # Given
+    def test_load_corrupt_json_migration_safe(self):
+        """损坏的旧 JSON 文件不会导致迁移崩溃"""
+        # Given — 写入一个损坏的 JSON 文件
         with open(self.metadata_path, "w") as f:
             f.write("this is not json")
 
-        # When
-        meta = SyncMetadata(metadata_path=self.metadata_path)
+        # When — 创建新实例（会尝试迁移 JSON）
+        meta2 = SyncMetadata(metadata_path=self.metadata_path)
 
-        # Then — 不崩溃，使用空数据
-        self.assertEqual(meta.get_all_files(), {})
+        # Then — 不崩溃，数据库为空
+        self.assertEqual(meta2.get_all_files(), {})
+        meta2.close()
 
     # ---------- 反向索引 (find_cloud_file_by_hash) ----------
 
@@ -216,21 +218,15 @@ class SyncMetadataTest(unittest.TestCase):
         self.assertEqual(result, "b.md")
 
     def test_find_cloud_file_by_hash_ignores_no_file_id(self):
-        """没有 file_id 的文件不会被反向索引命中"""
-        # Given — set_file_info 的 file_id 参数是空字符串
-        self.meta._data["files"]["local.md"] = {
-            "file_id": "",  # 无 file_id
-            "cloud_mtime": 1,
-            "local_mtime": 1,
-            "content_hash": "abc123",
-        }
-        self.meta._rebuild_hash_index()
+        """没有 file_id 的文件不会被查询命中"""
+        # Given — file_id 为空字符串
+        self.meta.set_file_info("local.md", "", cloud_mtime=1, local_mtime=1, content_hash="abc123")
 
         # When / Then
         self.assertIsNone(self.meta.find_cloud_file_by_hash("abc123"))
 
     def test_hash_index_survives_save_reload(self):
-        """保存后重新加载，反向索引自动重建"""
+        """保存后重新打开，hash 查询仍正常"""
         # Given
         self.meta.set_file_info("a.md", "WEBA", cloud_mtime=1, content_hash="hash1")
         self.meta.save()
@@ -240,6 +236,7 @@ class SyncMetadataTest(unittest.TestCase):
 
         # Then
         self.assertEqual(reloaded.find_cloud_file_by_hash("hash1"), "a.md")
+        reloaded.close()
 
     def test_hash_index_updated_on_remove(self):
         """删除文件后反向索引同步清理"""
@@ -253,19 +250,17 @@ class SyncMetadataTest(unittest.TestCase):
         self.assertIsNone(self.meta.find_cloud_file_by_hash("hash1"))
 
     def test_hash_index_reindex_on_remove(self):
-        """删除文件后，同 hash 的其他文件自动接替索引"""
+        """删除文件后，同 hash 的其他文件仍可通过 hash 查找"""
         # Given — 两个文件共享同一个 content_hash
         self.meta.set_file_info("a.md", "WEBA", cloud_mtime=1, content_hash="shared")
         self.meta.set_file_info("b.md", "WEBB", cloud_mtime=2, content_hash="shared")
 
-        # When — 删除索引指向的那个文件
-        indexed_path = self.meta._hash_index.get("shared")
-        other_path = "b.md" if indexed_path == "a.md" else "a.md"
-        self.meta.remove_file(indexed_path)
+        # When — 删除其中一个
+        self.meta.remove_file("a.md")
 
-        # Then — 索引自动指向另一个文件
+        # Then — 另一个仍可查到
         result = self.meta.find_cloud_file_by_hash("shared")
-        self.assertEqual(result, other_path)
+        self.assertEqual(result, "b.md")
 
     def test_hash_index_updated_on_update_content_hash(self):
         """update_content_hash 后反向索引更新"""
@@ -498,9 +493,9 @@ class CloudScoreTest(unittest.TestCase):
         self.meta = SyncMetadata(metadata_path=self.metadata_path)
 
     def tearDown(self):
-        if os.path.exists(self.metadata_path):
-            os.remove(self.metadata_path)
-        os.rmdir(self.tmpdir)
+        import shutil
+        self.meta.close()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_deeper_path_scores_higher(self):
         """路径越深分数越高"""
@@ -569,56 +564,54 @@ class DedupCollisionTest(unittest.TestCase):
         """同 hash 但不同大小的文件不当作重复"""
         from src.sync.dedup import auto_dedup
 
-        # Given — 创建两个文件，手动构造"碰撞"场景
-        # 正常情况下 MD5 不会碰撞，这里直接用 metadata 模拟
         meta = SyncMetadata(metadata_path=os.path.join(self.tmpdir, "meta.json"))
+        try:
+            f1 = os.path.join(self.tmpdir, "file1.md")
+            f2 = os.path.join(self.tmpdir, "file2.md")
+            with open(f1, "w") as f:
+                f.write("short")
+            with open(f2, "w") as f:
+                f.write("this is a much longer content")
 
-        # 写入两个不同大小的文件
-        f1 = os.path.join(self.tmpdir, "file1.md")
-        f2 = os.path.join(self.tmpdir, "file2.md")
-        with open(f1, "w") as f:
-            f.write("short")
-        with open(f2, "w") as f:
-            f.write("this is a much longer content")
+            meta.set_file_info("file1.md", "WEB1", cloud_mtime=1, content_hash="collision_hash")
+            meta.set_file_info("file2.md", "WEB2", cloud_mtime=2, content_hash="collision_hash")
+            meta.save()
 
-        # 给它们赋相同的 content_hash（模拟碰撞）+ 不同的 file_id（都是云端文件）
-        meta.set_file_info("file1.md", "WEB1", cloud_mtime=1, content_hash="collision_hash")
-        meta.set_file_info("file2.md", "WEB2", cloud_mtime=2, content_hash="collision_hash")
-        meta.save()
+            # When
+            stats = auto_dedup(self.tmpdir, metadata=meta, dry_run=True)
 
-        # When
-        stats = auto_dedup(self.tmpdir, metadata=meta, dry_run=True)
-
-        # Then — 两个文件大小不同，碰撞防护应该拆分它们，不产生删除动作
-        self.assertEqual(stats["deleted"], 0)
+            # Then
+            self.assertEqual(stats["deleted"], 0)
+        finally:
+            meta.close()
 
     def test_same_hash_same_size_deduped(self):
         """同 hash 同大小的文件正常去重"""
         from src.sync.dedup import auto_dedup
 
-        # Given — 两个内容完全相同的文件
         meta = SyncMetadata(metadata_path=os.path.join(self.tmpdir, "meta.json"))
+        try:
+            f1 = os.path.join(self.tmpdir, "file1.md")
+            f2 = os.path.join(self.tmpdir, "file2.md")
+            content = "identical content"
+            with open(f1, "w") as f:
+                f.write(content)
+            with open(f2, "w") as f:
+                f.write(content)
 
-        f1 = os.path.join(self.tmpdir, "file1.md")
-        f2 = os.path.join(self.tmpdir, "file2.md")
-        content = "identical content"
-        with open(f1, "w") as f:
-            f.write(content)
-        with open(f2, "w") as f:
-            f.write(content)
+            real_hash = SyncMetadata.compute_content_hash(f1)
+            meta.set_file_info("file1.md", "WEB1", cloud_mtime=1, content_hash=real_hash)
+            meta.set_file_info("file2.md", "WEB2", cloud_mtime=2, content_hash=real_hash)
+            meta.save()
 
-        # 两个都是云端文件，相同 hash
-        real_hash = SyncMetadata.compute_content_hash(f1)
-        meta.set_file_info("file1.md", "WEB1", cloud_mtime=1, content_hash=real_hash)
-        meta.set_file_info("file2.md", "WEB2", cloud_mtime=2, content_hash=real_hash)
-        meta.save()
+            # When
+            stats = auto_dedup(self.tmpdir, metadata=meta, dry_run=True)
 
-        # When
-        stats = auto_dedup(self.tmpdir, metadata=meta, dry_run=True)
-
-        # Then — 同大小同 hash，应该触发去重（保留 1 个删除 1 个）
-        self.assertEqual(stats["deleted"], 1)
-        self.assertEqual(stats["kept"], 1)
+            # Then
+            self.assertEqual(stats["deleted"], 1)
+            self.assertEqual(stats["kept"], 1)
+        finally:
+            meta.close()
 
 
 # ========== covert.py 防御性处理测试 ==========
@@ -946,26 +939,26 @@ class CustomScoreFuncTest(unittest.TestCase):
         # Given
         tmpdir = tempfile.mkdtemp()
         meta = SyncMetadata(metadata_path=os.path.join(tmpdir, "meta.json"))
-        meta.set_file_info("a/x.md", "WEB1", cloud_mtime=1000, local_mtime=1000)
-        meta.set_file_info("b/x.md", "WEB2", cloud_mtime=1000, local_mtime=1000)
+        try:
+            meta.set_file_info("a/x.md", "WEB1", cloud_mtime=1000, local_mtime=1000)
+            meta.set_file_info("b/x.md", "WEB2", cloud_mtime=1000, local_mtime=1000)
 
-        # 自定义评分：路径含 "b/" 的得分更高
-        def custom_score(path, metadata, root):
-            return 100 if path.startswith("b/") else 0
+            def custom_score(path, metadata, root):
+                return 100 if path.startswith("b/") else 0
 
-        # When
-        keep, remove = _resolve_cloud_group(
-            ["a/x.md", "b/x.md"], meta, set(), tmpdir,
-            {"skipped": 0}, score_func=custom_score,
-        )
+            # When
+            keep, remove = _resolve_cloud_group(
+                ["a/x.md", "b/x.md"], meta, set(), tmpdir,
+                {"skipped": 0}, score_func=custom_score,
+            )
 
-        # Then
-        self.assertEqual(keep, ["b/x.md"])
-        self.assertEqual(remove, ["a/x.md"])
-
-        # Cleanup
-        import shutil
-        shutil.rmtree(tmpdir, ignore_errors=True)
+            # Then
+            self.assertEqual(keep, ["b/x.md"])
+            self.assertEqual(remove, ["a/x.md"])
+        finally:
+            meta.close()
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ========== P0 纯函数测试 ==========
@@ -1107,8 +1100,8 @@ class NormalizeFilenameTest(unittest.TestCase):
 class FilterByDirectionTest(unittest.TestCase):
     """filter_by_direction() 按方向过滤"""
 
-    def test_pull_only_download_and_skip(self):
-        """PULL direction → only DOWNLOAD and SKIP"""
+    def test_pull_only_download_and_conflict(self):
+        """PULL direction → only DOWNLOAD and CONFLICT, SKIP counted separately"""
         # Given
         items = [
             SyncItem("a.md", None, "id1", None, None, 100, False, SyncAction.DOWNLOAD),
@@ -1117,14 +1110,15 @@ class FilterByDirectionTest(unittest.TestCase):
             SyncItem("d.md", None, "id4", None, None, 100, False, SyncAction.CONFLICT),
         ]
         # When
-        result = filter_by_direction(items, SyncDirection.PULL)
+        result, skip_count = filter_by_direction(items, SyncDirection.PULL)
         # Then
         self.assertEqual(len(result), 2)
         actions = {i.action for i in result}
-        self.assertEqual(actions, {SyncAction.DOWNLOAD, SyncAction.SKIP})
+        self.assertEqual(actions, {SyncAction.DOWNLOAD, SyncAction.CONFLICT})
+        self.assertEqual(skip_count, 2)
 
-    def test_push_only_upload_and_skip(self):
-        """PUSH direction → only UPLOAD and SKIP"""
+    def test_push_only_upload(self):
+        """PUSH direction → only UPLOAD, rest are skipped"""
         # Given
         items = [
             SyncItem("a.md", None, "id1", None, None, 100, False, SyncAction.DOWNLOAD),
@@ -1133,14 +1127,15 @@ class FilterByDirectionTest(unittest.TestCase):
             SyncItem("d.md", None, "id4", None, None, 100, False, SyncAction.CONFLICT),
         ]
         # When
-        result = filter_by_direction(items, SyncDirection.PUSH)
+        result, skip_count = filter_by_direction(items, SyncDirection.PUSH)
         # Then
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 1)
         actions = {i.action for i in result}
-        self.assertEqual(actions, {SyncAction.UPLOAD, SyncAction.SKIP})
+        self.assertEqual(actions, {SyncAction.UPLOAD})
+        self.assertEqual(skip_count, 3)
 
-    def test_both_all_items(self):
-        """BOTH direction → all items"""
+    def test_both_returns_non_skip_items(self):
+        """BOTH direction → all non-SKIP items, SKIP counted"""
         # Given
         items = [
             SyncItem("a.md", None, "id1", None, None, 100, False, SyncAction.DOWNLOAD),
@@ -1149,9 +1144,10 @@ class FilterByDirectionTest(unittest.TestCase):
             SyncItem("d.md", None, "id4", None, None, 100, False, SyncAction.CONFLICT),
         ]
         # When
-        result = filter_by_direction(items, SyncDirection.BOTH)
+        result, skip_count = filter_by_direction(items, SyncDirection.BOTH)
         # Then
-        self.assertEqual(len(result), 4)
+        self.assertEqual(len(result), 3)
+        self.assertEqual(skip_count, 1)
 
 
 class FormatFileSizeTest(unittest.TestCase):
@@ -1282,6 +1278,339 @@ class OptimizeFileNameTest(unittest.TestCase):
         result = self.downloader._optimize_file_name(name)
         # Then
         self.assertEqual(result, "abc")
+
+
+# ========== 第三轮审查补全测试 ==========
+
+
+class MetadataPartialUpdateTest(unittest.TestCase):
+    """UPSERT 部分更新 + domain=0 + close 安全性测试"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.meta = SyncMetadata(
+            metadata_path=os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        import shutil
+        self.meta.close()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_partial_update_preserves_existing_fields(self):
+        """先设全字段，再只更新 file_id+cloud_mtime，原有字段应保留"""
+        # Given
+        self.meta.set_file_info(
+            "a.md", "WEB1", cloud_mtime=1000, local_mtime=1000,
+            parent_id="P1", domain=1, content_hash="abc123",
+            create_time=500,
+        )
+
+        # When — 第二次调用只传必需参数
+        self.meta.set_file_info("a.md", "WEB1", cloud_mtime=2000)
+
+        # Then — 可选字段应保留原值
+        info = self.meta.get_file_info("a.md")
+        self.assertEqual(info["cloud_mtime"], 2000)
+        self.assertEqual(info["content_hash"], "abc123")
+        self.assertEqual(info["domain"], 1)
+        self.assertEqual(info["parent_id"], "P1")
+        self.assertEqual(info["create_time"], 500)
+
+    def test_domain_zero_preserved(self):
+        """domain=0（普通笔记）不应被过滤"""
+        # When
+        self.meta.set_file_info(
+            "note.md", "WEB1", cloud_mtime=1000, domain=0)
+
+        # Then
+        info = self.meta.get_file_info("note.md")
+        self.assertIn("domain", info)
+        self.assertEqual(info["domain"], 0)
+
+    def test_domain_zero_in_get_all_files(self):
+        """get_all_files 也应包含 domain=0"""
+        self.meta.set_file_info(
+            "note.md", "WEB1", cloud_mtime=1000, domain=0)
+
+        all_files = self.meta.get_all_files()
+        self.assertIn("domain", all_files["note.md"])
+        self.assertEqual(all_files["note.md"]["domain"], 0)
+
+    def test_close_twice_no_crash(self):
+        """close() 调用两次不应抛异常"""
+        self.meta.close()
+        self.meta.close()
+
+    def test_find_cloud_file_by_hash_ignores_null_rows(self):
+        """content_hash 为 NULL 的行不应被 find_cloud_file_by_hash 匹配"""
+        # Given — 一行有 hash，一行无 hash（NULL）
+        self.meta.set_file_info(
+            "a.md", "WEB1", cloud_mtime=1000, content_hash="abc")
+        self.meta.set_file_info(
+            "b.md", "WEB2", cloud_mtime=1000)
+
+        # When — 搜索 "abc"
+        result = self.meta.find_cloud_file_by_hash("abc")
+        self.assertEqual(result, "a.md")
+
+        # When — 搜索 None
+        result_none = self.meta.find_cloud_file_by_hash(None)
+        self.assertIsNone(result_none)
+
+
+class LargeFileHashTest(unittest.TestCase):
+    """大文件 hash（> 1MB 阈值）测试"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_large_binary_file(self):
+        """大二进制文件使用 mmap 路径，返回有效 hash"""
+        from src.sync.utils import compute_content_hash
+
+        path = os.path.join(self.tmpdir, "big.bin")
+        with open(path, "wb") as f:
+            f.write(b"\x00" * (1024 * 1024 + 1))
+
+        h = compute_content_hash(path)
+        self.assertIsNotNone(h)
+        self.assertEqual(len(h), 32)
+
+    def test_large_text_small_text_consistency(self):
+        """大文本路径和小文本路径对同一内容产生相同 hash"""
+        from src.sync.utils import (
+            _hash_small_text_file, _hash_large_text_file)
+
+        content = b"line1\r\nline2\r\nline3\n"
+        path = os.path.join(self.tmpdir, "test.md")
+        with open(path, "wb") as f:
+            f.write(content)
+
+        small_hash = _hash_small_text_file(path)
+        large_hash = _hash_large_text_file(path, chunk_size=8)
+        self.assertEqual(small_hash, large_hash)
+
+    def test_crlf_split_across_chunks(self):
+        """CRLF 跨 chunk 边界时，hash 应与完整读取一致"""
+        from src.sync.utils import (
+            _hash_small_text_file, _hash_large_text_file)
+
+        # chunk_size=5 → "ABCD\r" | "\nEFGH" 正好把 \r\n 拆开
+        content = b"ABCD\r\nEFGH"
+        path = os.path.join(self.tmpdir, "split.md")
+        with open(path, "wb") as f:
+            f.write(content)
+
+        small_hash = _hash_small_text_file(path)
+        large_hash = _hash_large_text_file(path, chunk_size=5)
+        self.assertEqual(small_hash, large_hash)
+
+    def test_file_ending_with_cr(self):
+        """文件以 \\r 结尾时两种路径结果一致"""
+        from src.sync.utils import (
+            _hash_small_text_file, _hash_large_text_file)
+
+        content = b"hello\r"
+        path = os.path.join(self.tmpdir, "cr_end.md")
+        with open(path, "wb") as f:
+            f.write(content)
+
+        small_hash = _hash_small_text_file(path)
+        large_hash = _hash_large_text_file(path, chunk_size=4)
+        self.assertEqual(small_hash, large_hash)
+
+    def test_bom_only_stripped_from_start(self):
+        """BOM 只从文件开头去除，中间出现的 BOM 字节不影响"""
+        from src.sync.utils import (
+            _hash_small_text_file, _hash_large_text_file)
+
+        content = b"\xef\xbb\xbfhello \xef\xbb\xbf world"
+        path = os.path.join(self.tmpdir, "mid_bom.md")
+        with open(path, "wb") as f:
+            f.write(content)
+
+        small_hash = _hash_small_text_file(path)
+        large_hash = _hash_large_text_file(path, chunk_size=6)
+        self.assertEqual(small_hash, large_hash)
+
+
+class DecideActionEdgeCaseTest(unittest.TestCase):
+    """decide_action 边界条件测试"""
+
+    def test_both_changed_mtime_zero_local_newer(self):
+        """两边都变了，cloud_mtime=0 时应根据数值比较（0 不是 None）"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=500, cloud_mtime=0,
+            meta_local_mtime=None, meta_cloud_mtime=None,
+        )
+        self.assertEqual(result, SyncAction.UPLOAD)
+
+    def test_both_changed_local_mtime_zero_cloud_newer(self):
+        """local_mtime=0, cloud 有真实时间 → 下载"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=0, cloud_mtime=500,
+            meta_local_mtime=None, meta_cloud_mtime=None,
+        )
+        self.assertEqual(result, SyncAction.DOWNLOAD)
+
+    def test_both_mtime_zero_conflict(self):
+        """两边 mtime 都是 0 → 冲突"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=0, cloud_mtime=0,
+            meta_local_mtime=None, meta_cloud_mtime=None,
+        )
+        self.assertEqual(result, SyncAction.CONFLICT)
+
+
+class FilterByDirectionEdgeTest(unittest.TestCase):
+    """filter_by_direction 边界测试"""
+
+    def test_empty_list(self):
+        """空列表不崩溃"""
+        result, skip_count = filter_by_direction([], SyncDirection.BOTH)
+        self.assertEqual(result, [])
+        self.assertEqual(skip_count, 0)
+
+    def test_all_skip_items(self):
+        """全是 SKIP 项"""
+        items = [
+            SyncItem("a.md", None, "id1", None, None, 100, False, SyncAction.SKIP),
+            SyncItem("b.md", None, "id2", None, None, 100, False, SyncAction.SKIP),
+        ]
+        result, skip_count = filter_by_direction(items, SyncDirection.BOTH)
+        self.assertEqual(result, [])
+        self.assertEqual(skip_count, 2)
+
+
+class DetectCloudMovesTest(unittest.TestCase):
+    """_detect_cloud_moves 错误处理测试"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.meta = SyncMetadata(
+            metadata_path=os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        import shutil
+        self.meta.close()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_source_missing_skips_move_and_metadata(self):
+        """源文件不存在时不应移动也不更新 metadata"""
+        from src.sync.moves import _detect_cloud_moves
+
+        self.meta.set_file_info(
+            "old/a.md", "WEB1", cloud_mtime=1000, local_mtime=1000)
+
+        only_local = {"old/a.md"}
+        only_cloud = {"new/a.md"}
+        cloud_files = {
+            "new/a.md": {"id": "WEB1", "mtime": 2000, "parent_id": "P2",
+                         "domain": 1, "ctime": 0},
+        }
+        local_files = {
+            "old/a.md": {"mtime": 1000, "is_dir": False},
+        }
+        cloud_id_to_path = {"WEB1": "new/a.md"}
+
+        count = _detect_cloud_moves(
+            only_local, only_cloud, cloud_id_to_path,
+            cloud_files, local_files, self.meta,
+            local_dir=self.tmpdir, dry_run=False,
+        )
+
+        # 源文件不存在 → 应恢复状态
+        self.assertEqual(count, 0)
+        self.assertIn("old/a.md", only_local)
+        self.assertIn("new/a.md", only_cloud)
+        self.assertIn("old/a.md", local_files)
+        self.assertNotIn("new/a.md", local_files)
+
+    def test_shutil_move_failure_restores_state(self):
+        """shutil.move 失败时应恢复 dict 状态"""
+        from unittest.mock import patch
+        from src.sync.moves import _detect_cloud_moves
+
+        # Given — 源文件存在，但目标目录无法创建
+        src_dir = os.path.join(self.tmpdir, "old")
+        os.makedirs(src_dir, exist_ok=True)
+        src_file = os.path.join(src_dir, "a.md")
+        with open(src_file, "w") as f:
+            f.write("content")
+
+        self.meta.set_file_info(
+            "old/a.md", "WEB1", cloud_mtime=1000, local_mtime=1000)
+
+        only_local = {"old/a.md"}
+        only_cloud = {"new/a.md"}
+        cloud_files = {
+            "new/a.md": {"id": "WEB1", "mtime": 2000, "parent_id": "P2",
+                         "domain": 1, "ctime": 0},
+        }
+        local_files = {
+            "old/a.md": {"mtime": 1000, "is_dir": False, "path": src_file},
+        }
+        cloud_id_to_path = {"WEB1": "new/a.md"}
+
+        # When — 模拟 shutil.move 抛 OSError
+        with patch("src.sync.moves.shutil.move",
+                    side_effect=OSError("Permission denied")):
+            count = _detect_cloud_moves(
+                only_local, only_cloud, cloud_id_to_path,
+                cloud_files, local_files, self.meta,
+                local_dir=self.tmpdir, dry_run=False,
+            )
+
+        # Then — 状态应恢复
+        self.assertEqual(count, 0)
+        self.assertIn("old/a.md", only_local)
+        self.assertIn("new/a.md", only_cloud)
+        self.assertIn("old/a.md", local_files)
+
+    def test_dry_run_does_not_move_or_update_metadata(self):
+        """dry_run 模式不应移动文件或更新 metadata"""
+        from src.sync.moves import _detect_cloud_moves
+
+        # Given
+        src_dir = os.path.join(self.tmpdir, "old")
+        os.makedirs(src_dir)
+        src_file = os.path.join(src_dir, "a.md")
+        with open(src_file, "w") as f:
+            f.write("content")
+
+        self.meta.set_file_info(
+            "old/a.md", "WEB1", cloud_mtime=1000, local_mtime=1000)
+
+        only_local = {"old/a.md"}
+        only_cloud = {"new/a.md"}
+        cloud_files = {
+            "new/a.md": {"id": "WEB1", "mtime": 2000, "parent_id": "P2",
+                         "domain": 1, "ctime": 0},
+        }
+        local_files = {
+            "old/a.md": {"mtime": 1000, "is_dir": False, "path": src_file},
+        }
+        cloud_id_to_path = {"WEB1": "new/a.md"}
+
+        # When
+        count = _detect_cloud_moves(
+            only_local, only_cloud, cloud_id_to_path,
+            cloud_files, local_files, self.meta,
+            local_dir=self.tmpdir, dry_run=True,
+        )
+
+        # Then — 文件未移动
+        self.assertEqual(count, 1)
+        self.assertTrue(os.path.exists(src_file))
+        # metadata 中旧路径不应被删除
+        self.assertIsNotNone(self.meta.get_file_info("old/a.md"))
 
 
 if __name__ == "__main__":

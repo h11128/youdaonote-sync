@@ -10,7 +10,7 @@ import argparse
 import sys
 import traceback
 
-import requests
+import httpx
 
 from src import log
 from src.cli import (
@@ -120,11 +120,11 @@ def main():
 
     try:
         return args.func(args) or 0
-    except requests.exceptions.ProxyError:
+    except httpx.ProxyError:
         print("❌ 网络代理错误，请检查代理设置")
         traceback.print_exc()
         return 1
-    except requests.exceptions.ConnectionError:
+    except httpx.ConnectError:
         print("❌ 网络连接错误，请检查网络")
         traceback.print_exc()
         return 1
