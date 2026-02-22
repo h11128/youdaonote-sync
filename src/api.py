@@ -3,6 +3,7 @@ import logging
 import os
 import time
 import uuid
+from typing import Optional
 from urllib.parse import quote as url_quote
 
 import httpx
@@ -74,6 +75,17 @@ class YoudaoNoteApi(object):
         )
         self.cstk = None
 
+    def close(self) -> None:
+        """关闭底层 HTTP 连接池。"""
+        self.session.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
     def create_async_client(self) -> httpx.AsyncClient:
         """创建共享认证配置的异步 HTTP 客户端（用于 engine 的 async 内循环）。"""
         return httpx.AsyncClient(
@@ -84,7 +96,7 @@ class YoudaoNoteApi(object):
             follow_redirects=True,
         )
 
-    def login_by_cookies(self) -> str:
+    def login_by_cookies(self) -> Optional[str]:
         """
         使用 Cookies 登录，其实就是设置 Session 的 Cookies
         :return: error_msg，成功返回 None
@@ -115,25 +127,35 @@ class YoudaoNoteApi(object):
 
     def http_post(self, url, data=None, files=None):
         """
-        封装 post 请求（带超时和状态码检查）
+        封装 post 请求（带超时、重试和状态码检查）
         :param url:
         :param data:
         :param files:
         :return: response
         """
-        resp = self.session.post(url, data=data, files=files)
-        resp.raise_for_status()
-        return resp
+        try:
+            resp = self.session.post(url, data=data, files=files)
+            resp.raise_for_status()
+            return resp
+        except httpx.HTTPStatusError:
+            raise
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"网络请求失败 (POST): {e}") from e
 
     def http_get(self, url):
         """
-        封装 get 请求（带超时和状态码检查）
+        封装 get 请求（带超时、重试和状态码检查）
         :param url:
         :return: response
         """
-        resp = self.session.get(url)
-        resp.raise_for_status()
-        return resp
+        try:
+            resp = self.session.get(url)
+            resp.raise_for_status()
+            return resp
+        except httpx.HTTPStatusError:
+            raise
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"网络请求失败 (GET): {e}") from e
 
     @staticmethod
     def _safe_json(response) -> dict:

@@ -1,0 +1,29 @@
+---
+description: Development tool tips — Vitest Windows drive letter bug, YAML schema design for LLM annotation, StrReplace strategies
+alwaysApply: false
+---
+
+# Dev Tool Tips
+
+## Vitest 4.0 Windows 盘符 Bug
+
+Vitest 4.0.x 在 Windows 上，如果工作目录是小写盘符（`e:\` 而非 `E:\`），测试报 "No test suite found"。
+GitHub Issue: vitest-dev/vitest#9507
+
+**根因**: `fs.realpath()` 不修正盘符大小写，模块解析路径不一致。
+**解决**: `cd /E/path && npx vitest run`（Cursor shell 默认小写盘符，需手动切换）
+
+## YAML Schema Design (LLM 标注)
+
+- Naming: English snake_case with Chinese comments
+- Grouping: Group related fields with comment headers
+- Validation: Explicitly state validation goals in comments
+- Enums: List fixed sets (domain, subject) in Prompt
+- Sync: Sync new fields across — Schema, Prompt, Coverage Stats
+
+## StrReplace Tips
+
+大段内容替换容易失败：
+- Reduce Scope: Use shorter, unique feature strings
+- Use Anchors: Section headers or unique comments
+- Verify First: Read file to ensure exact format match

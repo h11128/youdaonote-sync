@@ -4,16 +4,21 @@
 不依赖任何 src 内部模块，可被所有 sync_* 模块安全导入。
 """
 
-import hashlib
 import os
 import shutil
 import logging
+import time
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import Callable, List, Dict, Optional, Tuple, Type, TypeVar
+
+import httpx
+import xxhash
 
 from src.common import NoteDomain
+
+T = TypeVar("T")
 
 
 # ========== 枚举 ==========
@@ -60,27 +65,66 @@ def decide_action(
     cloud_mtime: Optional[int],
     meta_local_mtime: Optional[int],
     meta_cloud_mtime: Optional[int],
+    *,
+    local_hash: Optional[str] = None,
+    cloud_hash: Optional[str] = None,
+    meta_hash: Optional[str] = None,
+    previously_synced: bool = False,
 ) -> SyncAction:
     """
-    根据本地/云端/元数据三方时间戳决定同步操作。
+    根据本地/云端/元数据三方信息决定同步操作。
 
-    规则：
-    - 只有本地 → 上传
-    - 只有云端 → 下载
-    - 两边都有且都有修改 → 比较时间戳，新的优先；相同则标记冲突
-    - 只一边有修改 → 同步该方向
-    - 都没有修改 → 跳过
+    决策优先级：
+    1. 存在性判断（只有一侧存在 / 之前同步过又消失）
+    2. mtime 粗筛（快速判断哪一侧可能变化）
+    3. content hash 精确验证（消除 mtime 误报，识别内容收敛）
+    4. mtime 比大小决定方向（hash 无法判定时的回退）
     """
     if not local_exists and not cloud_exists:
         return SyncAction.SKIP
     if local_exists and not cloud_exists:
+        if previously_synced:
+            # 云端已删除：如果本地在上次同步之后被修改过 → 重新上传；否则尊重删除
+            local_modified_since = (
+                local_mtime is not None
+                and meta_local_mtime is not None
+                and local_mtime > meta_local_mtime
+            )
+            if local_modified_since:
+                return SyncAction.UPLOAD
+            return SyncAction.SKIP
         return SyncAction.UPLOAD
     if not local_exists and cloud_exists:
+        if previously_synced:
+            # 本地已删除：如果云端在上次同步之后被修改过 → 重新下载；否则尊重删除
+            cloud_modified_since = (
+                cloud_mtime is not None
+                and meta_cloud_mtime is not None
+                and cloud_mtime > meta_cloud_mtime
+            )
+            if cloud_modified_since:
+                return SyncAction.DOWNLOAD
+            return SyncAction.SKIP
         return SyncAction.DOWNLOAD
 
+    # --- 两边都存在 ---
+
+    # Step 1: mtime 粗筛
     local_changed = meta_local_mtime is None or (local_mtime is not None and local_mtime > meta_local_mtime)
     cloud_changed = meta_cloud_mtime is None or (cloud_mtime is not None and cloud_mtime > meta_cloud_mtime)
 
+    # Step 2: hash 精确验证 — mtime 说变了，但 hash 和上次同步时一样 → 没真正变
+    if local_changed and local_hash and meta_hash and local_hash == meta_hash:
+        local_changed = False
+    if cloud_changed and cloud_hash and meta_hash and cloud_hash == meta_hash:
+        cloud_changed = False
+
+    # Step 3: 内容收敛 — 双方都改了但改成了相同内容 → 不需要同步
+    if local_changed and cloud_changed and local_hash and cloud_hash:
+        if local_hash == cloud_hash:
+            return SyncAction.SKIP
+
+    # Step 4: 标准决策
     if local_changed and cloud_changed:
         if local_mtime is not None and cloud_mtime is not None:
             if local_mtime > cloud_mtime:
@@ -197,6 +241,58 @@ def print_dryrun_summary(items: List[SyncItem]) -> None:
             print(f"    {i.relative_path}")
 
 
+# ========== Retry ==========
+
+_RETRYABLE_EXCEPTIONS: Tuple[Type[BaseException], ...] = (
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+    httpx.HTTPStatusError,
+    ConnectionError,
+    OSError,
+)
+
+
+def retry_with_backoff(
+    fn: Callable[[], T],
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    retryable: Tuple[Type[BaseException], ...] = _RETRYABLE_EXCEPTIONS,
+) -> T:
+    """带指数退避的重试。仅对网络/IO 类异常重试，业务错误（4xx）直接抛出。"""
+    last_err: BaseException = RuntimeError("unreachable")
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except retryable as e:
+            last_err = e
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
+                raise
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                logging.warning(f"重试 {attempt + 1}/{max_retries}: {e} (等待 {delay:.1f}s)")
+                time.sleep(delay)
+    raise last_err
+
+
+# ========== Hashing ==========
+
+def compute_hash_from_bytes(data: bytes, file_path: str) -> Optional[str]:
+    """从原始字节计算 content hash（与 compute_content_hash 相同的规范化逻辑）。
+
+    用于对云端下载的内容直接计算 hash，无需先写入磁盘。
+    文本文件做 CRLF→LF + BOM 去除；二进制文件直接 hash。
+    """
+    if data is None:
+        return None
+    if not _is_text_file(file_path):
+        return xxhash.xxh3_128(data).hexdigest()
+    normalized = data.replace(b"\r\n", b"\n")
+    if normalized.startswith(b"\xef\xbb\xbf"):
+        normalized = normalized[3:]
+    return xxhash.xxh3_128(normalized).hexdigest()
+
+
 _CHUNKED_HASH_THRESHOLD = 1024 * 1024  # 1MB 以上用分块读取
 
 _BINARY_EXTS = frozenset({
@@ -213,7 +309,7 @@ def _is_text_file(file_path: str) -> bool:
 
 def compute_content_hash(file_path: str) -> Optional[str]:
     """
-    计算文件内容的 MD5 hash。
+    计算文件内容的 xxhash (xxh3_128) hash。
 
     文本文件：去掉 CRLF → LF、BOM 差异后计算（同内容不同换行符 → 相同 hash）。
     二进制文件：直接计算原始字节的 hash（避免错误修改二进制内容）。
@@ -221,10 +317,12 @@ def compute_content_hash(file_path: str) -> Optional[str]:
     小文件（≤ 1MB）全量读取；大文件分块读取以避免内存峰值。
 
     :param file_path: 文件绝对路径（不能为空）
-    :return: MD5 hex string，文件不存在或读取失败返回 None
+    :return: hex string，文件不存在或读取失败返回 None
     """
     if not file_path:
         raise ValueError("file_path 不能为空")
+    from src.common import safe_long_path
+    file_path = safe_long_path(file_path)
     try:
         size = os.path.getsize(file_path)
         if not _is_text_file(file_path):
@@ -232,7 +330,7 @@ def compute_content_hash(file_path: str) -> Optional[str]:
         if size <= _CHUNKED_HASH_THRESHOLD:
             return _hash_small_text_file(file_path)
         return _hash_large_text_file(file_path)
-    except Exception:
+    except (OSError, PermissionError):
         return None
 
 
@@ -240,14 +338,13 @@ def _hash_binary_file(file_path: str, size: int,
                       chunk_size: int = 256 * 1024) -> str:
     """二进制文件 hash：小文件全量读，大文件用 mmap 零拷贝。"""
     import mmap
-    h = hashlib.md5()
+    h = xxhash.xxh3_128()
     with open(file_path, "rb") as f:
         if size <= _CHUNKED_HASH_THRESHOLD:
             h.update(f.read())
         elif size > 0:
             with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
                 h.update(mm)
-        # size == 0: empty file, h stays as initial
     return h.hexdigest()
 
 
@@ -257,7 +354,7 @@ def _hash_small_text_file(file_path: str) -> str:
     normalized = data.replace(b"\r\n", b"\n")
     if normalized.startswith(b"\xef\xbb\xbf"):
         normalized = normalized[3:]
-    return hashlib.md5(normalized).hexdigest()
+    return xxhash.xxh3_128(normalized).hexdigest()
 
 
 def _hash_large_text_file(file_path: str,
@@ -267,7 +364,7 @@ def _hash_large_text_file(file_path: str,
     不使用 mmap（CRLF 规范化需要内容感知，无法零拷贝）。
     分块处理时需要特殊处理 chunk 边界处被拆开的 \\r\\n 和文件头的 BOM。
     """
-    h = hashlib.md5()
+    h = xxhash.xxh3_128()
     with open(file_path, "rb") as f:
         first_chunk = True
         carry_cr = False

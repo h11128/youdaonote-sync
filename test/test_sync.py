@@ -1502,8 +1502,8 @@ class DetectCloudMovesTest(unittest.TestCase):
         self.meta.close()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def test_source_missing_skips_move_and_metadata(self):
-        """源文件不存在时不应移动也不更新 metadata"""
+    def test_source_missing_skips_move_and_restores_state(self):
+        """源文件不存在时：完整恢复原始状态（local_files + only_local + only_cloud）"""
         from src.sync.moves import _detect_cloud_moves
 
         self.meta.set_file_info(
@@ -1526,12 +1526,15 @@ class DetectCloudMovesTest(unittest.TestCase):
             local_dir=self.tmpdir, dry_run=False,
         )
 
-        # 源文件不存在 → 应恢复状态
         self.assertEqual(count, 0)
-        self.assertIn("old/a.md", only_local)
-        self.assertIn("new/a.md", only_cloud)
-        self.assertIn("old/a.md", local_files)
-        self.assertNotIn("new/a.md", local_files)
+        self.assertIn("old/a.md", local_files,
+                       "Original entry must be restored in local_files")
+        self.assertNotIn("new/a.md", local_files,
+                         "Target path must not remain in local_files")
+        self.assertIn("old/a.md", only_local,
+                       "Original path must be restored in only_local")
+        self.assertIn("new/a.md", only_cloud,
+                       "Cloud path should remain so engine downloads it")
 
     def test_shutil_move_failure_restores_state(self):
         """shutil.move 失败时应恢复 dict 状态"""
@@ -1611,6 +1614,744 @@ class DetectCloudMovesTest(unittest.TestCase):
         self.assertTrue(os.path.exists(src_file))
         # metadata 中旧路径不应被删除
         self.assertIsNotNone(self.meta.get_file_info("old/a.md"))
+
+
+# ========== Feature 1: WAL Checkpoint 测试 ==========
+
+class WalCheckpointTest(unittest.TestCase):
+    """metadata.save() 每 50 次触发 WAL checkpoint"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_save_count_increments(self):
+        for i in range(10):
+            self.meta.set_file_info(f"f{i}.md", "WEB1", cloud_mtime=1000)
+            self.meta.save()
+        self.assertEqual(self.meta._save_count, 10)
+
+    def test_checkpoint_runs_without_error_at_50(self):
+        """50 次 save 后 WAL checkpoint 不报错（间接验证：若 checkpoint 出错会被静默吞掉）"""
+        for i in range(51):
+            self.meta.set_file_info(f"f{i}.md", "WEB1", cloud_mtime=1000)
+            self.meta.save()
+        self.assertEqual(self.meta._save_count, 51)
+
+    def test_maybe_wal_checkpoint_is_called(self):
+        """直接调用 _maybe_wal_checkpoint 验证不抛异常"""
+        self.meta._save_count = 49
+        self.meta._maybe_wal_checkpoint()
+        self.assertEqual(self.meta._save_count, 50)
+
+
+# ========== Feature 2: PID Lock 测试 ==========
+
+class SyncLockTest(unittest.TestCase):
+    """_SyncLock PID 锁"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_acquire_and_release(self):
+        from src.sync.engine import _SyncLock
+        lock = _SyncLock(self.tmpdir)
+        self.assertTrue(lock.acquire())
+        self.assertTrue(os.path.exists(os.path.join(self.tmpdir, ".sync.lock")))
+        lock.release()
+        self.assertFalse(os.path.exists(os.path.join(self.tmpdir, ".sync.lock")))
+
+    def test_double_acquire_same_pid_succeeds(self):
+        """同一进程的 PID 存活检查 → 返回 False（已有实例）"""
+        from src.sync.engine import _SyncLock
+        lock1 = _SyncLock(self.tmpdir)
+        lock2 = _SyncLock(self.tmpdir)
+        self.assertTrue(lock1.acquire())
+        self.assertFalse(lock2.acquire())
+        lock1.release()
+
+    def test_stale_lock_taken_over(self):
+        """过期锁被接管"""
+        from src.sync.engine import _SyncLock
+        import json, time
+        lock_path = os.path.join(self.tmpdir, ".sync.lock")
+        with open(lock_path, "w") as f:
+            json.dump({"pid": 99999999, "started": time.time() - 7200}, f)
+
+        lock = _SyncLock(self.tmpdir)
+        self.assertTrue(lock.acquire())
+        lock.release()
+
+    def test_dead_pid_lock_taken_over(self):
+        """PID 不存在时锁被接管"""
+        from src.sync.engine import _SyncLock
+        import json, time
+        lock_path = os.path.join(self.tmpdir, ".sync.lock")
+        with open(lock_path, "w") as f:
+            json.dump({"pid": 99999999, "started": time.time()}, f)
+
+        lock = _SyncLock(self.tmpdir)
+        self.assertTrue(lock.acquire())
+        lock.release()
+
+
+# ========== Feature 3: Delete Tracking 测试 ==========
+
+class DeleteTrackingTest(unittest.TestCase):
+    """delete tracking: previously_synced → SKIP"""
+
+    def test_local_only_new_file_uploads(self):
+        result = decide_action(
+            local_exists=True, cloud_exists=False,
+            local_mtime=1000, cloud_mtime=None,
+            meta_local_mtime=None, meta_cloud_mtime=None,
+            previously_synced=False)
+        self.assertEqual(result, SyncAction.UPLOAD)
+
+    def test_local_only_previously_synced_skips(self):
+        """本地有 + 云端没 + 之前同步过 → 云端已删除 → SKIP"""
+        result = decide_action(
+            local_exists=True, cloud_exists=False,
+            local_mtime=1000, cloud_mtime=None,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            previously_synced=True)
+        self.assertEqual(result, SyncAction.SKIP)
+
+    def test_cloud_only_new_file_downloads(self):
+        result = decide_action(
+            local_exists=False, cloud_exists=True,
+            local_mtime=None, cloud_mtime=2000,
+            meta_local_mtime=None, meta_cloud_mtime=None,
+            previously_synced=False)
+        self.assertEqual(result, SyncAction.DOWNLOAD)
+
+    def test_cloud_only_previously_synced_skips(self):
+        """本地没 + 云端有 + 之前同步过 + 云端未修改 → 本地已删除 → SKIP"""
+        result = decide_action(
+            local_exists=False, cloud_exists=True,
+            local_mtime=None, cloud_mtime=2000,
+            meta_local_mtime=1000, meta_cloud_mtime=2000,
+            previously_synced=True)
+        self.assertEqual(result, SyncAction.SKIP)
+
+    def test_local_only_previously_synced_but_modified_uploads(self):
+        """本地有 + 云端没 + 之前同步过 + 本地有修改 → 重新上传"""
+        result = decide_action(
+            local_exists=True, cloud_exists=False,
+            local_mtime=2000, cloud_mtime=None,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            previously_synced=True)
+        self.assertEqual(result, SyncAction.UPLOAD)
+
+    def test_cloud_only_previously_synced_but_modified_downloads(self):
+        """本地没 + 云端有 + 之前同步过 + 云端有修改 → 重新下载"""
+        result = decide_action(
+            local_exists=False, cloud_exists=True,
+            local_mtime=None, cloud_mtime=3000,
+            meta_local_mtime=1000, meta_cloud_mtime=2000,
+            previously_synced=True)
+        self.assertEqual(result, SyncAction.DOWNLOAD)
+
+    def test_mark_synced_sets_timestamp(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            meta = SyncMetadata(os.path.join(tmpdir, "meta.json"))
+            meta.set_file_info("a.md", "WEB1", cloud_mtime=100)
+            meta.mark_synced("a.md", ts=12345)
+            info = meta.get_file_info("a.md")
+            self.assertEqual(info["last_sync_at"], 12345)
+            meta.close()
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_last_sync_at_default_zero(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            meta = SyncMetadata(os.path.join(tmpdir, "meta.json"))
+            meta.set_file_info("b.md", "WEB2", cloud_mtime=200)
+            info = meta.get_file_info("b.md")
+            self.assertNotIn("last_sync_at", info)
+            meta.close()
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ========== Feature 4: Retry + Backoff 测试 ==========
+
+class RetryWithBackoffTest(unittest.TestCase):
+
+    def test_succeeds_immediately(self):
+        from src.sync.utils import retry_with_backoff
+        result = retry_with_backoff(lambda: 42)
+        self.assertEqual(result, 42)
+
+    def test_retries_on_timeout(self):
+        import httpx
+        from src.sync.utils import retry_with_backoff
+        attempts = []
+
+        def flaky():
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise httpx.ConnectError("connection refused")
+            return "ok"
+
+        result = retry_with_backoff(flaky, max_retries=3, base_delay=0.01)
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(attempts), 3)
+
+    def test_raises_after_max_retries(self):
+        import httpx
+        from src.sync.utils import retry_with_backoff
+
+        def always_fail():
+            raise httpx.TimeoutException("timeout")
+
+        with self.assertRaises(httpx.TimeoutException):
+            retry_with_backoff(always_fail, max_retries=2, base_delay=0.01)
+
+    def test_no_retry_on_4xx(self):
+        import httpx
+        from src.sync.utils import retry_with_backoff
+        attempts = []
+
+        def client_error():
+            attempts.append(1)
+            resp = httpx.Response(403, request=httpx.Request("GET", "http://x"))
+            raise httpx.HTTPStatusError("forbidden", request=resp.request, response=resp)
+
+        with self.assertRaises(httpx.HTTPStatusError):
+            retry_with_backoff(client_error, max_retries=3, base_delay=0.01)
+        self.assertEqual(len(attempts), 1)
+
+    def test_retries_on_5xx(self):
+        """5xx HTTPStatusError 应被重试"""
+        import httpx
+        from src.sync.utils import retry_with_backoff
+        attempts = []
+
+        def server_error():
+            attempts.append(1)
+            if len(attempts) < 3:
+                resp = httpx.Response(502, request=httpx.Request("GET", "http://x"))
+                raise httpx.HTTPStatusError("bad gateway", request=resp.request, response=resp)
+            return "recovered"
+
+        result = retry_with_backoff(server_error, max_retries=3, base_delay=0.01)
+        self.assertEqual(result, "recovered")
+        self.assertEqual(len(attempts), 3)
+
+    def test_non_retryable_exception_propagates(self):
+        from src.sync.utils import retry_with_backoff
+
+        def raise_value_error():
+            raise ValueError("bad input")
+
+        with self.assertRaises(ValueError):
+            retry_with_backoff(raise_value_error, max_retries=3, base_delay=0.01)
+
+
+# ========== Feature 5: Content Hash in decide_action 测试 ==========
+
+class ContentHashDecisionTest(unittest.TestCase):
+
+    def test_mtime_changed_hash_same_skips(self):
+        """mtime 变了但 hash 相同 → SKIP（文件被 touch 但内容没变）"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=1000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            local_hash="abc123", meta_hash="abc123")
+        self.assertEqual(result, SyncAction.SKIP)
+
+    def test_mtime_changed_hash_different_uploads(self):
+        """mtime 变了且 hash 不同 → UPLOAD"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=1000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            local_hash="abc123", meta_hash="def456")
+        self.assertEqual(result, SyncAction.UPLOAD)
+
+    def test_no_hash_falls_back_to_mtime(self):
+        """没有 hash 时按原 mtime 逻辑"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=1000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000)
+        self.assertEqual(result, SyncAction.UPLOAD)
+
+    def test_both_changed_hash_same_still_checks_cloud(self):
+        """双方 mtime 都变了但本地 hash 同 → 只有云端真正变了 → DOWNLOAD"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=3000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            local_hash="abc123", meta_hash="abc123")
+        self.assertEqual(result, SyncAction.DOWNLOAD)
+
+
+# ========== 云端 Hash 三方比较测试 ==========
+
+class CloudHashDecisionTest(unittest.TestCase):
+    """三方 hash（local / cloud / meta）参与决策"""
+
+    def test_both_changed_converged_skips(self):
+        """双方 mtime 都变了 + cloud_hash == local_hash → 内容一样 → SKIP"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=3000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            local_hash="same_hash", cloud_hash="same_hash", meta_hash="old_hash")
+        self.assertEqual(result, SyncAction.SKIP)
+
+    def test_cloud_hash_same_as_meta_means_cloud_not_changed(self):
+        """双方 mtime 都变了 + cloud_hash == meta_hash → 云端没真正变 → UPLOAD"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=3000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            local_hash="new_local", cloud_hash="old_hash", meta_hash="old_hash")
+        self.assertEqual(result, SyncAction.UPLOAD)
+
+    def test_local_hash_same_as_meta_means_local_not_changed(self):
+        """双方 mtime 都变了 + local_hash == meta_hash → 本地没真正变 → DOWNLOAD"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=3000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            local_hash="old_hash", cloud_hash="new_cloud", meta_hash="old_hash")
+        self.assertEqual(result, SyncAction.DOWNLOAD)
+
+    def test_all_different_remains_conflict(self):
+        """三方 hash 全不同 → 真正冲突 → 按 mtime 决定"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=3000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            local_hash="hash_a", cloud_hash="hash_b", meta_hash="hash_c")
+        self.assertEqual(result, SyncAction.DOWNLOAD)
+
+    def test_all_different_local_newer_uploads(self):
+        """三方 hash 全不同 + 本地更新 → UPLOAD"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=5000, cloud_mtime=3000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            local_hash="hash_a", cloud_hash="hash_b", meta_hash="hash_c")
+        self.assertEqual(result, SyncAction.UPLOAD)
+
+    def test_all_three_same_skips(self):
+        """三方 hash 全相同 → 完全没变 → SKIP"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=2000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            local_hash="same", cloud_hash="same", meta_hash="same")
+        self.assertEqual(result, SyncAction.SKIP)
+
+    def test_only_cloud_hash_no_local_hash_falls_back(self):
+        """有 cloud_hash 但没 local_hash → cloud_hash 与 meta_hash 比较仍有效"""
+        result = decide_action(
+            local_exists=True, cloud_exists=True,
+            local_mtime=2000, cloud_mtime=3000,
+            meta_local_mtime=1000, meta_cloud_mtime=1000,
+            cloud_hash="old_hash", meta_hash="old_hash")
+        self.assertEqual(result, SyncAction.UPLOAD)
+
+
+class ComputeHashFromBytesTest(unittest.TestCase):
+    """compute_hash_from_bytes 与 compute_content_hash 一致性"""
+
+    def test_text_matches_file_hash(self):
+        from src.sync.utils import compute_hash_from_bytes, compute_content_hash
+        content = "Hello\r\nWorld\r\n"
+        tmpdir = tempfile.mkdtemp()
+        try:
+            path = os.path.join(tmpdir, "test.md")
+            with open(path, "wb") as f:
+                f.write(content.encode("utf-8"))
+            file_hash = compute_content_hash(path)
+            bytes_hash = compute_hash_from_bytes(content.encode("utf-8"), "test.md")
+            self.assertEqual(file_hash, bytes_hash)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_bom_stripped(self):
+        from src.sync.utils import compute_hash_from_bytes
+        with_bom = b"\xef\xbb\xbfHello"
+        without_bom = b"Hello"
+        self.assertEqual(
+            compute_hash_from_bytes(with_bom, "test.md"),
+            compute_hash_from_bytes(without_bom, "test.md"))
+
+    def test_binary_no_normalization(self):
+        from src.sync.utils import compute_hash_from_bytes
+        import xxhash
+        data = b"\x00\x01\r\n\x02"
+        expected = xxhash.xxh3_128(data).hexdigest()
+        self.assertEqual(
+            compute_hash_from_bytes(data, "test.png"), expected)
+
+    def test_empty_bytes(self):
+        from src.sync.utils import compute_hash_from_bytes
+        result = compute_hash_from_bytes(b"", "test.md")
+        self.assertIsNotNone(result)
+
+
+# ========== Feature: three_way_merge 测试 ==========
+
+class ThreeWayMergeTest(unittest.TestCase):
+
+    def test_no_conflict_both_sides_add(self):
+        from src.sync.merge import three_way_merge
+        base = "line1\nline2\nline3\n"
+        ours = "line0\nline1\nline2\nline3\n"     # 头部加行
+        theirs = "line1\nline2\nline3\nline4\n"    # 尾部加行
+        result = three_way_merge(base, ours, theirs)
+        self.assertFalse(result.has_conflicts)
+        self.assertIn("line0", result.merged_text)
+        self.assertIn("line4", result.merged_text)
+
+    def test_no_conflict_one_side_edits(self):
+        from src.sync.merge import three_way_merge
+        base = "aaa\nbbb\nccc\n"
+        ours = "aaa\nbbb\nccc\n"     # 没改
+        theirs = "aaa\nBBB\nccc\n"   # 改了第二行
+        result = three_way_merge(base, ours, theirs)
+        self.assertFalse(result.has_conflicts)
+        self.assertIn("BBB", result.merged_text)
+
+    def test_conflict_both_edit_same_line(self):
+        from src.sync.merge import three_way_merge
+        base = "aaa\nbbb\nccc\n"
+        ours = "aaa\nXXX\nccc\n"
+        theirs = "aaa\nYYY\nccc\n"
+        result = three_way_merge(base, ours, theirs)
+        self.assertTrue(result.has_conflicts)
+        self.assertEqual(result.conflict_count, 1)
+        self.assertIn("<<<<<<< LOCAL", result.merged_text)
+        self.assertIn(">>>>>>> CLOUD", result.merged_text)
+
+    def test_empty_base(self):
+        from src.sync.merge import three_way_merge
+        result = three_way_merge("", "hello\n", "world\n")
+        self.assertIsNotNone(result.merged_text)
+
+    def test_both_same_change_no_conflict(self):
+        """双方做了相同修改 → 无冲突"""
+        from src.sync.merge import three_way_merge
+        base = "aaa\nbbb\n"
+        ours = "aaa\nXXX\n"
+        theirs = "aaa\nXXX\n"
+        result = three_way_merge(base, ours, theirs)
+        self.assertFalse(result.has_conflicts)
+        self.assertIn("XXX", result.merged_text)
+
+    def test_no_changes(self):
+        from src.sync.merge import three_way_merge
+        base = "aaa\nbbb\n"
+        result = three_way_merge(base, base, base)
+        self.assertFalse(result.has_conflicts)
+        self.assertEqual(result.merged_text, base)
+
+
+# ========== Feature: GC 测试 ==========
+
+class MetadataGCTest(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.local_dir = os.path.join(self.tmpdir, "notes")
+        os.makedirs(self.local_dir)
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_gc_removes_orphan_files(self):
+        """本地不存在 + last_sync_at 过期 → 被清理"""
+        import time
+        self.meta.set_file_info("gone.md", "WEB1", cloud_mtime=100)
+        self.meta.mark_synced("gone.md", ts=int(time.time()) - 40 * 86400)
+        self.meta.save()
+
+        stats = self.meta.gc(self.local_dir)
+        self.assertEqual(stats["files"], 1)
+        self.assertIsNone(self.meta.get_file_info("gone.md"))
+
+    def test_gc_keeps_existing_files(self):
+        """本地存在的文件不被清理"""
+        import time
+        path = os.path.join(self.local_dir, "exist.md")
+        with open(path, "w") as f:
+            f.write("hi")
+        self.meta.set_file_info("exist.md", "WEB2", cloud_mtime=100)
+        self.meta.mark_synced("exist.md", ts=int(time.time()) - 40 * 86400)
+        self.meta.save()
+
+        stats = self.meta.gc(self.local_dir)
+        self.assertEqual(stats["files"], 0)
+        self.assertIsNotNone(self.meta.get_file_info("exist.md"))
+
+    def test_gc_removes_orphan_dirs(self):
+        self.meta.set_dir_info("old_dir", "DIR1", "ROOT")
+        self.meta.save()
+        stats = self.meta.gc(self.local_dir)
+        self.assertEqual(stats["dirs"], 1)
+
+    def test_gc_cleans_old_sync_log(self):
+        """超过 max_log_age_days 的日志被清理"""
+        import time
+        old_ts = int(time.time()) - 100 * 86400
+        self.meta.log_sync_action("a.md", "downloaded", timestamp_override=old_ts)
+        self.meta.log_sync_action("b.md", "uploaded")
+        self.meta.save()
+
+        stats = self.meta.gc(self.local_dir, max_log_age_days=90)
+        self.assertEqual(stats["logs"], 1)
+        remaining = self.meta.get_sync_log()
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["path"], "b.md")
+
+    def test_gc_removes_orphan_base(self):
+        """file_base 中文件不存在 → 被清理"""
+        self.meta.save_base_content("phantom.md", b"old", "hash1")
+        self.meta.save()
+        stats = self.meta.gc(self.local_dir)
+        self.assertEqual(stats["bases"], 1)
+
+
+# ========== Feature: verify 测试 ==========
+
+class MetadataVerifyTest(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.local_dir = os.path.join(self.tmpdir, "notes")
+        os.makedirs(self.local_dir)
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_verify_detects_orphan(self):
+        self.meta.set_file_info("missing.md", "WEB1", cloud_mtime=100)
+        self.meta.save()
+        issues = self.meta.verify(self.local_dir)
+        self.assertTrue(any(t == "orphan" for _, t, _ in issues))
+
+    def test_verify_detects_hash_mismatch(self):
+        from src.sync.utils import compute_content_hash
+        path = os.path.join(self.local_dir, "changed.md")
+        with open(path, "w") as f:
+            f.write("original")
+        real_hash = compute_content_hash(path)
+        self.meta.set_file_info("changed.md", "WEB2", cloud_mtime=100,
+                                content_hash="fake_hash_that_wont_match")
+        self.meta.save()
+        issues = self.meta.verify(self.local_dir)
+        self.assertTrue(any(t == "hash_mismatch" for _, t, _ in issues))
+
+    def test_verify_auto_fix(self):
+        from src.sync.utils import compute_content_hash
+        path = os.path.join(self.local_dir, "fix.md")
+        with open(path, "w") as f:
+            f.write("data")
+        self.meta.set_file_info("fix.md", "WEB3", cloud_mtime=100,
+                                content_hash="wrong")
+        self.meta.save()
+        issues = self.meta.verify(self.local_dir, auto_fix=True)
+        self.assertTrue(len(issues) > 0)
+        info = self.meta.get_file_info("fix.md")
+        actual = compute_content_hash(path)
+        self.assertEqual(info["content_hash"], actual)
+
+    def test_verify_clean_passes(self):
+        path = os.path.join(self.local_dir, "ok.md")
+        with open(path, "w") as f:
+            f.write("fine")
+        from src.sync.utils import compute_content_hash
+        h = compute_content_hash(path)
+        self.meta.set_file_info("ok.md", "WEB4", cloud_mtime=100,
+                                content_hash=h)
+        self.meta.save()
+        issues = self.meta.verify(self.local_dir)
+        self.assertEqual(len(issues), 0)
+
+
+# ========== Feature: matches_selective 测试 ==========
+
+class MatchesSelectiveTest(unittest.TestCase):
+
+    def test_no_filters_passes_all(self):
+        from src.sync.scanner import matches_selective
+        self.assertTrue(matches_selective("any/path.md", [], []))
+
+    def test_exclude_blocks(self):
+        from src.sync.scanner import matches_selective
+        self.assertFalse(matches_selective("secret/notes.md", [], ["secret/*"]))
+
+    def test_include_allows(self):
+        from src.sync.scanner import matches_selective
+        self.assertTrue(matches_selective("work/todo.md", ["work/*"], []))
+
+    def test_include_rejects_others(self):
+        from src.sync.scanner import matches_selective
+        self.assertFalse(matches_selective("personal/diary.md", ["work/*"], []))
+
+    def test_exclude_overrides_include(self):
+        from src.sync.scanner import matches_selective
+        self.assertFalse(matches_selective("work/secret.md",
+                                           ["work/*"], ["work/secret.md"]))
+
+    def test_recursive_pattern(self):
+        from src.sync.scanner import matches_selective
+        self.assertFalse(matches_selective("a/b/c/temp.md", [], ["*.md"]))
+
+    def test_directory_paths(self):
+        from src.sync.scanner import matches_selective
+        self.assertTrue(matches_selective("docs/guide", ["docs/*"], []))
+
+
+# ========== Feature: 跨目录移动方向感知 测试 ==========
+
+class CrossDirMoveDirectionTest(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.local_dir = os.path.join(self.tmpdir, "notes")
+        os.makedirs(self.local_dir)
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_local_wins_when_newer(self):
+        """本地 mtime 更新 → 保留本地路径，云端文件排队删除"""
+        from src.sync.moves import _detect_cross_dir_duplicates
+        from src.sync.utils import compute_content_hash
+        import xxhash
+
+        h = xxhash.xxh3_128(b"same content").hexdigest()
+
+        local_path = os.path.join(self.local_dir, "new_dir", "doc.md")
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, "w") as f:
+            f.write("same content")
+
+        only_local = {"new_dir/doc.md"}
+        only_cloud = {"old_dir/doc.md"}
+        cloud_files = {
+            "old_dir/doc.md": {"id": "CLOUD1", "parent_id": "P1",
+                               "mtime": 1000, "is_dir": False}
+        }
+        local_files = {
+            "new_dir/doc.md": {"path": local_path, "mtime": 2000, "is_dir": False}
+        }
+        self.meta.set_file_info("old_dir/doc.md", "CLOUD1",
+                                cloud_mtime=1000, content_hash=h)
+        self.meta.save()
+
+        hash_cache = {local_path: h}
+        count, pending = _detect_cross_dir_duplicates(
+            only_local, only_cloud, cloud_files, local_files,
+            self.meta, self.local_dir, dry_run=True, hash_cache=hash_cache)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0][0], "CLOUD1")
+        self.assertEqual(pending[0][2], "new_dir/doc.md")
+        self.assertNotIn("old_dir/doc.md", cloud_files)
+        self.assertIn("new_dir/doc.md", only_local)
+
+    def test_cloud_wins_when_newer(self):
+        """云端 mtime 更新 → 本地跟随云端路径"""
+        from src.sync.moves import _detect_cross_dir_duplicates
+        import xxhash
+
+        h = xxhash.xxh3_128(b"same content").hexdigest()
+
+        local_path = os.path.join(self.local_dir, "old_dir", "doc.md")
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, "w") as f:
+            f.write("same content")
+
+        only_local = {"old_dir/doc.md"}
+        only_cloud = {"new_dir/doc.md"}
+        cloud_files = {
+            "new_dir/doc.md": {"id": "CLOUD1", "parent_id": "P1",
+                               "mtime": 3000, "ctime": 100,
+                               "domain": 1, "is_dir": False}
+        }
+        local_files = {
+            "old_dir/doc.md": {"path": local_path, "mtime": 1000, "is_dir": False}
+        }
+        self.meta.set_file_info("new_dir/doc.md", "CLOUD1",
+                                cloud_mtime=3000, content_hash=h)
+        self.meta.save()
+
+        hash_cache = {local_path: h}
+        count, pending = _detect_cross_dir_duplicates(
+            only_local, only_cloud, cloud_files, local_files,
+            self.meta, self.local_dir, dry_run=False, hash_cache=hash_cache)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(len(pending), 0)
+        self.assertNotIn("old_dir/doc.md", only_local)
+        self.assertIn("new_dir/doc.md", local_files)
+
+    def test_pending_deletes_include_local_path(self):
+        """pending_deletes 元组包含 3 个元素: (file_id, old_cloud_path, new_local_path)"""
+        from src.sync.moves import _detect_cross_dir_duplicates
+        import xxhash
+
+        h = xxhash.xxh3_128(b"content").hexdigest()
+        local_path = os.path.join(self.local_dir, "a", "f.md")
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, "w") as f:
+            f.write("content")
+
+        only_local = {"a/f.md"}
+        only_cloud = {"b/f.md"}
+        cloud_files = {
+            "b/f.md": {"id": "C1", "parent_id": "P", "mtime": 500, "is_dir": False}
+        }
+        local_files = {
+            "a/f.md": {"path": local_path, "mtime": 1000, "is_dir": False}
+        }
+        self.meta.set_file_info("b/f.md", "C1", cloud_mtime=500, content_hash=h)
+        self.meta.save()
+
+        hash_cache = {local_path: h}
+        count, pending = _detect_cross_dir_duplicates(
+            only_local, only_cloud, cloud_files, local_files,
+            self.meta, self.local_dir, dry_run=True, hash_cache=hash_cache)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(len(pending), 1)
+        fid, old_path, new_path = pending[0]
+        self.assertEqual(fid, "C1")
+        self.assertEqual(old_path, "b/f.md")
+        self.assertEqual(new_path, "a/f.md")
 
 
 if __name__ == "__main__":

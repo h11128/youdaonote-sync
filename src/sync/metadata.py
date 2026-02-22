@@ -10,6 +10,7 @@ import os
 import logging
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from functools import lru_cache
 from typing import Optional, Dict, Any, List
@@ -26,7 +27,8 @@ CREATE TABLE IF NOT EXISTS files (
     parent_id TEXT,
     domain INTEGER,
     content_hash TEXT,
-    create_time INTEGER
+    create_time INTEGER,
+    last_sync_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS directories (
@@ -39,6 +41,43 @@ CREATE INDEX IF NOT EXISTS idx_file_id ON files(file_id) WHERE file_id != '';
 CREATE INDEX IF NOT EXISTS idx_content_hash ON files(content_hash) WHERE content_hash IS NOT NULL AND content_hash != '';
 CREATE INDEX IF NOT EXISTS idx_dir_id ON directories(dir_id) WHERE dir_id != '';
 """
+
+_MIGRATION_SQL = [
+    "ALTER TABLE files ADD COLUMN last_sync_at INTEGER NOT NULL DEFAULT 0",
+    # Phase 1b: cloud hash cache
+    "ALTER TABLE files ADD COLUMN cloud_content_hash TEXT",
+    # Phase 4a: Merkle tree
+    "ALTER TABLE directories ADD COLUMN tree_hash TEXT",
+    # Phase 1b: sync_log table
+    """CREATE TABLE IF NOT EXISTS sync_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        action TEXT NOT NULL,
+        direction TEXT,
+        old_hash TEXT,
+        new_hash TEXT,
+        cloud_id TEXT,
+        detail TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_sync_log_ts ON sync_log(timestamp)",
+    "CREATE INDEX IF NOT EXISTS idx_sync_log_path ON sync_log(path)",
+    # Phase 1b: file refs cache
+    """CREATE TABLE IF NOT EXISTS file_refs (
+        source_path TEXT NOT NULL,
+        ref_path TEXT NOT NULL,
+        PRIMARY KEY (source_path, ref_path)
+    )""",
+    # Phase 3d: base version storage for diff3
+    """CREATE TABLE IF NOT EXISTS file_base (
+        path TEXT PRIMARY KEY,
+        content BLOB NOT NULL,
+        hash TEXT NOT NULL,
+        saved_at INTEGER NOT NULL
+    )""",
+    # Phase 1a: invalidate MD5 hashes after switching to xxhash
+    "UPDATE files SET content_hash = NULL WHERE content_hash IS NOT NULL",
+]
 
 
 class SyncMetadata:
@@ -60,17 +99,48 @@ class SyncMetadata:
 
         self._lock = threading.RLock()
         self._batch_depth = 0
+        self._save_count = 0
 
         db_dir = os.path.dirname(self._db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.executescript(_SCHEMA_SQL)
-        self._conn.commit()
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn.executescript(_SCHEMA_SQL)
+            self._conn.commit()
+            self._run_migrations()
+            self._migrate_json_if_needed()
+        except Exception:
+            self._conn.close()
+            self._conn = None
+            raise
 
-        self._migrate_json_if_needed()
+    def _run_migrations(self) -> None:
+        """运行增量 schema 迁移（幂等，已有列/表时自动跳过）。"""
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS _migrations "
+            "(idx INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+        applied = {r[0] for r in self._conn.execute(
+            "SELECT idx FROM _migrations").fetchall()}
+
+        _EXPECTED_ERRORS = ("duplicate column", "already exists")
+
+        for i, sql in enumerate(_MIGRATION_SQL):
+            if i in applied:
+                continue
+            try:
+                self._conn.execute(sql)
+            except sqlite3.OperationalError as e:
+                err_msg = str(e).lower()
+                if not any(phrase in err_msg for phrase in _EXPECTED_ERRORS):
+                    logging.error(f"迁移 #{i} 失败(非预期错误): {e}")
+                    raise
+            self._conn.execute(
+                "INSERT OR IGNORE INTO _migrations (idx, applied_at) VALUES (?, ?)",
+                (i, int(time.time())))
+        self._conn.commit()
 
     def _migrate_json_if_needed(self) -> None:
         """检测旧 JSON 文件并自动导入到 SQLite。"""
@@ -135,19 +205,26 @@ class SyncMetadata:
             with metadata.batch() as m:
                 info = m.get_file_info(path)
                 m.set_file_info(path, ...)
-            # 退出时自动 commit
+            # 退出时自动 commit；异常时 rollback
         """
         self._lock.acquire()
         self._batch_depth += 1
+        exc_occurred = False
         try:
             yield self
+        except BaseException:
+            exc_occurred = True
+            raise
         finally:
             self._batch_depth -= 1
             if self._batch_depth == 0:
                 try:
-                    self._conn.commit()
+                    if exc_occurred:
+                        self._conn.rollback()
+                    else:
+                        self._conn.commit()
                 except sqlite3.Error as e:
-                    logging.error(f"批量提交失败: {e}")
+                    logging.error(f"批量{'回滚' if exc_occurred else '提交'}失败: {e}")
             self._lock.release()
 
     def save(self) -> bool:
@@ -161,10 +238,20 @@ class SyncMetadata:
                 return True
             try:
                 self._conn.commit()
+                self._maybe_wal_checkpoint()
                 return True
             except sqlite3.Error as e:
                 logging.error(f"保存元数据失败: {e}")
                 return False
+
+    def _maybe_wal_checkpoint(self) -> None:
+        """定期将 WAL 刷入主文件，防止 WAL 无限增长和断电丢数据。"""
+        self._save_count += 1
+        if self._save_count % 50 == 0:
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except sqlite3.Error:
+                pass
 
     def close(self) -> None:
         """关闭数据库连接。"""
@@ -176,6 +263,13 @@ class SyncMetadata:
                     pass
                 self._conn.close()
                 self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
     @staticmethod
     @lru_cache(maxsize=8192)
@@ -215,7 +309,8 @@ class SyncMetadata:
             path = self._normalize_path(local_path)
             row = self._conn.execute(
                 "SELECT file_id, cloud_mtime, local_mtime, parent_id, domain, "
-                "content_hash, create_time FROM files WHERE path = ?",
+                "content_hash, create_time, last_sync_at, cloud_content_hash "
+                "FROM files WHERE path = ?",
                 (path,),
             ).fetchone()
             if not row:
@@ -238,7 +333,20 @@ class SyncMetadata:
             result["content_hash"] = row[5]
         if row[6] is not None and row[6] > 0:
             result["create_time"] = row[6]
+        if len(row) > 7 and row[7]:
+            result["last_sync_at"] = row[7]
+        if len(row) > 8 and row[8]:
+            result["cloud_content_hash"] = row[8]
         return result
+
+    def mark_synced(self, local_path: str, ts: int = None) -> None:
+        """标记文件已成功同步（更新 last_sync_at）。"""
+        with self._lock:
+            path = self._normalize_path(local_path)
+            ts = ts or int(time.time())
+            self._conn.execute(
+                "UPDATE files SET last_sync_at = ? WHERE path = ?", (ts, path)
+            )
 
     def set_file_info(
         self,
@@ -261,7 +369,7 @@ class SyncMetadata:
         :param local_mtime: 本地修改时间（秒级时间戳），默认使用当前文件时间
         :param parent_id: 父目录 ID
         :param domain: 笔记类型（0=普通笔记，1=Markdown）
-        :param content_hash: 文件内容的 normalized MD5
+        :param content_hash: 文件内容的 normalized xxhash (xxh3_128)
         :param create_time: 云端创建时间（秒级时间戳）
         :param base_dir: 基准目录，用于将相对路径转绝对路径以读取 mtime
         """
@@ -346,21 +454,15 @@ class SyncMetadata:
             )
 
     def remove_file(self, local_path: str) -> None:
-        """
-        删除文件的元数据记录
-
-        :param local_path: 本地文件的相对路径
-        """
-        with self._lock:
-            path = self._normalize_path(local_path)
-            self._conn.execute("DELETE FROM files WHERE path = ?", (path,))
+        """删除文件的元数据记录（remove_file_info 的别名）。"""
+        self.remove_file_info(local_path)
 
     def get_all_files(self) -> Dict[str, Dict[str, Any]]:
         """获取所有文件元数据（返回独立副本，外部可安全修改）。"""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT path, file_id, cloud_mtime, local_mtime, parent_id, "
-                "domain, content_hash, create_time FROM files"
+                "domain, content_hash, create_time, last_sync_at, cloud_content_hash FROM files"
             ).fetchall()
             return {
                 row[0]: self._row_to_file_dict(row[1:])
@@ -517,3 +619,252 @@ class SyncMetadata:
                 groups.setdefault(hash_val, []).append(path)
 
             return {h: paths for h, paths in groups.items() if len(paths) > 1}
+
+    # ========== 云端 Hash 缓存 (Phase 2b) ==========
+
+    def set_cloud_content_hash(self, local_path: str, cloud_hash: str) -> None:
+        """记录云端文件的 content_hash（上传/下载成功后调用）。"""
+        with self._lock:
+            path = self._normalize_path(local_path)
+            self._conn.execute(
+                "UPDATE files SET cloud_content_hash = ? WHERE path = ?",
+                (cloud_hash, path),
+            )
+
+    def get_cloud_content_hash(self, local_path: str) -> Optional[str]:
+        """获取缓存的云端 content_hash。"""
+        with self._lock:
+            path = self._normalize_path(local_path)
+            row = self._conn.execute(
+                "SELECT cloud_content_hash FROM files WHERE path = ?", (path,)
+            ).fetchone()
+            return row[0] if row and row[0] else None
+
+    # ========== 操作日志 (Phase 2d) ==========
+
+    def log_sync_action(
+        self, path: str, action: str, direction: str = None,
+        old_hash: str = None, new_hash: str = None,
+        cloud_id: str = None, detail: str = None,
+        timestamp_override: int = None,
+    ) -> None:
+        """记录一条同步操作日志。"""
+        ts = timestamp_override if timestamp_override is not None else int(time.time())
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sync_log (timestamp, path, action, direction, "
+                "old_hash, new_hash, cloud_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (ts, path, action, direction,
+                 old_hash, new_hash, cloud_id, detail),
+            )
+
+    def get_sync_log(self, limit: int = 100, path: str = None) -> List[Dict[str, Any]]:
+        """查询同步操作日志。"""
+        with self._lock:
+            if path:
+                rows = self._conn.execute(
+                    "SELECT id, timestamp, path, action, direction, old_hash, "
+                    "new_hash, cloud_id, detail FROM sync_log "
+                    "WHERE path = ? ORDER BY id DESC LIMIT ?", (path, limit)
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT id, timestamp, path, action, direction, old_hash, "
+                    "new_hash, cloud_id, detail FROM sync_log "
+                    "ORDER BY id DESC LIMIT ?", (limit,)
+                ).fetchall()
+            return [
+                {"id": r[0], "timestamp": r[1], "path": r[2], "action": r[3],
+                 "direction": r[4], "old_hash": r[5], "new_hash": r[6],
+                 "cloud_id": r[7], "detail": r[8]}
+                for r in rows
+            ]
+
+    # ========== 引用索引缓存 (Phase 2c) ==========
+
+    def get_file_refs(self, source_path: str) -> List[str]:
+        """获取缓存的文件引用列表。"""
+        with self._lock:
+            path = self._normalize_path(source_path)
+            rows = self._conn.execute(
+                "SELECT ref_path FROM file_refs WHERE source_path = ?", (path,)
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    def set_file_refs(self, source_path: str, refs: List[str]) -> None:
+        """更新文件的引用列表（先删后插）。"""
+        with self._lock:
+            path = self._normalize_path(source_path)
+            self._conn.execute(
+                "DELETE FROM file_refs WHERE source_path = ?", (path,))
+            if refs:
+                self._conn.executemany(
+                    "INSERT OR IGNORE INTO file_refs (source_path, ref_path) VALUES (?, ?)",
+                    [(path, r) for r in refs],
+                )
+
+    def get_all_cached_refs(self) -> Dict[str, List[str]]:
+        """获取所有缓存的引用（用于增量构建引用索引）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT source_path, ref_path FROM file_refs"
+            ).fetchall()
+            result: Dict[str, List[str]] = {}
+            for src, ref in rows:
+                result.setdefault(src, []).append(ref)
+            return result
+
+    # ========== Base 版本存储 (Phase 3d) ==========
+
+    def save_base_content(self, rel_path: str, content: bytes, content_hash: str) -> None:
+        """保存文件的 base 版本（用于 diff3 三路合并）。"""
+        with self._lock:
+            path = self._normalize_path(rel_path)
+            self._conn.execute(
+                "INSERT OR REPLACE INTO file_base (path, content, hash, saved_at) "
+                "VALUES (?, ?, ?, ?)",
+                (path, content, content_hash, int(time.time())),
+            )
+
+    def get_base_content(self, rel_path: str) -> Optional[bytes]:
+        """获取文件的 base 版本内容。"""
+        with self._lock:
+            path = self._normalize_path(rel_path)
+            row = self._conn.execute(
+                "SELECT content FROM file_base WHERE path = ?", (path,)
+            ).fetchone()
+            return row[0] if row else None
+
+    # ========== Merkle Tree (Phase 4a) ==========
+
+    def get_tree_hash(self, dir_path: str) -> Optional[str]:
+        """获取目录的 tree_hash。"""
+        with self._lock:
+            path = self._normalize_path(dir_path)
+            row = self._conn.execute(
+                "SELECT tree_hash FROM directories WHERE path = ?", (path,)
+            ).fetchone()
+            return row[0] if row and row[0] else None
+
+    def set_tree_hash(self, dir_path: str, tree_hash: str) -> None:
+        """更新目录的 tree_hash（目录行不存在时自动创建）。"""
+        with self._lock:
+            path = self._normalize_path(dir_path)
+            self._conn.execute(
+                "INSERT INTO directories (path, dir_id, parent_id, tree_hash) "
+                "VALUES (?, '', '', ?) "
+                "ON CONFLICT(path) DO UPDATE SET tree_hash = excluded.tree_hash",
+                (path, tree_hash),
+            )
+
+    def get_all_tree_hashes(self) -> Dict[str, str]:
+        """获取所有目录的 tree_hash。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT path, tree_hash FROM directories WHERE tree_hash IS NOT NULL"
+            ).fetchall()
+            return {r[0]: r[1] for r in rows}
+
+    # ========== 垃圾回收 (Phase 3a) ==========
+
+    def gc(self, local_dir: str, max_log_age_days: int = 90) -> Dict[str, int]:
+        """清理过期和孤儿元数据记录。
+
+        :return: {"files": n, "dirs": n, "logs": n, "bases": n}
+        """
+        stats = {"files": 0, "dirs": 0, "logs": 0, "bases": 0}
+        cutoff = int(time.time()) - 30 * 86400
+        log_cutoff = int(time.time()) - max_log_age_days * 86400
+
+        with self._lock:
+            # 清理 files 表：last_sync_at 过期且本地不存在
+            rows = self._conn.execute(
+                "SELECT path FROM files WHERE last_sync_at > 0 AND last_sync_at < ?",
+                (cutoff,),
+            ).fetchall()
+            for (path,) in rows:
+                full = os.path.join(local_dir, path)
+                if not os.path.exists(full):
+                    self._conn.execute("DELETE FROM files WHERE path = ?", (path,))
+                    stats["files"] += 1
+
+            # 清理 directories 表：本地不存在的目录
+            rows = self._conn.execute("SELECT path FROM directories").fetchall()
+            for (path,) in rows:
+                full = os.path.join(local_dir, path)
+                if not os.path.exists(full):
+                    self._conn.execute("DELETE FROM directories WHERE path = ?", (path,))
+                    stats["dirs"] += 1
+
+            # 清理过期的 sync_log
+            cur = self._conn.execute(
+                "DELETE FROM sync_log WHERE timestamp < ?", (log_cutoff,))
+            stats["logs"] = cur.rowcount
+
+            # 清理 file_base 中不存在的文件
+            rows = self._conn.execute("SELECT path FROM file_base").fetchall()
+            for (path,) in rows:
+                full = os.path.join(local_dir, path)
+                if not os.path.exists(full):
+                    self._conn.execute("DELETE FROM file_base WHERE path = ?", (path,))
+                    stats["bases"] += 1
+
+            # 清理 file_refs 中不存在的 source
+            rows = self._conn.execute(
+                "SELECT DISTINCT source_path FROM file_refs").fetchall()
+            for (path,) in rows:
+                full = os.path.join(local_dir, path)
+                if not os.path.exists(full):
+                    self._conn.execute(
+                        "DELETE FROM file_refs WHERE source_path = ?", (path,))
+
+            self._conn.commit()
+
+        if any(v > 0 for v in stats.values()):
+            logging.info(
+                f"GC 清理: files={stats['files']}, dirs={stats['dirs']}, "
+                f"logs={stats['logs']}, bases={stats['bases']}")
+        return stats
+
+    # ========== 完整性校验 (Phase 3b) ==========
+
+    def verify(self, local_dir: str, auto_fix: bool = False) -> List[tuple]:
+        """校验元数据与本地文件的一致性。
+
+        :return: [(path, issue_type, detail), ...]
+        """
+        from src.sync.utils import compute_content_hash
+        issues: List[tuple] = []
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT path, file_id, content_hash FROM files"
+            ).fetchall()
+
+        for path, file_id, meta_hash in rows:
+            full = os.path.join(local_dir, path)
+            if not os.path.exists(full):
+                if file_id:
+                    issues.append((path, "orphan", "本地文件不存在但有 file_id"))
+                continue
+            if meta_hash:
+                actual = compute_content_hash(full)
+                if actual and actual != meta_hash:
+                    issues.append((path, "hash_mismatch",
+                                   f"记录={meta_hash[:16]}.. 实际={actual[:16]}.."))
+                    if auto_fix:
+                        self.update_content_hash(path, actual)
+
+        with self._lock:
+            dir_rows = self._conn.execute(
+                "SELECT path FROM directories").fetchall()
+        for (path,) in dir_rows:
+            full = os.path.join(local_dir, path)
+            if not os.path.exists(full):
+                issues.append((path, "orphan_dir", "本地目录不存在"))
+                if auto_fix:
+                    self.remove_dir(path)
+
+        if auto_fix and issues:
+            self.save()
+        return issues

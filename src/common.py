@@ -68,17 +68,21 @@ def load_config():
             "local_dir": "",
             "ydnote_dir": "",
             "smms_secret_token": "",
-            "is_relative_path": True
+            "is_relative_path": True,
+            "sync_include": [],
+            "sync_exclude": [],
         }, ""
 
     try:
         with open(config_path, "rb") as f:
             config_str = f.read().decode("utf-8")
         config_dict = json.loads(config_str)
+        config_dict.setdefault("sync_include", [])
+        config_dict.setdefault("sync_exclude", [])
         return config_dict, ""
     except json.JSONDecodeError as e:
         return {}, f"config.json 格式错误: {e}"
-    except Exception as e:
+    except OSError as e:
         return {}, f"读取配置失败: {e}"
 
 

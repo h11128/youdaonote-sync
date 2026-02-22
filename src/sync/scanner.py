@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import fnmatch
 import os
 import logging
 import queue
@@ -168,43 +169,67 @@ async def async_scan_cloud(
 
     files: Dict[str, Dict] = {}
     sem = asyncio.Semaphore(max_concurrent)
+    max_pages = 50
 
     async def _fetch_dir(did: str, bpath: str) -> List[tuple]:
-        async with sem:
-            url = dir_url_template.format(dir_id=did, page_size=page_size, cstk=cstk)
-            try:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception as e:
-                logging.error(f"获取云端目录失败: {bpath} - {e}")
-                return []
-
+        """获取一个目录的全部内容（自动分页 + 去重），返回子目录列表。"""
         subdirs: List[tuple] = []
-        for entry in data.get("entries", []):
-            fe = entry.get("fileEntry", {})
-            name = fe.get("name", "")
-            if name.startswith("."):
-                continue
+        seen_ids: set = set()
+        offset = 0
 
-            rel = f"{bpath}/{name}".lstrip("/") if bpath else name
-            info = {
-                "id": fe.get("id", ""),
-                "parent_id": did,
-                "name": name,
-                "is_dir": fe.get("dir", False),
-                "mtime": fe.get("modifyTimeForSort", 0),
-                "ctime": fe.get("createTimeForSort", 0),
-                "domain": fe.get("domain", 1),
-            }
+        for _ in range(max_pages):
+            async with sem:
+                url = dir_url_template.format(dir_id=did, page_size=page_size, cstk=cstk)
+                if offset > 0:
+                    url += f"&startIndex={offset}"
+                try:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    data = resp.json()
+                except Exception as e:
+                    logging.error(f"获取云端目录失败: {bpath} - {e}")
+                    break
 
-            if info["is_dir"]:
-                files[rel] = info
-                subdirs.append((info["id"], rel))
-            else:
-                local_name = map_cloud_name(name)
-                local_rel = f"{bpath}/{local_name}".lstrip("/") if bpath else local_name
-                files[local_rel] = info
+            entries = data.get("entries", [])
+            total = data.get("count", 0)
+            if not entries:
+                break
+
+            new_count = 0
+            for entry in entries:
+                fe = entry.get("fileEntry", {})
+                eid = fe.get("id", "")
+                if not eid or eid in seen_ids:
+                    continue
+                seen_ids.add(eid)
+                new_count += 1
+
+                name = fe.get("name", "")
+                if name.startswith("."):
+                    continue
+
+                rel = f"{bpath}/{name}".lstrip("/") if bpath else name
+                info = {
+                    "id": eid,
+                    "parent_id": did,
+                    "name": name,
+                    "is_dir": fe.get("dir", False),
+                    "mtime": fe.get("modifyTimeForSort", 0),
+                    "ctime": fe.get("createTimeForSort", 0),
+                    "domain": fe.get("domain", 1),
+                }
+
+                if info["is_dir"]:
+                    files[rel] = info
+                    subdirs.append((eid, rel))
+                else:
+                    local_name = map_cloud_name(name)
+                    local_rel = f"{bpath}/{local_name}".lstrip("/") if bpath else local_name
+                    files[local_rel] = info
+
+            offset += len(entries)
+            if new_count == 0 or len(seen_ids) >= total or len(entries) < page_size:
+                break
 
         return subdirs
 
@@ -227,7 +252,23 @@ async def async_scan_cloud(
     return files
 
 
-def scan_local(local_dir: str, base_path: str = "") -> Dict[str, Dict]:
+def matches_selective(rel_path: str, include: List[str], exclude: List[str]) -> bool:
+    """检查路径是否通过选择性同步过滤。"""
+    if exclude:
+        for pat in exclude:
+            if fnmatch.fnmatch(rel_path, pat) or fnmatch.fnmatch(rel_path, f"**/{pat}"):
+                return False
+    if include:
+        for pat in include:
+            if fnmatch.fnmatch(rel_path, pat) or fnmatch.fnmatch(rel_path, f"**/{pat}"):
+                return True
+        return False
+    return True
+
+
+def scan_local(local_dir: str, base_path: str = "",
+               sync_include: List[str] = None,
+               sync_exclude: List[str] = None) -> Dict[str, Dict]:
     """扫描本地目录（顶层子目录并行）。
 
     路径映射规则与 scan_cloud 保持一致：
@@ -274,25 +315,14 @@ def scan_local(local_dir: str, base_path: str = "") -> Dict[str, Dict]:
 
     def _walk_subdir(subdir: str):
         partial: Dict[str, Dict] = {}
-        for root, dirs, filenames in os.walk(subdir):
-            dirs[:] = [d for d in dirs
-                       if not d.startswith(".")
-                       and d not in LOCAL_ARTIFACT_DIRS]
-            for d in dirs:
-                p = os.path.join(root, d)
-                rel = normalize_sep(os.path.relpath(p, local_dir))
-                partial[rel] = {"path": p, "is_dir": True,
-                                "mtime": int(os.path.getmtime(p))}
-            for f in filenames:
-                if f.startswith(".") or ".conflict." in f:
-                    continue
-                _add_local_file(os.path.join(root, f), f, local_dir, partial)
+        _scandir_recursive(subdir, local_dir, partial)
         with results_lock:
             results.append(partial)
 
     workers = min(len(top_dirs), os.cpu_count() or 4, 8)
     if workers <= 1:
-        _walk_subdir(top_dirs[0])
+        for sd in top_dirs:
+            _walk_subdir(sd)
     else:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futs = [pool.submit(_walk_subdir, sd) for sd in top_dirs]
@@ -305,7 +335,60 @@ def scan_local(local_dir: str, base_path: str = "") -> Dict[str, Dict]:
     files: Dict[str, Dict] = {}
     for partial in results:
         files.update(partial)
+
+    if sync_include or sync_exclude:
+        inc = sync_include or []
+        exc = sync_exclude or []
+        files = {k: v for k, v in files.items()
+                 if matches_selective(k, inc, exc)}
+
     return files
+
+
+def _scandir_recursive(dirpath: str, local_dir: str,
+                       target: Dict[str, Dict]) -> None:
+    """用 os.scandir 递归遍历目录，利用 DirEntry stat 缓存减少系统调用。"""
+    try:
+        entries = list(os.scandir(dirpath))
+    except OSError:
+        return
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                if entry.name in LOCAL_ARTIFACT_DIRS:
+                    continue
+                rel = normalize_sep(os.path.relpath(entry.path, local_dir))
+                st = entry.stat(follow_symlinks=False)
+                target[rel] = {"path": entry.path, "is_dir": True,
+                               "mtime": int(st.st_mtime)}
+                _scandir_recursive(entry.path, local_dir, target)
+            elif entry.is_file(follow_symlinks=False):
+                if ".conflict." in entry.name:
+                    continue
+                _add_local_file_from_entry(entry, local_dir, target)
+        except OSError:
+            continue
+
+
+def _add_local_file_from_entry(entry: os.DirEntry, local_dir: str,
+                               target: Dict[str, Dict]) -> None:
+    """将一个 DirEntry 文件加入扫描结果（利用缓存的 stat）。"""
+    name = entry.name
+    _, ext = os.path.splitext(name)
+    mapped_name = map_cloud_name(name)
+    rel = normalize_sep(os.path.relpath(
+        os.path.join(os.path.dirname(entry.path), mapped_name), local_dir
+    ))
+    if rel in target and ext in (".note", ".clip"):
+        return
+    try:
+        st = entry.stat(follow_symlinks=False)
+    except OSError:
+        return
+    target[rel] = {"path": entry.path, "is_dir": False,
+                   "mtime": int(st.st_mtime), "size": st.st_size}
 
 
 def _add_local_file(path: str, name: str, local_dir: str,

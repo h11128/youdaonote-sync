@@ -43,7 +43,8 @@ class GitHelper:
         """检查是否有需要提交的变更"""
         return bool(changed_paths) and self.is_git_repo()
 
-    def commit_sync(self, changed_paths: List[str], stats: Dict) -> bool:
+    def commit_sync(self, changed_paths: List[str], stats: Dict,
+                    dedup_deleted_paths: List[str] = None) -> bool:
         """
         将同步变更自动提交到 git。
 
@@ -51,6 +52,7 @@ class GitHelper:
 
         :param changed_paths: 本次同步实际改动的本地文件绝对路径
         :param stats: 同步统计信息（downloaded, uploaded, conflicts, dedup_deleted）
+        :param dedup_deleted_paths: 去重删除的文件路径（用于 git add -u 捕获删除）
         :return: 是否成功
         """
         if not self.is_git_repo():
@@ -61,20 +63,23 @@ class GitHelper:
             return False
 
         try:
-            # 如果有去重删除，需要用 add -u 捕获删除
-            has_dedup = stats.get("dedup_deleted", 0) > 0
-
             # 分批 add 改动文件
             batch_size = 50
             for i in range(0, len(changed_paths), batch_size):
                 batch = changed_paths[i:i + batch_size]
                 existing = [p for p in batch if os.path.exists(p)]
                 if existing:
-                    self._run(["add", "--"] + existing)
+                    result = self._run(["add", "--"] + existing)
+                    if result.returncode != 0:
+                        logging.warning(f"git add 失败: {result.stderr}")
 
-            # 去重删除的文件需要用 add -u 捕获（限定到 repo 目录，避免暂存无关变更）
-            if has_dedup:
-                self._run(["add", "-u", "--", "."])
+            # 去重删除的文件：只暂存已知路径的删除，避免暂存无关变更
+            if dedup_deleted_paths:
+                for i in range(0, len(dedup_deleted_paths), batch_size):
+                    batch = dedup_deleted_paths[i:i + batch_size]
+                    result = self._run(["add", "-u", "--"] + batch)
+                    if result.returncode != 0:
+                        logging.warning(f"git add -u 失败: {result.stderr}")
 
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             parts = []
@@ -100,3 +105,18 @@ class GitHelper:
         except Exception as e:
             logging.error(f"Git 提交失败: {e}")
             return False
+
+    def get_file_content(self, rel_path: str, ref: str = "HEAD") -> Optional[bytes]:
+        """从 Git 历史获取文件内容（用于 diff3 获取 base 版本）。"""
+        if not self.is_git_repo():
+            return None
+        try:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{rel_path}"],
+                cwd=self.repo_dir, capture_output=True, timeout=10,
+            )
+            if result.returncode == 0:
+                return result.stdout
+            return None
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None

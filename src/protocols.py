@@ -54,9 +54,10 @@ class FileDeleter(Protocol):
 
 @runtime_checkable
 class HttpClient(Protocol):
-    """HTTP 请求（用于图片/附件下载）"""
+    """HTTP 请求（用于图片/附件下载和 API 调用）"""
 
     def http_get(self, url: str) -> Any: ...
+    def http_post(self, url: str, data: Any = ...) -> Any: ...
 
 
 @runtime_checkable
@@ -119,4 +120,11 @@ class Uploader(Protocol):
 class SyncApi(Protocol):
     """SyncManager 只需要的 API 能力"""
 
+    DIR_MES_URL: str
+    DIR_PAGE_SIZE: int
+    cstk: Optional[str]
+
     def get_root_id(self) -> str: ...
+    def get_file_by_id(self, file_id: str) -> Any: ...
+    def delete_file(self, file_id: str) -> dict: ...
+    def create_async_client(self) -> Any: ...

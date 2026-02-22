@@ -22,12 +22,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.protocols import FileDeleter
 
+import xxhash
+
 from src.common import safe_long_path, normalize_sep
 from src.sync.metadata import SyncMetadata
 from src.sync.utils import compute_content_hash
 
-# 空文件的 MD5
-_EMPTY_MD5 = "d41d8cd98f00b204e9800998ecf8427e"
+_EMPTY_HASH = xxhash.xxh3_128(b"").hexdigest()
 
 # 图片/附件扩展名
 _ASSET_EXTS = frozenset({
@@ -76,6 +77,8 @@ def build_all_indexes(
 
     如果提供了 local_files（scan_local 的结果），直接基于已知文件列表构建，
     避免重复 os.walk。否则回退到文件系统遍历。
+
+    Phase 2c: 利用 metadata 中缓存的引用索引进行增量更新。
     """
     if local_files is not None:
         return _build_indexes_from_scan(root, local_files, metadata,
@@ -139,7 +142,7 @@ def _build_indexes(
                 try:
                     with open(full, "r", encoding="utf-8", errors="replace") as fh:
                         content = fh.read()
-                except Exception:
+                except OSError:
                     continue
 
                 for m in _MD_REF_RE.finditer(content):
@@ -167,10 +170,16 @@ def _build_indexes_from_scan(
     metadata: SyncMetadata = None,
     hash_cache: Dict[str, str] = None,
 ) -> Tuple[Dict[str, List[str]], Set[str]]:
-    """基于 scan_local 已有的文件列表构建索引，跳过 os.walk。"""
+    """基于 scan_local 已有的文件列表构建索引，跳过 os.walk。
+
+    Phase 2c: 引用索引增量更新——只重新解析 mtime 变化的 md 文件，
+    其余文件从 metadata 缓存读取。
+    """
     hash_index: Dict[str, List[str]] = defaultdict(list)
     referenced: Set[str] = set()
     updated = 0
+
+    cached_refs = metadata.get_all_cached_refs() if metadata else {}
 
     for rel, info in local_files.items():
         if info.get("is_dir"):
@@ -183,6 +192,7 @@ def _build_indexes_from_scan(
         h = None
         if hash_cache:
             h = hash_cache.get(full)
+        meta_info = None
         if not h and metadata:
             meta_info = metadata.get_file_info(rel)
             if meta_info and "content_hash" in meta_info:
@@ -201,29 +211,50 @@ def _build_indexes_from_scan(
         if h:
             hash_index[h].append(rel)
 
+        # Phase 2c: incremental ref index
         if f.endswith(".md"):
-            md_dir = os.path.dirname(full)
-            try:
-                with open(full, "r", encoding="utf-8", errors="replace") as fh:
-                    content = fh.read()
-            except Exception:
-                continue
-            for m in _MD_REF_RE.finditer(content):
-                ref_path = m.group(1) or m.group(2)
-                if not ref_path:
-                    continue
-                if ref_path.startswith(("http://", "https://", "data:", "note://",
-                                        "ftp://", "mailto:", "//", "\\\\")):
-                    continue
-                if "://" in ref_path or (len(ref_path) > 2 and ":" in ref_path[2:]):
-                    continue
-                abs_ref = os.path.normpath(os.path.join(md_dir, ref_path))
-                rel_ref = normalize_sep(os.path.relpath(abs_ref, root))
-                referenced.add(rel_ref)
+            if meta_info is None and metadata:
+                meta_info = metadata.get_file_info(rel)
+            cached_mtime = meta_info.get("local_mtime", 0) if meta_info else 0
+            current_mtime = info.get("mtime", 0)
+
+            if current_mtime == cached_mtime and rel in cached_refs:
+                for ref in cached_refs[rel]:
+                    referenced.add(ref)
+            else:
+                md_dir = os.path.dirname(full)
+                new_refs = _extract_refs_from_md(full, md_dir, root)
+                referenced.update(new_refs)
+                if metadata:
+                    metadata.set_file_refs(rel, list(new_refs))
 
     if updated > 0 and metadata:
         metadata.save()
     return hash_index, referenced
+
+
+def _extract_refs_from_md(full_path: str, md_dir: str,
+                          root: str) -> Set[str]:
+    """从一个 md 文件中提取引用路径。"""
+    refs: Set[str] = set()
+    try:
+        with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
+            content = fh.read()
+    except OSError:
+        return refs
+    for m in _MD_REF_RE.finditer(content):
+        ref_path = m.group(1) or m.group(2)
+        if not ref_path:
+            continue
+        if ref_path.startswith(("http://", "https://", "data:", "note://",
+                                "ftp://", "mailto:", "//", "\\\\")):
+            continue
+        if "://" in ref_path or (len(ref_path) > 2 and ":" in ref_path[2:]):
+            continue
+        abs_ref = os.path.normpath(os.path.join(md_dir, ref_path))
+        rel_ref = normalize_sep(os.path.relpath(abs_ref, root))
+        refs.add(rel_ref)
+    return refs
 
 
 # ========== 去重核心 ==========
@@ -277,7 +308,8 @@ def _classify_duplicates(
             try:
                 sz = os.path.getsize(os.path.join(root, p))
             except OSError:
-                sz = -1
+                stats["skipped"] += 1
+                continue
             size_groups[sz].append(p)
         for sz, sub_paths in size_groups.items():
             if len(sub_paths) > 1:
@@ -386,8 +418,9 @@ def _execute_removals(
     api,
     dry_run: bool,
     stats: Dict,
-) -> None:
-    """执行删除动作（本地 + 可选云端）。"""
+) -> List[str]:
+    """执行删除动作，返回已删除文件的绝对路径列表。"""
+    deleted_paths: List[str] = []
     for remove_path, cloud_file_id, keep_path, reason in actions:
         if dry_run:
             cloud_tag = " + 云端" if cloud_file_id else ""
@@ -395,15 +428,19 @@ def _execute_removals(
             print(f"         {reason}")
         else:
             full = safe_long_path(os.path.join(root, remove_path))
+
             try:
-                os.remove(full)
-                logging.info(f"去重删除本地: {remove_path} ({reason})")
                 if metadata:
                     metadata.remove_file(remove_path)
+                os.remove(full)
+                logging.info(f"去重删除本地: {remove_path} ({reason})")
+                deleted_paths.append(full)
                 _remove_empty_parents(full, root)
-            except Exception as e:
+            except OSError as e:
                 logging.error(f"去重删除本地失败: {remove_path} - {e}")
                 stats["deleted"] -= 1
+                if cloud_file_id:
+                    stats["cloud_deleted"] -= 1
                 continue
 
             if cloud_file_id and api:
@@ -414,6 +451,7 @@ def _execute_removals(
                     logging.error(
                         f"去重删除云端失败: {remove_path} (file_id={cloud_file_id}) - {e}")
                     stats["cloud_deleted"] -= 1
+    return deleted_paths
 
 
 def auto_dedup(
@@ -453,7 +491,7 @@ def auto_dedup(
     all_actions: List[Tuple[str, Optional[str], str, str]] = []
     for h, paths in sorted(dup_groups.items(), key=lambda x: x[0]):
         stats["groups"] += 1
-        if h.startswith(_EMPTY_MD5):
+        if h.startswith(_EMPTY_HASH):
             stats["skipped"] += 1
             continue
         try:
@@ -470,13 +508,14 @@ def auto_dedup(
     if not all_actions:
         return stats
 
+    deleted_paths = _execute_removals(all_actions, root, metadata, api, dry_run, stats)
+    stats["deleted_paths"] = deleted_paths
+
     logging.info(
         f"去重: {stats['groups']} 组重复，"
         f"删除 {stats['deleted']} 个文件（其中 {stats['cloud_deleted']} 个同时删除云端），"
         f"保护 {stats['protected_refs']} 个被引用的资源"
     )
-
-    _execute_removals(all_actions, root, metadata, api, dry_run, stats)
 
     if not dry_run and metadata:
         metadata.save()
