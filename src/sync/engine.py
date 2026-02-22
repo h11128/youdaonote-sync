@@ -188,6 +188,14 @@ class SyncManager:
             logging.error(f"去重扫描失败: {e}")
             return {}
 
+    def collect_items(self, cloud_dir_id: str, cloud_path: str = "",
+                      dry_run: bool = False) -> List[SyncItem]:
+        """同步版收集差异项（供 dry-run 报告等外部工具使用）"""
+        self._hash_cache = {}
+        self._local_files = None
+        return asyncio.run(self._async_collect_items(
+            cloud_dir_id, cloud_path, dry_run))
+
     # ========== 收集差异 ==========
 
     async def _async_collect_items(self, cloud_dir_id: str,
