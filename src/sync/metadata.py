@@ -77,6 +77,13 @@ _MIGRATION_SQL = [
     )""",
     # Phase 1a: invalidate MD5 hashes after switching to xxhash
     "UPDATE files SET content_hash = NULL WHERE content_hash IS NOT NULL",
+    # scan-cache: key-value store for global sync state
+    """CREATE TABLE IF NOT EXISTS sync_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )""",
+    # Phase 3: original cloud domain (0=XML, 1=MD) for format preservation
+    "ALTER TABLE files ADD COLUMN original_domain INTEGER",
 ]
 
 
@@ -309,7 +316,8 @@ class SyncMetadata:
             path = self._normalize_path(local_path)
             row = self._conn.execute(
                 "SELECT file_id, cloud_mtime, local_mtime, parent_id, domain, "
-                "content_hash, create_time, last_sync_at, cloud_content_hash "
+                "content_hash, create_time, last_sync_at, cloud_content_hash, "
+                "original_domain "
                 "FROM files WHERE path = ?",
                 (path,),
             ).fetchone()
@@ -337,6 +345,8 @@ class SyncMetadata:
             result["last_sync_at"] = row[7]
         if len(row) > 8 and row[8]:
             result["cloud_content_hash"] = row[8]
+        if len(row) > 9 and row[9] is not None:
+            result["original_domain"] = row[9]
         return result
 
     def mark_synced(self, local_path: str, ts: int = None) -> None:
@@ -421,11 +431,37 @@ class SyncMetadata:
                 ),
             )
 
+    def set_original_domain(self, local_path: str, domain: int) -> None:
+        """记录文件的云端原始 domain（仅在首次下载时设置，不覆盖已有值）。"""
+        with self._lock:
+            path = self._normalize_path(local_path)
+            self._conn.execute(
+                "UPDATE files SET original_domain = ? "
+                "WHERE path = ? AND original_domain IS NULL",
+                (domain, path),
+            )
+
+    def get_original_domain(self, local_path: str) -> Optional[int]:
+        """获取文件的云端原始 domain。"""
+        with self._lock:
+            path = self._normalize_path(local_path)
+            row = self._conn.execute(
+                "SELECT original_domain FROM files WHERE path = ?", (path,)
+            ).fetchone()
+            return row[0] if row and row[0] is not None else None
+
     def remove_file_info(self, local_path: str) -> None:
         """删除指定路径的文件元数据（用于文件移动后清理旧记录）。"""
         with self._lock:
             path = self._normalize_path(local_path)
             self._conn.execute("DELETE FROM files WHERE path = ?", (path,))
+
+    def clear_cloud_id(self, local_path: str) -> None:
+        """清除文件的云端 ID（标记为纯本地记录，不再视为云端文件）。"""
+        with self._lock:
+            path = self._normalize_path(local_path)
+            self._conn.execute(
+                "UPDATE files SET file_id = '' WHERE path = ?", (path,))
 
     def update_local_mtime(self, local_path: str, mtime: int) -> None:
         """
@@ -462,7 +498,8 @@ class SyncMetadata:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT path, file_id, cloud_mtime, local_mtime, parent_id, "
-                "domain, content_hash, create_time, last_sync_at, cloud_content_hash FROM files"
+                "domain, content_hash, create_time, last_sync_at, cloud_content_hash, "
+                "original_domain FROM files"
             ).fetchall()
             return {
                 row[0]: self._row_to_file_dict(row[1:])
@@ -764,6 +801,35 @@ class SyncMetadata:
                 "SELECT path, tree_hash FROM directories WHERE tree_hash IS NOT NULL"
             ).fetchall()
             return {r[0]: r[1] for r in rows}
+
+    # ========== 全局同步状态 (scan-cache) ==========
+
+    def get_state(self, key: str) -> Optional[str]:
+        """读取全局同步状态值。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM sync_state WHERE key = ?", (key,)
+            ).fetchone()
+            return row[0] if row else None
+
+    def set_state(self, key: str, value: str) -> None:
+        """写入全局同步状态值（upsert）。"""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sync_state (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, str(value)),
+            )
+
+    def get_state_int(self, key: str, default: int = 0) -> int:
+        """读取整数型全局同步状态值。"""
+        val = self.get_state(key)
+        if val is None:
+            return default
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return default
 
     # ========== 垃圾回收 (Phase 3a) ==========
 

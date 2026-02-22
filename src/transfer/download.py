@@ -54,7 +54,8 @@ class YoudaoNoteDownload:
 
     def __init__(self, api: "DownloadFileApi", smms_secret_token: str = "",
                  is_relative_path: bool = True,
-                 image_puller: ImagePull = None):
+                 image_puller: ImagePull = None,
+                 desktop_data_dir: str = None):
         """
         初始化下载引擎
 
@@ -62,11 +63,14 @@ class YoudaoNoteDownload:
         :param smms_secret_token: SM.MS 图床 token（可选）
         :param is_relative_path: 是否使用相对路径
         :param image_puller: 注入的 ImagePull 实例（可选，默认按需创建）
+        :param desktop_data_dir: 桌面客户端数据目录（可选，用于本地缓存优先读取）
         """
         self.api = api
         self.smms_secret_token = smms_secret_token
         self.is_relative_path = is_relative_path
+        self._desktop_data_dir = desktop_data_dir
         self._image_puller = image_puller
+        self.last_raw_content: Optional[bytes] = None
 
         # 文件名中需要替换的特殊字符
         self._regex_symbol = re.compile(r"[<]")
@@ -102,6 +106,7 @@ class YoudaoNoteDownload:
 
             # 2. 下载 + 类型检测
             file_type, content = self._download_and_detect(file_id, youdao_file_suffix)
+            self.last_raw_content = content if file_type in (FileType.XML, FileType.JSON) else None
 
             # 3. 确定最终本地路径
             original_path, local_path = self._resolve_paths(
@@ -265,9 +270,21 @@ class YoudaoNoteDownload:
         if youdao_file_suffix not in self._NEED_DOWNLOAD_EXTS:
             return FileType.OTHER, None
 
-        response = self.api.get_file_by_id(file_id)
-        content = response.content
+        content = self._try_desktop_cache(file_id)
+        if content is None:
+            response = self.api.get_file_by_id(file_id)
+            content = response.content
         return self._detect_content_type(content), content
+
+    def _try_desktop_cache(self, file_id: str) -> Optional[bytes]:
+        """尝试从桌面客户端缓存读取文件内容。"""
+        if not self._desktop_data_dir:
+            return None
+        try:
+            from src.sync.desktop_data import read_desktop_file
+            return read_desktop_file(file_id, self._desktop_data_dir)
+        except Exception:
+            return None
 
     @classmethod
     def _detect_content_type(cls, content: bytes) -> FileType:

@@ -857,6 +857,137 @@ class ComputeContentHashTest(unittest.TestCase):
             compute_content_hash("")
 
 
+# ========== Markdown 格式归一化 hash 测试 ==========
+
+class MdNormalizedHashTest(unittest.TestCase):
+    """
+    验证 .md 文件 hash 在编辑器格式差异下保持一致
+    python -m pytest test/test_sync.py::MdNormalizedHashTest -v
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write(self, name, content):
+        path = os.path.join(self.tmpdir, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return path
+
+    def test_hr_star_vs_dash(self):
+        """*** 和 --- 分隔线应产生相同 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "# Title\n\n***\n\nContent\n")
+        b = self._write("b.md", "# Title\n\n---\n\nContent\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_list_marker_star_vs_dash(self):
+        """* 和 - 无序列表标记应产生相同 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "*   Item one\n*   Item two\n")
+        b = self._write("b.md", "- Item one\n- Item two\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_ordered_list_spacing(self):
+        """1.  xxx 和 1. xxx 应产生相同 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "1.  First\n2.  Second\n")
+        b = self._write("b.md", "1. First\n2. Second\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_table_alignment_padding(self):
+        """表格对齐空格不影响 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "| Name        | Age |\n| foo         | 30  |\n")
+        b = self._write("b.md", "| Name | Age |\n| foo | 30 |\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_blank_lines_ignored(self):
+        """空行数量差异不影响 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "# Title\n\n\nPara1\n\n\n\nPara2\n")
+        b = self._write("b.md", "# Title\nPara1\nPara2\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_escaped_underscore(self):
+        r"""\_ 和 _ 应产生相同 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "Speaker\\_1 said hello\n")
+        b = self._write("b.md", "Speaker_1 said hello\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_real_content_diff_still_different(self):
+        """真正不同的内容应产生不同 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "Apple\n")
+        b = self._write("b.md", "Banana\n")
+        self.assertNotEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_blockquote_list_marker(self):
+        """引用块内的 * → - 归一化"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "> * Item one\n> * Item two\n")
+        b = self._write("b.md", "> - Item one\n> - Item two\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_table_separator_dash_count(self):
+        """表格分隔行不同破折号数量应产生相同 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md",
+            "| Name | Age |\n| ---------- | --- |\n| foo | 30 |\n")
+        b = self._write("b.md",
+            "| Name | Age |\n|------|-----|\n| foo | 30 |\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_backslash_dollar_escape(self):
+        r"""\$ 和 $ 应产生相同 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "Price: \\$100\n")
+        b = self._write("b.md", "Price: $100\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_angle_bracket_link(self):
+        """<URL> 和 URL 应产生相同 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "Visit <https://example.com>\n")
+        b = self._write("b.md", "Visit https://example.com\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_code_fence_stripping(self):
+        """代码围栏行不影响 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "Config:\n```\nkey: value\n```\n")
+        b = self._write("b.md", "Config:\nkey: value\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_table_cell_padding(self):
+        """表格单元格 padding 不影响 hash"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.md", "| Name | Age |\n|---|---|\n| foo | 30 |\n")
+        b = self._write("b.md", "|Name|Age|\n|---|---|\n|foo|30|\n")
+        self.assertEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_non_md_not_normalized(self):
+        """.py 文件不应做 md 归一化"""
+        from src.sync.utils import compute_content_hash
+        a = self._write("a.py", "x = 1\n\n\ny = 2\n")
+        b = self._write("b.py", "x = 1\ny = 2\n")
+        self.assertNotEqual(compute_content_hash(a), compute_content_hash(b))
+
+    def test_hash_from_bytes_consistent(self):
+        """compute_hash_from_bytes 对 .md 应用同样的归一化"""
+        from src.sync.utils import compute_content_hash, compute_hash_from_bytes
+        path = self._write("test.md", "# Title\n\n***\n\n*   Item\n")
+        file_hash = compute_content_hash(path)
+        byte_hash = compute_hash_from_bytes(
+            b"# Title\n\n---\n\n- Item\n", "test.md")
+        self.assertEqual(file_hash, byte_hash)
+
+
 # ========== _detect_content_type 测试 ==========
 
 class DetectContentTypeTest(unittest.TestCase):
@@ -1386,7 +1517,7 @@ class LargeFileHashTest(unittest.TestCase):
             _hash_small_text_file, _hash_large_text_file)
 
         content = b"line1\r\nline2\r\nline3\n"
-        path = os.path.join(self.tmpdir, "test.md")
+        path = os.path.join(self.tmpdir, "test.css")
         with open(path, "wb") as f:
             f.write(content)
 
@@ -1401,7 +1532,7 @@ class LargeFileHashTest(unittest.TestCase):
 
         # chunk_size=5 → "ABCD\r" | "\nEFGH" 正好把 \r\n 拆开
         content = b"ABCD\r\nEFGH"
-        path = os.path.join(self.tmpdir, "split.md")
+        path = os.path.join(self.tmpdir, "split.css")
         with open(path, "wb") as f:
             f.write(content)
 
@@ -1415,7 +1546,7 @@ class LargeFileHashTest(unittest.TestCase):
             _hash_small_text_file, _hash_large_text_file)
 
         content = b"hello\r"
-        path = os.path.join(self.tmpdir, "cr_end.md")
+        path = os.path.join(self.tmpdir, "cr_end.css")
         with open(path, "wb") as f:
             f.write(content)
 
@@ -1429,7 +1560,7 @@ class LargeFileHashTest(unittest.TestCase):
             _hash_small_text_file, _hash_large_text_file)
 
         content = b"\xef\xbb\xbfhello \xef\xbb\xbf world"
-        path = os.path.join(self.tmpdir, "mid_bom.md")
+        path = os.path.join(self.tmpdir, "mid_bom.css")
         with open(path, "wb") as f:
             f.write(content)
 
@@ -2352,6 +2483,411 @@ class CrossDirMoveDirectionTest(unittest.TestCase):
         self.assertEqual(fid, "C1")
         self.assertEqual(old_path, "b/f.md")
         self.assertEqual(new_path, "a/f.md")
+
+
+# ========== 扫描缓存测试 ==========
+
+class SyncStateTest(unittest.TestCase):
+    """sync_state 表的 get/set 操作"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+
+    def test_get_state_missing_returns_none(self):
+        """未设置的 key 返回 None"""
+        self.assertIsNone(self.meta.get_state("nonexistent"))
+
+    def test_set_and_get_state(self):
+        """写入后能读回"""
+        self.meta.set_state("my_key", "hello")
+        self.assertEqual(self.meta.get_state("my_key"), "hello")
+
+    def test_set_state_upsert(self):
+        """重复写入同 key 更新值"""
+        self.meta.set_state("k", "v1")
+        self.meta.set_state("k", "v2")
+        self.assertEqual(self.meta.get_state("k"), "v2")
+
+    def test_get_state_int(self):
+        """get_state_int 正确解析整数"""
+        self.meta.set_state("ver", "12345")
+        self.assertEqual(self.meta.get_state_int("ver"), 12345)
+
+    def test_get_state_int_default(self):
+        """get_state_int 缺失时返回 default"""
+        self.assertEqual(self.meta.get_state_int("missing", 99), 99)
+
+    def test_get_state_int_invalid(self):
+        """get_state_int 非整数字符串返回 default"""
+        self.meta.set_state("bad", "not_a_number")
+        self.assertEqual(self.meta.get_state_int("bad", 0), 0)
+
+    def test_state_persists_across_reopen(self):
+        """关闭再打开后 state 仍在"""
+        self.meta.set_state("persist", "yes")
+        self.meta.save()
+        self.meta.close()
+        meta2 = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+        self.assertEqual(meta2.get_state("persist"), "yes")
+        meta2.close()
+
+
+class ScanCacheTest(unittest.TestCase):
+    """SyncManager 的扫描缓存逻辑（_load_cloud_files_from_cache 等）"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.local_dir = os.path.join(self.tmpdir, "notes")
+        os.makedirs(self.local_dir, exist_ok=True)
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+        self.api = _FakeApi()
+        self.manager = _make_manager(self.api, self.local_dir, self.meta)
+
+    def tearDown(self):
+        self.meta.close()
+
+    def test_empty_cache_returns_empty(self):
+        """metadata 为空时 _load_cloud_files_from_cache 返回空 dict"""
+        result = self.manager._load_cloud_files_from_cache()
+        self.assertEqual(result, {})
+
+    def test_cache_roundtrip_files(self):
+        """set_file_info → _load_cloud_files_from_cache 返回正确结构"""
+        self.meta.set_file_info("docs/hello.md", file_id="F1",
+                                cloud_mtime=1000, parent_id="D1",
+                                domain=1, create_time=900)
+        result = self.manager._load_cloud_files_from_cache()
+
+        self.assertIn("docs/hello.md", result)
+        info = result["docs/hello.md"]
+        self.assertEqual(info["id"], "F1")
+        self.assertEqual(info["parent_id"], "D1")
+        self.assertFalse(info["is_dir"])
+        self.assertEqual(info["mtime"], 1000)
+        self.assertEqual(info["domain"], 1)
+
+    def test_cache_excludes_dirs(self):
+        """目录不从缓存加载（避免幽灵目录导致虚假 DOWNLOAD）"""
+        self.meta.set_dir_info("docs", dir_id="D1", parent_id="ROOT")
+        result = self.manager._load_cloud_files_from_cache()
+        self.assertNotIn("docs", result)
+
+    def test_cache_skips_local_only_files(self):
+        """没有 file_id 的纯本地文件不出现在缓存中"""
+        self.meta.set_file_info("local.md", file_id="",
+                                cloud_mtime=0)
+        result = self.manager._load_cloud_files_from_cache()
+        self.assertNotIn("local.md", result)
+
+    def test_save_scan_version(self):
+        """_save_scan_version 写入 metadata 并记录 version"""
+        cloud_files = {
+            "a.md": {"id": "F1", "parent_id": "R", "name": "a.md",
+                     "is_dir": False, "mtime": 500, "ctime": 400, "domain": 1},
+            "dir1": {"id": "D1", "parent_id": "R", "name": "dir1",
+                     "is_dir": True, "mtime": 0, "ctime": 0, "domain": 0},
+        }
+        self.manager._save_scan_version(cloud_files, 999)
+
+        self.assertEqual(self.meta.get_state_int("last_cloud_version"), 999)
+        self.assertIsNotNone(self.meta.get_state("last_scan_time"))
+        self.assertEqual(self.meta.get_file_id("a.md"), "F1")
+        self.assertEqual(self.meta.get_dir_id("dir1"), "D1")
+
+    def test_try_cached_no_version_returns_none(self):
+        """没有 cached version 时返回 None"""
+        from unittest.mock import patch
+        with patch.object(self.manager, "_try_seed_from_desktop", return_value=False):
+            result = self.manager._try_cached_cloud_scan("ROOT", "")
+        self.assertIsNone(result)
+
+    def test_try_cached_fresh_returns_cache(self):
+        """缓存 version >= 云端 version 时返回缓存"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100,
+                                parent_id="R", domain=1)
+        self.meta.set_state("last_cloud_version", "500")
+        self.api._recent = [_fake_entry("F1", "a.md", version=500)]
+
+        result = self.manager._try_cached_cloud_scan("ROOT", "")
+        self.assertIsNotNone(result)
+        self.assertIn("a.md", result)
+
+    def test_try_cached_stale_small_change_incremental(self):
+        """缓存过期但变化量 < 30 时做增量更新"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100,
+                                parent_id="R", domain=1)
+        self.meta.set_state("last_cloud_version", "500")
+
+        self.api._recent = [
+            _fake_entry("F1", "a.md", version=501, mtime=200),
+            _fake_entry("F2", "old.md", version=400),
+        ]
+
+        result = self.manager._try_cached_cloud_scan("ROOT", "")
+        self.assertIsNotNone(result)
+        self.assertIn("a.md", result)
+        self.assertEqual(result["a.md"]["mtime"], 200)
+        self.assertEqual(self.meta.get_state_int("last_cloud_version"), 501)
+
+    def test_try_cached_stale_all_changed_full_scan(self):
+        """所有 listRecent 条目都比缓存新 → 无法确定完整变更集 → 返回 None"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100,
+                                parent_id="R", domain=1)
+        self.meta.set_state("last_cloud_version", "100")
+
+        self.api._recent = [
+            _fake_entry("F1", "a.md", version=501),
+            _fake_entry("F2", "b.md", version=502),
+            _fake_entry("F3", "c.md", version=503),
+        ]
+
+        result = self.manager._try_cached_cloud_scan("ROOT", "")
+        self.assertIsNone(result)
+
+    def test_try_cached_api_fail_uses_stale_cache(self):
+        """listRecent 失败时使用旧缓存"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100,
+                                parent_id="R", domain=1)
+        self.meta.set_state("last_cloud_version", "500")
+        self.api._recent_error = True
+
+        result = self.manager._try_cached_cloud_scan("ROOT", "")
+        self.assertIsNotNone(result)
+        self.assertIn("a.md", result)
+
+
+class IncrementalUpdateTest(unittest.TestCase):
+    """_apply_incremental_changes 增量更新逻辑"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+        self.api = _FakeApi()
+        self.manager = _make_manager(self.api,
+                                     os.path.join(self.tmpdir, "notes"),
+                                     self.meta)
+
+    def tearDown(self):
+        self.meta.close()
+
+    def test_update_existing_file(self):
+        """已有文件的 mtime 被更新"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100,
+                                parent_id="R", domain=1)
+        cloud_files = self.manager._load_cloud_files_from_cache()
+
+        changed = [_fake_entry("F1", "a.md", version=600, mtime=999)]
+        self.manager._apply_incremental_changes(cloud_files, changed)
+
+        self.assertEqual(cloud_files["a.md"]["mtime"], 999)
+
+    def test_update_existing_dir(self):
+        """已有目录被更新"""
+        self.meta.set_dir_info("docs", dir_id="D1", parent_id="ROOT")
+        cloud_files = self.manager._load_cloud_files_from_cache()
+
+        changed = [_fake_entry("D1", "docs", version=600, is_dir=True,
+                               parent_id="ROOT2")]
+        self.manager._apply_incremental_changes(cloud_files, changed)
+
+        self.assertEqual(cloud_files["docs"]["parent_id"], "ROOT2")
+
+    def test_new_file_not_in_cache_logged(self):
+        """新文件（缓存中没有对应 file_id）不会崩溃"""
+        cloud_files = {}
+        changed = [_fake_entry("FNEW", "brand_new.md", version=700)]
+        self.manager._apply_incremental_changes(cloud_files, changed)
+
+    def test_skip_empty_entries(self):
+        """空 id 或空 name 的条目被跳过"""
+        cloud_files = {}
+        changed = [
+            {"fileEntry": {"id": "", "name": "x.md", "version": 1}},
+            {"fileEntry": {"id": "F1", "name": "", "version": 1}},
+        ]
+        self.manager._apply_incremental_changes(cloud_files, changed)
+        self.assertEqual(cloud_files, {})
+
+
+class ListRecentApiTest(unittest.TestCase):
+    """api.list_recent 和 _safe_json_list"""
+
+    def test_safe_json_list_with_list(self):
+        """正常列表响应"""
+        from src.api import YoudaoNoteApi
+        import unittest.mock as mock
+        resp = mock.Mock()
+        resp.json.return_value = [{"a": 1}, {"b": 2}]
+        result = YoudaoNoteApi._safe_json_list(resp)
+        self.assertEqual(len(result), 2)
+
+    def test_safe_json_list_with_dict(self):
+        """非列表响应返回空列表"""
+        from src.api import YoudaoNoteApi
+        import unittest.mock as mock
+        resp = mock.Mock()
+        resp.json.return_value = {"error": "bad"}
+        result = YoudaoNoteApi._safe_json_list(resp)
+        self.assertEqual(result, [])
+
+    def test_safe_json_list_with_exception(self):
+        """解析异常返回空列表"""
+        from src.api import YoudaoNoteApi
+        import unittest.mock as mock
+        resp = mock.Mock()
+        resp.json.side_effect = ValueError("bad json")
+        result = YoudaoNoteApi._safe_json_list(resp)
+        self.assertEqual(result, [])
+
+
+class FetchCurrentVersionTest(unittest.TestCase):
+    """_fetch_current_version"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+        self.api = _FakeApi()
+        self.manager = _make_manager(self.api,
+                                     os.path.join(self.tmpdir, "notes"),
+                                     self.meta)
+
+    def tearDown(self):
+        self.meta.close()
+
+    def test_returns_max_version(self):
+        """返回 listRecent 第一条的 version"""
+        self.api._recent = [_fake_entry("F1", "a.md", version=888)]
+        self.assertEqual(self.manager._fetch_current_version(), 888)
+
+    def test_returns_zero_on_empty(self):
+        """listRecent 空时返回 0"""
+        self.api._recent = []
+        self.assertEqual(self.manager._fetch_current_version(), 0)
+
+    def test_returns_zero_on_error(self):
+        """listRecent 报错时返回 0"""
+        self.api._recent_error = True
+        self.assertEqual(self.manager._fetch_current_version(), 0)
+
+
+# ========== Phase 3: original_domain 测试 ==========
+
+class OriginalDomainTest(unittest.TestCase):
+    """original_domain 记录与查询"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+
+    def test_set_and_get_original_domain(self):
+        """设置后能读回 original_domain"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100)
+        self.meta.set_original_domain("a.md", 0)
+        self.assertEqual(self.meta.get_original_domain("a.md"), 0)
+
+    def test_original_domain_not_overwritten(self):
+        """set_original_domain 只在值为 NULL 时写入"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100)
+        self.meta.set_original_domain("a.md", 0)
+        self.meta.set_original_domain("a.md", 1)
+        self.assertEqual(self.meta.get_original_domain("a.md"), 0)
+
+    def test_original_domain_none_when_unset(self):
+        """未设置时返回 None"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100)
+        self.assertIsNone(self.meta.get_original_domain("a.md"))
+
+    def test_original_domain_in_get_file_info(self):
+        """get_file_info 返回 original_domain"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100)
+        self.meta.set_original_domain("a.md", 0)
+        info = self.meta.get_file_info("a.md")
+        self.assertEqual(info["original_domain"], 0)
+
+    def test_original_domain_absent_in_get_file_info_when_unset(self):
+        """get_file_info 不含 original_domain 当未设置时"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100)
+        info = self.meta.get_file_info("a.md")
+        self.assertNotIn("original_domain", info)
+
+    def test_original_domain_survives_save_reload(self):
+        """保存后重新打开仍保留"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100)
+        self.meta.set_original_domain("a.md", 0)
+        self.meta.save()
+        self.meta.close()
+        meta2 = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+        self.assertEqual(meta2.get_original_domain("a.md"), 0)
+        meta2.close()
+
+    def test_original_domain_in_get_all_files(self):
+        """get_all_files 包含 original_domain"""
+        self.meta.set_file_info("a.md", file_id="F1", cloud_mtime=100)
+        self.meta.set_original_domain("a.md", 0)
+        files = self.meta.get_all_files()
+        self.assertEqual(files["a.md"]["original_domain"], 0)
+
+    def test_nonexistent_path_returns_none(self):
+        """查询不存在的路径返回 None"""
+        self.assertIsNone(self.meta.get_original_domain("no/such/file.md"))
+
+
+# ========== 测试辅助 ==========
+
+def _fake_entry(fid, name, version=0, mtime=0, ctime=0, domain=0,
+                is_dir=False, parent_id="ROOT"):
+    """构造一个 listRecent 风格的条目"""
+    return {
+        "fileEntry": {
+            "id": fid,
+            "name": name,
+            "version": version,
+            "modifyTimeForSort": mtime,
+            "createTimeForSort": ctime,
+            "domain": domain,
+            "dir": is_dir,
+            "parentId": parent_id,
+        }
+    }
+
+
+class _FakeApi:
+    """最小化的 API mock，用于扫描缓存测试"""
+
+    def __init__(self):
+        self._recent = []
+        self._recent_error = False
+        self.cstk = "fake_cstk"
+        self.DIR_MES_URL = "http://fake/{dir_id}"
+        self.DIR_PAGE_SIZE = 100
+
+    def list_recent(self, limit=30):
+        if self._recent_error:
+            raise ConnectionError("API unavailable")
+        return self._recent[:limit]
+
+    def create_async_client(self):
+        raise NotImplementedError("Should not be called when cache is used")
+
+
+def _make_manager(api, local_dir, metadata):
+    """构造一个用于测试的 SyncManager（不需要 downloader/uploader）"""
+    from src.sync.engine import SyncManager
+    os.makedirs(local_dir, exist_ok=True)
+    return SyncManager(
+        api=api,
+        local_dir=local_dir,
+        metadata=metadata,
+        downloader=None,
+        uploader=None,
+    )
 
 
 if __name__ == "__main__":

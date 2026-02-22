@@ -35,16 +35,26 @@ class YoudaoNoteApiTest(unittest.TestCase):
 
     TEST_COOKIES_PATH = "test_cookies.json"
 
+    def tearDown(self):
+        if os.path.exists(self.TEST_COOKIES_PATH):
+            os.remove(self.TEST_COOKIES_PATH)
+
     def test_cookies_login(self):
         """
         测试 cookies 登录
         python -m pytest test/test_api.py::YoudaoNoteApiTest::test_cookies_login -v
         """
 
+        _no_desktop = lambda: patch(
+            "src.cookies.CookieManager.load_from_desktop",
+            return_value=([], "未安装桌面客户端"))
+
         # 如果 cookies 文件不存在。期待：登录失败
         youdaonote_api = YoudaoNoteApi(cookies_path=self.TEST_COOKIES_PATH)
-        message = youdaonote_api.login_by_cookies()
-        self.assertIn("找不到文件", message)
+        with _no_desktop():
+            message = youdaonote_api.login_by_cookies()
+            self.assertIsNotNone(message)
+            self.assertIn("Cookie 加载失败", message)
 
         # 如果 cookies 格式不对（少了一个 [）。期待：登录失败
         cookies_json_str = """{
@@ -57,9 +67,10 @@ class YoudaoNoteApiTest(unittest.TestCase):
         youdaonote_api = YoudaoNoteApi(cookies_path=self.TEST_COOKIES_PATH)
         with patch(
             "builtins.open", mock_open(read_data=cookies_json_str.encode("utf-8"))
-        ):
+        ), _no_desktop():
             message = youdaonote_api.login_by_cookies()
-            self.assertIn("JSON 解析错误", message)
+            self.assertIsNotNone(message)
+            self.assertIn("Cookie 加载失败", message)
 
         # 如果 cookies 格式正确，但少了 YNOTE_CSTK。期待：登录失败
         cookies_json_str = """{"cookies": [
@@ -69,9 +80,10 @@ class YoudaoNoteApiTest(unittest.TestCase):
         youdaonote_api = YoudaoNoteApi(cookies_path=self.TEST_COOKIES_PATH)
         with patch(
             "builtins.open", mock_open(read_data=cookies_json_str.encode("utf-8"))
-        ):
+        ), _no_desktop():
             message = youdaonote_api.login_by_cookies()
-            self.assertEqual(message, "YNOTE_CSTK 字段为空")
+            self.assertIsNotNone(message)
+            self.assertIn("Cookie 加载失败", message)
 
         # 如果 cookies 格式正确，并包含 YNOTE_CSTK。期待：登录成功
         cookies_json_str = """{"cookies": [

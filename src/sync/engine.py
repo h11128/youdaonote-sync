@@ -36,9 +36,12 @@ from src.sync.utils import (
     compute_content_hash, compute_hash_from_bytes,
     retry_with_backoff, decide_action,
 )
-from src.sync.scanner import async_scan_cloud, scan_local, matches_selective
+from src.sync.scanner import async_scan_cloud, scan_local, matches_selective, map_cloud_name
 from src.sync.decision import calibrate_metadata, build_item
-from src.sync.moves import reconcile_moves
+from src.sync.moves import reconcile_moves, discard_orphan_duplicates
+
+_STATE_CLOUD_VERSION = "last_cloud_version"
+_STATE_SCAN_TIME = "last_scan_time"
 
 
 class _SyncLock:
@@ -195,6 +198,8 @@ class SyncManager:
                 content_hash=content_hash,
                 create_time=item.cloud_ctime,
             )
+            if item.domain is not None:
+                self.metadata.set_original_domain(item.relative_path, item.domain)
         elif stat_key == "uploaded" and content_hash:
             self.metadata.update_content_hash(
                 item.relative_path, content_hash)
@@ -355,21 +360,222 @@ class SyncManager:
         return asyncio.run(self._async_collect_items(
             cloud_dir_id, cloud_path, dry_run))
 
+    # ========== 扫描缓存 ==========
+
+    def _load_cloud_files_from_cache(self) -> Dict[str, Dict]:
+        """从 sync_metadata.db 重建 cloud_files 字典（与 scanner 返回格式兼容）。
+
+        只加载有 file_id 的文件记录。目录不从缓存加载——scanner 在全量扫描时
+        会递归发现所有目录，而缓存中的目录记录可能包含已删除的或本地独有的条目，
+        导致虚假的 DOWNLOAD 决策。目录的 dir_id 映射仍保留在 metadata 中，
+        calibrate_metadata 可以正常使用。
+        """
+        all_files = self.metadata.get_all_files()
+        cloud_files: Dict[str, Dict] = {}
+        for path, info in all_files.items():
+            fid = info.get("file_id")
+            if not fid:
+                continue
+            cloud_files[path] = {
+                "id": fid,
+                "parent_id": info.get("parent_id", ""),
+                "name": os.path.basename(path),
+                "is_dir": False,
+                "mtime": info.get("cloud_mtime", 0),
+                "ctime": info.get("create_time", 0),
+                "domain": info.get("domain", 0),
+            }
+        return cloud_files
+
+    def _save_scan_version(self, cloud_files: Dict[str, Dict], max_version: int) -> None:
+        """全量扫描后，将 cloud_files 回写到 metadata 并记录 version。
+
+        同时清理 metadata 中云端已不存在的文件记录（file_id 置空），
+        避免缓存加载时产生"幽灵"条目。
+        """
+        scan_file_paths = {rel for rel, info in cloud_files.items()
+                           if not info.get("is_dir")}
+        scan_dir_paths = {rel for rel, info in cloud_files.items()
+                          if info.get("is_dir")}
+
+        with self.metadata.batch():
+            for rel, info in cloud_files.items():
+                if info.get("is_dir"):
+                    self.metadata.set_dir_info(rel, info["id"], info.get("parent_id", ""))
+                else:
+                    self.metadata.set_file_info(
+                        local_path=rel,
+                        file_id=info["id"],
+                        cloud_mtime=info.get("mtime", 0),
+                        parent_id=info.get("parent_id"),
+                        domain=info.get("domain"),
+                        create_time=info.get("ctime"),
+                    )
+
+            stale_count = 0
+            for path, info in self.metadata.get_all_files().items():
+                if info.get("file_id") and path not in scan_file_paths:
+                    self.metadata.clear_cloud_id(path)
+                    stale_count += 1
+            if stale_count > 0:
+                logging.info(f"扫描缓存: 清理 {stale_count} 条云端已不存在的记录")
+
+            self.metadata.set_state(_STATE_CLOUD_VERSION, str(max_version))
+            self.metadata.set_state(_STATE_SCAN_TIME, str(int(time.time())))
+        self.metadata.save()
+
+    def _fetch_current_version(self) -> int:
+        """从 listRecent 获取云端当前最大 version 号。"""
+        try:
+            recent = self.api.list_recent(limit=1)
+            if recent:
+                return recent[0].get("fileEntry", {}).get("version", 0)
+        except Exception:
+            pass
+        return 0
+
+    def _try_seed_from_desktop(self) -> bool:
+        """首次运行时尝试从桌面客户端导入元数据作为种子。返回 True 表示成功。"""
+        if self.metadata.get_all_files():
+            return False
+        try:
+            from src.sync.desktop_data import seed_metadata_from_desktop
+            count = seed_metadata_from_desktop(self.metadata)
+            return count > 0
+        except Exception as e:
+            logging.debug(f"桌面客户端种子导入失败: {e}")
+            return False
+
+    def _try_cached_cloud_scan(self, cloud_dir_id: str, cloud_path: str
+                               ) -> Optional[Dict[str, Dict]]:
+        """尝试使用缓存的 cloud_files。返回 None 表示缓存不可用，需全量扫描。"""
+        cached_version = self.metadata.get_state_int(_STATE_CLOUD_VERSION)
+        if cached_version <= 0:
+            if self._try_seed_from_desktop():
+                cached_version = self.metadata.get_state_int(_STATE_CLOUD_VERSION)
+            if cached_version <= 0:
+                logging.info("扫描缓存: 无缓存，需全量扫描")
+                return None
+
+        try:
+            recent = self.api.list_recent(limit=30)
+        except Exception as e:
+            logging.warning(f"扫描缓存: listRecent 失败 ({e})，尝试用缓存")
+            cached = self._load_cloud_files_from_cache()
+            if cached:
+                logging.info(f"扫描缓存: listRecent 不可用，使用旧缓存 (version={cached_version})")
+                return cached
+            return None
+
+        if not recent:
+            logging.info(f"扫描缓存: listRecent 返回空，使用缓存 (version={cached_version})")
+            return self._load_cloud_files_from_cache()
+
+        cloud_max_version = max(
+            (e.get("fileEntry", {}).get("version", 0) for e in recent), default=0)
+
+        if cached_version >= cloud_max_version:
+            cached = self._load_cloud_files_from_cache()
+            if cached:
+                logging.info(
+                    f"扫描缓存: 命中 (version={cached_version}, "
+                    f"cloud={cloud_max_version}, {len(cached)} 条目)")
+                return cached
+            return None
+
+        changed = [e for e in recent
+                   if e.get("fileEntry", {}).get("version", 0) > cached_version]
+        all_are_covered = len(changed) < len(recent)
+
+        if all_are_covered:
+            cached = self._load_cloud_files_from_cache()
+            if not cached:
+                return None
+            self._apply_incremental_changes(cached, changed)
+            self.metadata.set_state(_STATE_CLOUD_VERSION, str(cloud_max_version))
+            self.metadata.set_state(_STATE_SCAN_TIME, str(int(time.time())))
+            self.metadata.save()
+            logging.info(
+                f"扫描缓存: 增量更新 {len(changed)} 条 "
+                f"(version {cached_version}→{cloud_max_version})")
+            return cached
+
+        logging.info(
+            f"扫描缓存: 变化量={len(changed)} 超过 listRecent 范围，需全量扫描")
+        return None
+
+    def _apply_incremental_changes(self, cloud_files: Dict[str, Dict],
+                                   changed_entries: list) -> None:
+        """将 listRecent 中的变更条目应用到 cloud_files 和 metadata。"""
+        with self.metadata.batch():
+            for entry in changed_entries:
+                fe = entry.get("fileEntry", {})
+                fid = fe.get("id", "")
+                name = fe.get("name", "")
+                if not fid or not name:
+                    continue
+
+                is_dir = fe.get("dir", False)
+                parent_id = fe.get("parentId", "")
+
+                existing_path = (
+                    self.metadata.find_by_file_id(fid) if not is_dir
+                    else self.metadata.find_by_dir_id(fid)
+                )
+
+                if is_dir:
+                    if existing_path:
+                        cloud_files[existing_path] = {
+                            "id": fid, "parent_id": parent_id, "name": name,
+                            "is_dir": True, "mtime": 0, "ctime": 0, "domain": 0,
+                        }
+                        self.metadata.set_dir_info(existing_path, fid, parent_id)
+                else:
+                    local_name = map_cloud_name(name)
+                    mtime = fe.get("modifyTimeForSort", 0)
+                    ctime = fe.get("createTimeForSort", 0)
+                    domain = fe.get("domain", 0)
+                    info = {
+                        "id": fid, "parent_id": parent_id, "name": name,
+                        "is_dir": False, "mtime": mtime, "ctime": ctime,
+                        "domain": domain,
+                    }
+                    if existing_path:
+                        cloud_files[existing_path] = info
+                        self.metadata.set_file_info(
+                            local_path=existing_path, file_id=fid,
+                            cloud_mtime=mtime, parent_id=parent_id,
+                            domain=domain, create_time=ctime,
+                        )
+                    else:
+                        logging.debug(f"扫描缓存: 增量发现新文件 {local_name} ({fid[:12]}...)")
+
     # ========== 收集差异 ==========
 
     async def _async_collect_items(self, cloud_dir_id: str,
                                    cloud_path: str,
                                    dry_run: bool = False) -> List[SyncItem]:
         """并发扫描云端（async）和本地（线程），然后做决策。"""
-        async with self.api.create_async_client() as aclient:
-            cloud_task = async_scan_cloud(
-                aclient, self.api.DIR_MES_URL, self.api.DIR_PAGE_SIZE,
-                self.api.cstk, cloud_dir_id, cloud_path, self.SCAN_WORKERS,
-            )
-            local_task = asyncio.to_thread(
-                scan_local, self.local_dir, cloud_path,
+        cached_cloud = self._try_cached_cloud_scan(cloud_dir_id, cloud_path)
+
+        if cached_cloud is not None:
+            cloud_files = cached_cloud
+            local_files = scan_local(
+                self.local_dir, cloud_path,
                 self._sync_include, self._sync_exclude)
-            cloud_files, local_files = await asyncio.gather(cloud_task, local_task)
+        else:
+            async with self.api.create_async_client() as aclient:
+                cloud_task = async_scan_cloud(
+                    aclient, self.api.DIR_MES_URL, self.api.DIR_PAGE_SIZE,
+                    self.api.cstk, cloud_dir_id, cloud_path, self.SCAN_WORKERS,
+                )
+                local_task = asyncio.to_thread(
+                    scan_local, self.local_dir, cloud_path,
+                    self._sync_include, self._sync_exclude)
+                cloud_files, local_files = await asyncio.gather(cloud_task, local_task)
+
+            max_version = self._fetch_current_version()
+            self._save_scan_version(cloud_files, max_version)
 
         if self._sync_include or self._sync_exclude:
             cloud_files = {k: v for k, v in cloud_files.items()
@@ -395,6 +601,10 @@ class SyncManager:
 
         # Phase 2a: parallel hash warmup for files that need comparison
         await self._warmup_hash_cache(cloud_files, local_files)
+
+        discard_orphan_duplicates(
+            cloud_files, local_files, self.local_dir,
+            hash_cache=self._hash_cache)
 
         all_paths = set(cloud_files.keys()) | set(local_files.keys())
         return [
@@ -620,6 +830,12 @@ class SyncManager:
             self._record_file_change(
                 item, "downloaded",
                 local_mtime=local_mtime, content_hash=content_hash)
+
+            raw = getattr(self.downloader, "last_raw_content", None)
+            if raw and item.domain == 0 and content_hash:
+                self.metadata.save_base_content(
+                    item.relative_path, raw, content_hash)
+
             logging.info(f"下载完成: {item.relative_path}")
         else:
             self._inc_stat("errors")
@@ -628,6 +844,12 @@ class SyncManager:
         if not os.path.exists(item.local_path):
             self._record_error(item.relative_path, "本地文件不存在")
             return
+
+        orig_domain = self.metadata.get_original_domain(item.relative_path)
+        if orig_domain == 0:
+            logging.warning(
+                f"上传 domain=0 笔记（云端原始格式为 XML）: {item.relative_path} "
+                f"— 当前以 Markdown 上传，云端格式将变为 domain=1")
 
         with self._lock:
             cached_hash = self._hash_cache.get(item.local_path)

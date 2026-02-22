@@ -5,6 +5,7 @@
 """
 
 import os
+import re
 import shutil
 import logging
 import time
@@ -281,15 +282,14 @@ def compute_hash_from_bytes(data: bytes, file_path: str) -> Optional[str]:
     """从原始字节计算 content hash（与 compute_content_hash 相同的规范化逻辑）。
 
     用于对云端下载的内容直接计算 hash，无需先写入磁盘。
-    文本文件做 CRLF→LF + BOM 去除；二进制文件直接 hash。
+    文本文件做 CRLF→LF + BOM 去除；.md/.txt 额外做格式归一化。
+    二进制文件直接 hash。
     """
     if data is None:
         return None
     if not _is_text_file(file_path):
         return xxhash.xxh3_128(data).hexdigest()
-    normalized = data.replace(b"\r\n", b"\n")
-    if normalized.startswith(b"\xef\xbb\xbf"):
-        normalized = normalized[3:]
+    normalized = _normalize_md_bytes(data, file_path)
     return xxhash.xxh3_128(normalized).hexdigest()
 
 
@@ -305,6 +305,85 @@ _BINARY_EXTS = frozenset({
 def _is_text_file(file_path: str) -> bool:
     _, ext = os.path.splitext(file_path)
     return ext.lower() not in _BINARY_EXTS
+
+
+_MD_NORM_EXTS = frozenset({".md", ".txt"})
+
+
+def _is_md_normalizable(file_path: str) -> bool:
+    _, ext = os.path.splitext(file_path)
+    return ext.lower() in _MD_NORM_EXTS
+
+
+def normalize_md_formatting(text: str) -> str:
+    r"""归一化 Markdown 格式，消除编辑器造成的无意义差异。
+
+    用于 content hash 计算和文件比较，确保同一篇文档在不同编辑器
+    保存后（Youdao 会重新格式化 Markdown）仍能产生相同的 hash。
+
+    规则：
+    - 去除每行尾部空白，跳过所有空行
+    - 统一分隔线 ``***`` → ``---``
+    - 统一无序列表标记 ``*`` → ``-``
+    - 去除列表标记后多余空格
+    - 折叠行内连续空格（消除表格对齐填充）
+    - 去除反斜杠转义 ``\_`` → ``_``
+    """
+    _bq = r'(?:>\s*)*'  # optional nested blockquote prefix
+    result = []
+    for line in text.splitlines():
+        s = line.rstrip()
+        if not s:
+            continue
+        # 空引用行 (只有 > 和空白) → 跳过
+        if re.match(r'^\s*>[\s>]*$', s):
+            continue
+        # 代码围栏行 → 跳过 (只影响展示，不改内容)
+        if re.match(r'^\s*```\w*\s*$', s):
+            continue
+        # 水平分隔线
+        if re.match(r'^[\s]*(\*\s*\*\s*\*[\s*]*|-\s*-\s*-[\s-]*)$', s):
+            s = "---"
+        # 表格分隔行: | --- | --- | → 统一每个 cell 为 ---
+        if re.match(r'^\|[\s:|-]+\|$', s):
+            cells = s.split('|')
+            s = '|'.join(
+                '---' if c.strip() and all(ch in '-: ' for ch in c.strip())
+                else c.strip()
+                for c in cells
+            )
+        # 无序列表标记: > * / * → > - / -
+        s = re.sub(rf'^(\s*{_bq})\*(\s+)', r'\1-\2', s)
+        # 列表标记后多余空格
+        s = re.sub(rf'^(\s*{_bq}\d+\.)\s{{2,}}', r'\1 ', s)
+        s = re.sub(rf'^(\s*{_bq}-)\s{{2,}}', r'\1 ', s)
+        # 去除前导空格 (代码围栏/缩进差异)
+        s = s.lstrip()
+        # 表格行单元格 padding 归一化
+        if s.startswith('|'):
+            s = re.sub(r'\s*\|\s*', '|', s)
+        # 折叠内部连续空格
+        s = re.sub(r' {2,}', ' ', s)
+        # Markdown 反斜杠转义
+        s = re.sub(r'\\([_$~&*#{}|.!\[\]()])', r'\1', s)
+        # 尖括号链接: <https://...> → https://...
+        s = re.sub(r'<(https?://[^>]+)>', r'\1', s)
+        # 去除单反引号 (内联代码格式)
+        s = s.replace('`', '')
+        result.append(s)
+    return "\n".join(result)
+
+
+def _normalize_md_bytes(data: bytes, file_path: str) -> bytes:
+    """对 Markdown 文件的原始字节做完整归一化（CRLF + BOM + 格式），返回用于 hash 的字节。"""
+    normalized = data.replace(b"\r\n", b"\n")
+    if normalized.startswith(b"\xef\xbb\xbf"):
+        normalized = normalized[3:]
+    if _is_md_normalizable(file_path):
+        text = normalized.decode("utf-8", errors="replace")
+        text = normalize_md_formatting(text)
+        normalized = text.encode("utf-8")
+    return normalized
 
 
 def compute_content_hash(file_path: str) -> Optional[str]:
@@ -327,7 +406,8 @@ def compute_content_hash(file_path: str) -> Optional[str]:
         size = os.path.getsize(file_path)
         if not _is_text_file(file_path):
             return _hash_binary_file(file_path, size)
-        if size <= _CHUNKED_HASH_THRESHOLD:
+        # .md/.txt 需要格式归一化，始终全量读取（这些文件极少超过 1MB）
+        if _is_md_normalizable(file_path) or size <= _CHUNKED_HASH_THRESHOLD:
             return _hash_small_text_file(file_path)
         return _hash_large_text_file(file_path)
     except (OSError, PermissionError):
@@ -351,9 +431,7 @@ def _hash_binary_file(file_path: str, size: int,
 def _hash_small_text_file(file_path: str) -> str:
     with open(file_path, "rb") as f:
         data = f.read()
-    normalized = data.replace(b"\r\n", b"\n")
-    if normalized.startswith(b"\xef\xbb\xbf"):
-        normalized = normalized[3:]
+    normalized = _normalize_md_bytes(data, file_path)
     return xxhash.xxh3_128(normalized).hexdigest()
 
 

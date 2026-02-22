@@ -8,6 +8,7 @@
 import json
 import logging
 import os
+import platform
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -179,6 +180,76 @@ class CookieManager:
             ])
         
         return cookies_data
+
+    @staticmethod
+    def _get_desktop_setting_path() -> Optional[str]:
+        """定位有道云笔记桌面客户端的 setting.json。
+
+        桌面客户端是 Electron 应用，数据目录在:
+        - Windows: %APPDATA%/ynote-desktop/setting.json
+        - macOS:   ~/Library/Application Support/ynote-desktop/setting.json
+        - Linux:   ~/.config/ynote-desktop/setting.json
+        """
+        system = platform.system()
+        if system == "Windows":
+            base = os.environ.get("APPDATA", "")
+        elif system == "Darwin":
+            base = os.path.expanduser("~/Library/Application Support")
+        else:
+            base = os.environ.get("XDG_CONFIG_HOME",
+                                  os.path.expanduser("~/.config"))
+        if not base:
+            return None
+        path = os.path.join(base, "ynote-desktop", "setting.json")
+        return path if os.path.isfile(path) else None
+
+    @staticmethod
+    def load_from_desktop() -> Tuple[List, str]:
+        """从有道云笔记桌面客户端读取 cookies。
+
+        桌面客户端在 setting.json 的 ``cookies`` 字段保存了完整的
+        session cookies（YNOTE_SESS / YNOTE_CSTK / YNOTE_LOGIN 等），
+        且会在每次启动时自动刷新，不会像浏览器导出的 cookie 那样过期。
+
+        :return: (cookies 列表 [[name, value, domain, path], ...], error_msg)
+        """
+        setting_path = CookieManager._get_desktop_setting_path()
+        if not setting_path:
+            return [], "未找到有道云笔记桌面客户端数据"
+
+        try:
+            with open(setting_path, "r", encoding="utf-8") as f:
+                setting = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            return [], f"读取桌面客户端 setting.json 失败: {e}"
+
+        raw_cookies = setting.get("cookies", [])
+        if not raw_cookies:
+            return [], "桌面客户端 setting.json 中没有 cookies"
+
+        result = []
+        for c in raw_cookies:
+            if not isinstance(c, dict):
+                continue
+            name = c.get("name", "")
+            value = c.get("value", "")
+            domain = c.get("domain", "")
+            path = c.get("path", "/")
+            if name and value:
+                if not domain:
+                    domain = ".note.youdao.com"
+                result.append([name, value, domain, path])
+
+        if not result:
+            return [], "桌面客户端 cookies 为空"
+
+        cookie_names = [c[0] for c in result]
+        missing = CookieManager._find_missing_cookies(cookie_names)
+        if missing:
+            return [], f"桌面客户端 cookies 缺少: {', '.join(missing)}"
+
+        logging.info(f"从桌面客户端读取了 {len(result)} 个 cookies")
+        return result, ""
 
     @staticmethod
     def extract_from_browser() -> Tuple[Optional[Dict], str]:

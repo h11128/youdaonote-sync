@@ -41,6 +41,9 @@ class YoudaoNoteApi(object):
     CREATE_DIR_URL = (
         "https://note.youdao.com/yws/api/personal/file?method=create&keyfrom=web&cstk={cstk}"
     )
+    LIST_RECENT_URL = (
+        "https://note.youdao.com/yws/api/personal/file?method=listRecent&keyfrom=web&cstk={cstk}"
+    )
 
     POOL_MAXSIZE = 20
     DEFAULT_TIMEOUT = httpx.Timeout(10.0, read=60.0)
@@ -96,27 +99,14 @@ class YoudaoNoteApi(object):
             follow_redirects=True,
         )
 
-    def login_by_cookies(self) -> Optional[str]:
-        """
-        使用 Cookies 登录，其实就是设置 Session 的 Cookies
-        :return: error_msg，成功返回 None
-        """
-        from src.cookies import CookieManager
-
-        cookies, error = CookieManager.load(self.cookies_path)
-        if error:
-            return error
-        if not cookies:
-            return "cookies.json 中 cookies 列表为空"
-
+    def _apply_cookies(self, cookies: list) -> Optional[str]:
+        """将 cookie 列表应用到 session 并提取 CSTK。"""
         for cookie in cookies:
             if not isinstance(cookie, list) or len(cookie) < 4:
                 continue
             self.session.cookies.set(
                 cookie[0], cookie[1], domain=cookie[2], path=cookie[3]
             )
-
-        # 遍历查找 YNOTE_CSTK（不假设位于第一项）
         self.cstk = None
         for cookie in cookies:
             if isinstance(cookie, list) and len(cookie) >= 2 and cookie[0] == "YNOTE_CSTK":
@@ -124,10 +114,71 @@ class YoudaoNoteApi(object):
                 break
         if not self.cstk:
             return "YNOTE_CSTK 字段为空"
+        return None
+
+    def login_by_cookies(self) -> Optional[str]:
+        """
+        使用 Cookies 登录。优先从 cookies.json 加载，失败时自动尝试桌面客户端。
+        :return: error_msg，成功返回 None
+        """
+        from src.cookies import CookieManager
+
+        cookies, error = CookieManager.load(self.cookies_path)
+        if not error and cookies:
+            err = self._apply_cookies(cookies)
+            if not err:
+                return None
+
+        logging.info("cookies.json 加载失败或无效，尝试桌面客户端...")
+        cookies, desktop_err = CookieManager.load_from_desktop()
+        if desktop_err:
+            return f"Cookie 加载失败 — 文件: {error or 'ok'}, 桌面客户端: {desktop_err}"
+        err = self._apply_cookies(cookies)
+        if err:
+            return err
+        logging.info("已从桌面客户端加载 cookies")
+        CookieManager.save({"cookies": cookies}, self.cookies_path)
+        logging.info("已同步桌面客户端 cookies 到 cookies.json")
+        return None
+
+    @staticmethod
+    def is_auth_error(resp) -> bool:
+        """判断响应是否为认证失败（session 过期）。"""
+        if resp.status_code == 500:
+            try:
+                body = resp.json()
+                return body.get("error") == "207" or "AUTHENTICATION_FAILURE" in str(body.get("message", ""))
+            except Exception:
+                pass
+        if resp.status_code in (401, 403):
+            return True
+        return False
+
+    def _refresh_session(self) -> bool:
+        """尝试从桌面客户端刷新 session。成功返回 True。"""
+        from src.cookies import CookieManager
+        cookies, err = CookieManager.load_from_desktop()
+        if err:
+            logging.warning(f"刷新 session 失败: {err}")
+            return False
+        apply_err = self._apply_cookies(cookies)
+        if apply_err:
+            logging.warning(f"刷新 session 失败: {apply_err}")
+            return False
+        CookieManager.save({"cookies": cookies}, self.cookies_path)
+        logging.info("Session 已从桌面客户端刷新")
+        return True
+
+    def _maybe_refresh_url(self, url: str) -> str:
+        """如果 URL 中包含旧 cstk，替换为新值。"""
+        if self.cstk and "cstk=" in url:
+            import re as _re
+            return _re.sub(r'cstk=[^&]+', f'cstk={self.cstk}', url)
+        return url
 
     def http_post(self, url, data=None, files=None):
         """
-        封装 post 请求（带超时、重试和状态码检查）
+        封装 post 请求（带超时、重试、认证失败自动刷新）
         :param url:
         :param data:
         :param files:
@@ -135,6 +186,11 @@ class YoudaoNoteApi(object):
         """
         try:
             resp = self.session.post(url, data=data, files=files)
+            if self.is_auth_error(resp) and self._refresh_session():
+                url = self._maybe_refresh_url(url)
+                if data and "cstk" in data:
+                    data = {**data, "cstk": self.cstk}
+                resp = self.session.post(url, data=data, files=files)
             resp.raise_for_status()
             return resp
         except httpx.HTTPStatusError:
@@ -144,12 +200,15 @@ class YoudaoNoteApi(object):
 
     def http_get(self, url):
         """
-        封装 get 请求（带超时、重试和状态码检查）
+        封装 get 请求（带超时、重试、认证失败自动刷新）
         :param url:
         :return: response
         """
         try:
             resp = self.session.get(url)
+            if self.is_auth_error(resp) and self._refresh_session():
+                url = self._maybe_refresh_url(url)
+                resp = self.session.get(url)
             resp.raise_for_status()
             return resp
         except httpx.HTTPStatusError:
@@ -255,6 +314,26 @@ class YoudaoNoteApi(object):
                 break
 
         return {"count": len(all_entries), "entries": all_entries}
+
+    def list_recent(self, limit: int = 30) -> list:
+        """获取最近修改的文件列表（按修改时间倒序）。
+
+        :param limit: 返回条目上限（API 最大 30，超过会 500）
+        :return: [{"fileEntry": {...}}, ...] 列表
+        """
+        self._require_auth()
+        url = self.LIST_RECENT_URL.format(cstk=self.cstk)
+        resp = self.http_post(url, data={"offset": 0, "limit": min(limit, 30)})
+        return self._safe_json_list(resp)
+
+    @staticmethod
+    def _safe_json_list(resp) -> list:
+        """解析 JSON 响应为列表，非列表时返回空列表。"""
+        try:
+            data = resp.json()
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
 
     def get_file_by_id(self, file_id: str):
         """

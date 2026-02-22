@@ -25,6 +25,7 @@ E2E 测试:
 
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import time
@@ -2198,6 +2199,676 @@ class LoadConfigExceptionTest(unittest.TestCase):
         self.assertEqual(format_file_size(1023), "1023B")
         self.assertIn("KB", format_file_size(2048))
         self.assertIn("MB", format_file_size(2 * 1024 * 1024))
+
+
+# ========== Unit: discard_orphan_duplicates ========================
+
+class DiscardOrphanDuplicatesTest(unittest.TestCase):
+    """
+    孤儿本地副本检测: 云端移动后旧本地副本应被跳过
+    python -m pytest test/test_new_features.py::DiscardOrphanDuplicatesTest -v
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.file_a = os.path.join(self.tmpdir, "old", "note.md")
+        self.file_b = os.path.join(self.tmpdir, "new", "note.md")
+        os.makedirs(os.path.dirname(self.file_a))
+        os.makedirs(os.path.dirname(self.file_b))
+        with open(self.file_a, "w") as f:
+            f.write("same content")
+        with open(self.file_b, "w") as f:
+            f.write("same content")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_orphan_removed_when_same_name_and_hash(self):
+        """same filename + same hash in both → orphan removed from local_files"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        local_files = {
+            "old/note.md": {"path": self.file_a, "mtime": 50},
+            "new/note.md": {"path": self.file_b, "mtime": 100},
+        }
+
+        count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
+
+        self.assertEqual(count, 1)
+        self.assertNotIn("old/note.md", local_files)
+        self.assertIn("new/note.md", local_files)
+
+    def test_different_content_not_removed(self):
+        """same filename but different hash → not an orphan"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        with open(self.file_a, "w") as f:
+            f.write("different content here")
+
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        local_files = {
+            "old/note.md": {"path": self.file_a, "mtime": 50},
+            "new/note.md": {"path": self.file_b, "mtime": 100},
+        }
+
+        count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
+
+        self.assertEqual(count, 0)
+        self.assertIn("old/note.md", local_files)
+
+    def test_different_name_not_removed(self):
+        """different filename but same hash → not an orphan"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        renamed = os.path.join(self.tmpdir, "old", "other.md")
+        os.rename(self.file_a, renamed)
+
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        local_files = {
+            "old/other.md": {"path": renamed, "mtime": 50},
+            "new/note.md": {"path": self.file_b, "mtime": 100},
+        }
+
+        count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
+
+        self.assertEqual(count, 0)
+        self.assertIn("old/other.md", local_files)
+
+    def test_directory_entries_skipped(self):
+        """is_dir entries should not be considered"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "is_dir": True}}
+        local_files = {
+            "old/note.md": {"path": self.file_a, "mtime": 50, "is_dir": True},
+            "new/note.md": {"path": self.file_b, "mtime": 100},
+        }
+
+        count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
+
+        self.assertEqual(count, 0)
+
+    def test_no_candidates_returns_zero(self):
+        """no only_local files → returns 0"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        local_files = {"new/note.md": {"path": self.file_b, "mtime": 100}}
+
+        count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
+
+        self.assertEqual(count, 0)
+
+    def test_multiple_orphans(self):
+        """multiple orphans all removed"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        file_c = os.path.join(self.tmpdir, "old", "readme.md")
+        file_d = os.path.join(self.tmpdir, "new", "readme.md")
+        with open(file_c, "w") as f:
+            f.write("readme text")
+        with open(file_d, "w") as f:
+            f.write("readme text")
+
+        cloud_files = {
+            "new/note.md": {"id": "WEB1", "mtime": 100},
+            "new/readme.md": {"id": "WEB2", "mtime": 200},
+        }
+        local_files = {
+            "old/note.md": {"path": self.file_a, "mtime": 50},
+            "old/readme.md": {"path": file_c, "mtime": 60},
+            "new/note.md": {"path": self.file_b, "mtime": 100},
+            "new/readme.md": {"path": file_d, "mtime": 200},
+        }
+
+        count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
+
+        self.assertEqual(count, 2)
+        self.assertNotIn("old/note.md", local_files)
+        self.assertNotIn("old/readme.md", local_files)
+
+    def test_hash_cache_populated(self):
+        """hash_cache should be populated for computed hashes"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        local_files = {
+            "old/note.md": {"path": self.file_a, "mtime": 50},
+            "new/note.md": {"path": self.file_b, "mtime": 100},
+        }
+        cache = {}
+
+        discard_orphan_duplicates(cloud_files, local_files, self.tmpdir,
+                                  hash_cache=cache)
+
+        self.assertIn(self.file_a, cache)
+        self.assertIn(self.file_b, cache)
+        self.assertEqual(cache[self.file_a], cache[self.file_b])
+
+    def test_md_formatting_only_diff_treated_as_orphan(self):
+        """Markdown files with only formatting diffs (*** vs ---,
+        list markers, trailing whitespace) should be treated as orphans"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        with open(self.file_a, "w", encoding="utf-8") as f:
+            f.write("# Title\n\n***\n\n1.  Item one\n*   Item two\n")
+        with open(self.file_b, "w", encoding="utf-8") as f:
+            f.write("# Title\n\n---\n\n1. Item one\n- Item two\n")
+
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        local_files = {
+            "old/note.md": {"path": self.file_a, "mtime": 50},
+            "new/note.md": {"path": self.file_b, "mtime": 100},
+        }
+
+        count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
+
+        self.assertEqual(count, 1)
+        self.assertNotIn("old/note.md", local_files)
+
+    def test_md_real_content_diff_not_removed(self):
+        """Markdown files with actual content differences should NOT be removed"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        with open(self.file_a, "w", encoding="utf-8") as f:
+            f.write("# Title\n\nOld paragraph with different text.\n")
+        with open(self.file_b, "w", encoding="utf-8") as f:
+            f.write("# Title\n\nNew paragraph with completely new text.\n")
+
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        local_files = {
+            "old/note.md": {"path": self.file_a, "mtime": 50},
+            "new/note.md": {"path": self.file_b, "mtime": 100},
+        }
+
+        count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
+
+        self.assertEqual(count, 0)
+        self.assertIn("old/note.md", local_files)
+
+    def test_non_md_formatting_diff_not_removed(self):
+        """Non-.md files with formatting-only diffs should NOT be normalized"""
+        from src.sync.moves import discard_orphan_duplicates
+
+        py_a = os.path.join(self.tmpdir, "old", "script.py")
+        py_b = os.path.join(self.tmpdir, "new", "script.py")
+        with open(py_a, "w") as f:
+            f.write("x = 1\n\n\n\ny = 2\n")
+        with open(py_b, "w") as f:
+            f.write("x = 1\ny = 2\n")
+
+        cloud_files = {"new/script.py": {"id": "WEB1", "mtime": 100}}
+        local_files = {
+            "old/script.py": {"path": py_a, "mtime": 50},
+            "new/script.py": {"path": py_b, "mtime": 100},
+        }
+
+        count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
+
+        self.assertEqual(count, 0)
+        self.assertIn("old/script.py", local_files)
+
+
+# ========== Phase 2: 桌面客户端数据集成测试 ==========
+
+class DesktopDataPathMapTest(unittest.TestCase):
+    """_build_path_map 路径重建逻辑"""
+
+    def test_build_simple_tree(self):
+        """单层文件夹树正确重建路径"""
+        from src.sync.desktop_data import _build_path_map
+        db_path = os.path.join(tempfile.mkdtemp(), "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("""CREATE TABLE note_book (
+            fileId TEXT, title TEXT, parentId TEXT, del INTEGER DEFAULT 0
+        )""")
+        conn.execute("INSERT INTO note_book VALUES ('ROOT', '根', '', 0)")
+        conn.execute("INSERT INTO note_book VALUES ('D1', '文档', 'ROOT', 0)")
+        conn.execute("INSERT INTO note_book VALUES ('D2', '日记', 'ROOT', 0)")
+        conn.commit()
+
+        paths = _build_path_map(conn)
+        conn.close()
+
+        self.assertEqual(paths.get("ROOT"), "")
+        self.assertEqual(paths.get("D1"), "文档")
+        self.assertEqual(paths.get("D2"), "日记")
+
+    def test_build_nested_tree(self):
+        """嵌套文件夹树正确重建路径"""
+        from src.sync.desktop_data import _build_path_map
+        db_path = os.path.join(tempfile.mkdtemp(), "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("""CREATE TABLE note_book (
+            fileId TEXT, title TEXT, parentId TEXT, del INTEGER DEFAULT 0
+        )""")
+        conn.execute("INSERT INTO note_book VALUES ('ROOT', '根', '', 0)")
+        conn.execute("INSERT INTO note_book VALUES ('D1', 'level1', 'ROOT', 0)")
+        conn.execute("INSERT INTO note_book VALUES ('D2', 'level2', 'D1', 0)")
+        conn.execute("INSERT INTO note_book VALUES ('D3', 'level3', 'D2', 0)")
+        conn.commit()
+
+        paths = _build_path_map(conn)
+        conn.close()
+
+        self.assertEqual(paths.get("D1"), "level1")
+        self.assertEqual(paths.get("D2"), "level1/level2")
+        self.assertEqual(paths.get("D3"), "level1/level2/level3")
+
+    def test_build_tree_skips_deleted(self):
+        """标记 del=1 的文件夹被跳过"""
+        from src.sync.desktop_data import _build_path_map
+        db_path = os.path.join(tempfile.mkdtemp(), "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("""CREATE TABLE note_book (
+            fileId TEXT, title TEXT, parentId TEXT, del INTEGER DEFAULT 0
+        )""")
+        conn.execute("INSERT INTO note_book VALUES ('ROOT', '根', '', 0)")
+        conn.execute("INSERT INTO note_book VALUES ('D1', 'keep', 'ROOT', 0)")
+        conn.execute("INSERT INTO note_book VALUES ('D2', 'deleted', 'ROOT', 1)")
+        conn.commit()
+
+        paths = _build_path_map(conn)
+        conn.close()
+
+        self.assertIn("D1", paths)
+        self.assertNotIn("D2", paths)
+
+    def test_build_tree_no_table(self):
+        """没有 note_book 表时返回空"""
+        from src.sync.desktop_data import _build_path_map
+        db_path = os.path.join(tempfile.mkdtemp(), "test.db")
+        conn = sqlite3.connect(db_path)
+        paths = _build_path_map(conn)
+        conn.close()
+        self.assertEqual(paths, {})
+
+    def test_circular_reference_safe(self):
+        """循环引用不会无限递归"""
+        from src.sync.desktop_data import _build_path_map
+        db_path = os.path.join(tempfile.mkdtemp(), "test.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("""CREATE TABLE note_book (
+            fileId TEXT, title TEXT, parentId TEXT, del INTEGER DEFAULT 0
+        )""")
+        conn.execute("INSERT INTO note_book VALUES ('A', 'a', 'B', 0)")
+        conn.execute("INSERT INTO note_book VALUES ('B', 'b', 'A', 0)")
+        conn.commit()
+
+        paths = _build_path_map(conn)
+        conn.close()
+        # should not crash; actual values depend on resolve order
+
+
+class SeedMetadataFromDesktopTest(unittest.TestCase):
+    """seed_metadata_from_desktop 冷启动种子导入"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.data_dir = os.path.join(self.tmpdir, "ynote-data")
+        os.makedirs(self.data_dir, exist_ok=True)
+        self._create_desktop_db()
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+
+    def _create_desktop_db(self):
+        """创建一个模拟的桌面客户端数据库"""
+        db_path = os.path.join(self.data_dir, "user.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("""CREATE TABLE note_book (
+            fileId TEXT, title TEXT, parentId TEXT, del INTEGER DEFAULT 0
+        )""")
+        conn.execute("INSERT INTO note_book VALUES ('ROOT', '根', '', 0)")
+        conn.execute("INSERT INTO note_book VALUES ('D1', 'docs', 'ROOT', 0)")
+
+        conn.execute("""CREATE TABLE note (
+            fileId TEXT, title TEXT, parentId TEXT, modifyTime INTEGER,
+            createTime INTEGER, domain INTEGER, version INTEGER,
+            del INTEGER DEFAULT 0, dir INTEGER DEFAULT 0
+        )""")
+        conn.execute("""INSERT INTO note VALUES
+            ('F1', 'hello.note', 'D1', 1700000000000, 1699000000000, 0, 100, 0, 0)""")
+        conn.execute("""INSERT INTO note VALUES
+            ('F2', 'readme.md', 'D1', 1700001000000, 1699001000000, 1, 101, 0, 0)""")
+        conn.execute("""INSERT INTO note VALUES
+            ('F3', 'deleted.md', 'D1', 1700002000000, 0, 1, 50, 1, 0)""")
+        conn.commit()
+        conn.close()
+
+    def test_seed_imports_files_and_dirs(self):
+        """导入文件和目录到 metadata"""
+        from src.sync.desktop_data import seed_metadata_from_desktop
+        count = seed_metadata_from_desktop(self.meta, self.data_dir)
+
+        self.assertGreater(count, 0)
+        self.assertEqual(self.meta.get_dir_id("docs"), "D1")
+        self.assertIsNotNone(self.meta.get_file_id("docs/hello.md"))
+        self.assertIsNotNone(self.meta.get_file_id("docs/readme.md"))
+
+    def test_seed_skips_deleted(self):
+        """已删除的文件不导入"""
+        from src.sync.desktop_data import seed_metadata_from_desktop
+        seed_metadata_from_desktop(self.meta, self.data_dir)
+        self.assertIsNone(self.meta.get_file_id("docs/deleted.md"))
+
+    def test_seed_sets_version(self):
+        """导入后设置 last_cloud_version"""
+        from src.sync.desktop_data import seed_metadata_from_desktop
+        seed_metadata_from_desktop(self.meta, self.data_dir)
+        version = self.meta.get_state_int("last_cloud_version")
+        self.assertEqual(version, 101)
+
+    def test_seed_converts_millisecond_timestamps(self):
+        """毫秒时间戳被转换为秒"""
+        from src.sync.desktop_data import seed_metadata_from_desktop
+        seed_metadata_from_desktop(self.meta, self.data_dir)
+        info = self.meta.get_file_info("docs/hello.md")
+        self.assertIsNotNone(info)
+        self.assertEqual(info["cloud_mtime"], 1700000000)
+
+    def test_seed_no_data_dir(self):
+        """数据目录不存在时返回 0"""
+        from src.sync.desktop_data import seed_metadata_from_desktop
+        count = seed_metadata_from_desktop(self.meta, "/nonexistent")
+        self.assertEqual(count, 0)
+
+    def test_seed_no_db_file(self):
+        """数据目录存在但没有 .db 文件时返回 0"""
+        from src.sync.desktop_data import seed_metadata_from_desktop
+        empty_dir = os.path.join(self.tmpdir, "empty")
+        os.makedirs(empty_dir)
+        count = seed_metadata_from_desktop(self.meta, empty_dir)
+        self.assertEqual(count, 0)
+
+
+class ReadDesktopFileTest(unittest.TestCase):
+    """read_desktop_file 桌面缓存文件读取"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.data_dir = os.path.join(self.tmpdir, "ynote-data")
+        file_dir = os.path.join(self.data_dir, "file", "a")
+        os.makedirs(file_dir, exist_ok=True)
+        with open(os.path.join(file_dir, "abc123"), "wb") as f:
+            f.write(b'<?xml version="1.0"?><note>test</note>')
+
+    def test_read_existing_file(self):
+        """读取存在的缓存文件"""
+        from src.sync.desktop_data import read_desktop_file
+        content = read_desktop_file("abc123", self.data_dir)
+        self.assertIsNotNone(content)
+        self.assertIn(b"<note>", content)
+
+    def test_read_nonexistent_file(self):
+        """文件不存在时返回 None"""
+        from src.sync.desktop_data import read_desktop_file
+        content = read_desktop_file("xyz999", self.data_dir)
+        self.assertIsNone(content)
+
+    def test_read_no_data_dir(self):
+        """数据目录不存在时返回 None"""
+        from src.sync.desktop_data import read_desktop_file
+        content = read_desktop_file("abc123", "/nonexistent")
+        self.assertIsNone(content)
+
+    def test_read_empty_file_id(self):
+        """空 file_id 返回 None"""
+        from src.sync.desktop_data import read_desktop_file
+        content = read_desktop_file("", self.data_dir)
+        self.assertIsNone(content)
+
+    def test_bucket_is_first_char_lowercase(self):
+        """bucket 目录名是 fileId 首字符的小写"""
+        from src.sync.desktop_data import read_desktop_file
+        bucket_dir = os.path.join(self.data_dir, "file", "x")
+        os.makedirs(bucket_dir, exist_ok=True)
+        with open(os.path.join(bucket_dir, "x_file"), "wb") as f:
+            f.write(b"data")
+        content = read_desktop_file("x_file", self.data_dir)
+        self.assertEqual(content, b"data")
+        content_miss = read_desktop_file("y_file", self.data_dir)
+        self.assertIsNone(content_miss)
+
+
+class DownloadDesktopCacheTest(unittest.TestCase):
+    """YoudaoNoteDownload 桌面缓存集成"""
+
+    def test_desktop_cache_hit_skips_http(self):
+        """桌面缓存命中时不调用 HTTP"""
+        from src.transfer.download import YoudaoNoteDownload, FileType
+        tmpdir = tempfile.mkdtemp()
+        data_dir = os.path.join(tmpdir, "ynote-data")
+        file_dir = os.path.join(data_dir, "file", "f")
+        os.makedirs(file_dir)
+        with open(os.path.join(file_dir, "file123"), "wb") as f:
+            f.write(b'<?xml version="1.0"?><note/>')
+
+        class MockApi:
+            def get_file_by_id(self, fid):
+                raise AssertionError("Should not be called")
+
+        dl = YoudaoNoteDownload(MockApi(), desktop_data_dir=data_dir)
+        ftype, content = dl._download_and_detect("file123", ".note")
+        self.assertEqual(ftype, FileType.XML)
+        self.assertIn(b"<note/>", content)
+
+    def test_desktop_cache_miss_falls_back_to_http(self):
+        """桌面缓存未命中时走 HTTP"""
+        from src.transfer.download import YoudaoNoteDownload, FileType
+
+        class MockResp:
+            content = b'{"5": [{"type": "text"}]}'
+
+        class MockApi:
+            def get_file_by_id(self, fid):
+                return MockResp()
+
+        dl = YoudaoNoteDownload(MockApi(), desktop_data_dir="/nonexistent")
+        ftype, content = dl._download_and_detect("xyz", ".note")
+        self.assertEqual(ftype, FileType.JSON)
+
+    def test_no_desktop_dir_falls_back(self):
+        """没有桌面数据目录时正常 fallback"""
+        from src.transfer.download import YoudaoNoteDownload, FileType
+
+        class MockResp:
+            content = b'<?xml version="1.0"?><note/>'
+
+        class MockApi:
+            def get_file_by_id(self, fid):
+                return MockResp()
+
+        dl = YoudaoNoteDownload(MockApi())
+        ftype, content = dl._download_and_detect("file1", ".note")
+        self.assertEqual(ftype, FileType.XML)
+
+
+class EngineSeedFromDesktopTest(unittest.TestCase):
+    """engine._try_seed_from_desktop"""
+
+    def test_seed_skipped_when_metadata_has_data(self):
+        """metadata 已有数据时不尝试导入"""
+        tmpdir = tempfile.mkdtemp()
+        meta = SyncMetadata(os.path.join(tmpdir, "meta.json"))
+        meta.set_file_info("existing.md", file_id="F1", cloud_mtime=100)
+
+        from src.sync.engine import SyncManager
+        mgr = SyncManager(
+            api=type('', (), {'cstk': '', 'DIR_MES_URL': '', 'DIR_PAGE_SIZE': 100})(),
+            local_dir=tmpdir, metadata=meta,
+            downloader=None, uploader=None)
+
+        result = mgr._try_seed_from_desktop()
+        self.assertFalse(result)
+        meta.close()
+
+    def test_seed_returns_false_when_no_desktop(self):
+        """桌面客户端不存在时返回 False"""
+        tmpdir = tempfile.mkdtemp()
+        meta = SyncMetadata(os.path.join(tmpdir, "meta.json"))
+
+        from src.sync.engine import SyncManager
+        from unittest.mock import patch
+        mgr = SyncManager(
+            api=type('', (), {'cstk': '', 'DIR_MES_URL': '', 'DIR_PAGE_SIZE': 100})(),
+            local_dir=tmpdir, metadata=meta,
+            downloader=None, uploader=None)
+
+        with patch("src.sync.desktop_data.find_desktop_data_dir", return_value=None):
+            result = mgr._try_seed_from_desktop()
+        self.assertFalse(result)
+        meta.close()
+
+
+# ========== Phase 3: original_domain 引擎集成测试 ==========
+
+class RecordFileDomainTest(unittest.TestCase):
+    """_record_file_change 记录 original_domain"""
+
+    def test_download_records_original_domain(self):
+        """下载 domain=0 文件时 original_domain 被记录"""
+        from src.sync.utils import SyncItem, SyncAction
+        tmpdir = tempfile.mkdtemp()
+        local_dir = os.path.join(tmpdir, "notes")
+        os.makedirs(local_dir, exist_ok=True)
+        meta = SyncMetadata(os.path.join(tmpdir, "meta.json"))
+
+        from src.sync.engine import SyncManager
+        fake_api = type('', (), {
+            'cstk': '', 'DIR_MES_URL': '', 'DIR_PAGE_SIZE': 100
+        })()
+        mgr = SyncManager(api=fake_api, local_dir=local_dir,
+                          metadata=meta, downloader=None, uploader=None)
+
+        item = SyncItem(
+            relative_path="docs/test.md", local_path=os.path.join(local_dir, "docs/test.md"),
+            cloud_id="F1", cloud_parent_id="D1", local_mtime=1000,
+            cloud_mtime=1000, is_dir=False,
+            action=SyncAction.DOWNLOAD, cloud_name="test.note",
+            domain=0, cloud_ctime=900)
+
+        os.makedirs(os.path.join(local_dir, "docs"), exist_ok=True)
+        with open(os.path.join(local_dir, "docs/test.md"), "w") as f:
+            f.write("test content")
+
+        mgr._record_file_change(item, "downloaded", local_mtime=1000)
+
+        self.assertEqual(meta.get_original_domain("docs/test.md"), 0)
+        meta.close()
+
+    def test_download_domain1_records_domain1(self):
+        """下载 domain=1 文件时 original_domain=1"""
+        from src.sync.utils import SyncItem, SyncAction
+        tmpdir = tempfile.mkdtemp()
+        local_dir = os.path.join(tmpdir, "notes")
+        os.makedirs(local_dir, exist_ok=True)
+        meta = SyncMetadata(os.path.join(tmpdir, "meta.json"))
+
+        from src.sync.engine import SyncManager
+        fake_api = type('', (), {
+            'cstk': '', 'DIR_MES_URL': '', 'DIR_PAGE_SIZE': 100
+        })()
+        mgr = SyncManager(api=fake_api, local_dir=local_dir,
+                          metadata=meta, downloader=None, uploader=None)
+
+        item = SyncItem(
+            relative_path="readme.md", local_path=os.path.join(local_dir, "readme.md"),
+            cloud_id="F2", cloud_parent_id="ROOT", local_mtime=2000,
+            cloud_mtime=2000, is_dir=False,
+            action=SyncAction.DOWNLOAD, cloud_name="readme.md",
+            domain=1, cloud_ctime=1900)
+
+        with open(os.path.join(local_dir, "readme.md"), "w") as f:
+            f.write("readme")
+
+        mgr._record_file_change(item, "downloaded", local_mtime=2000)
+
+        self.assertEqual(meta.get_original_domain("readme.md"), 1)
+        meta.close()
+
+    def test_upload_does_not_record_original_domain(self):
+        """上传操作不设置 original_domain"""
+        from src.sync.utils import SyncItem, SyncAction
+        tmpdir = tempfile.mkdtemp()
+        local_dir = os.path.join(tmpdir, "notes")
+        os.makedirs(local_dir, exist_ok=True)
+        meta = SyncMetadata(os.path.join(tmpdir, "meta.json"))
+        meta.set_file_info("new.md", file_id="F1", cloud_mtime=100)
+
+        from src.sync.engine import SyncManager
+        fake_api = type('', (), {
+            'cstk': '', 'DIR_MES_URL': '', 'DIR_PAGE_SIZE': 100
+        })()
+        mgr = SyncManager(api=fake_api, local_dir=local_dir,
+                          metadata=meta, downloader=None, uploader=None)
+
+        item = SyncItem(
+            relative_path="new.md", local_path=os.path.join(local_dir, "new.md"),
+            cloud_id="F1", cloud_parent_id="ROOT", local_mtime=100,
+            cloud_mtime=100, is_dir=False,
+            action=SyncAction.UPLOAD, cloud_name="new.md",
+            domain=1, cloud_ctime=90)
+
+        with open(os.path.join(local_dir, "new.md"), "w") as f:
+            f.write("new content")
+
+        mgr._record_file_change(item, "uploaded", content_hash="abc123")
+        self.assertIsNone(meta.get_original_domain("new.md"))
+        meta.close()
+
+
+class UploadDomain0WarningTest(unittest.TestCase):
+    """上传 domain=0 笔记时发出警告"""
+
+    def test_domain0_upload_logs_warning(self):
+        """domain=0 上传时 logging.warning 被调用"""
+        import logging
+        from unittest.mock import patch
+        from src.sync.utils import SyncItem, SyncAction
+
+        tmpdir = tempfile.mkdtemp()
+        local_dir = os.path.join(tmpdir, "notes")
+        os.makedirs(local_dir, exist_ok=True)
+        meta = SyncMetadata(os.path.join(tmpdir, "meta.json"))
+
+        meta.set_file_info("docs/test.md", file_id="F1", cloud_mtime=1000)
+        meta.set_original_domain("docs/test.md", 0)
+
+        from src.sync.engine import SyncManager
+        fake_api = type('', (), {
+            'cstk': '', 'DIR_MES_URL': '', 'DIR_PAGE_SIZE': 100
+        })()
+        fake_uploader = type('', (), {
+            'ensure_parent_dir': lambda self, p: "D1",
+            'upload_file': lambda self, p, pid, rp, force=False: (True, None),
+        })()
+
+        mgr = SyncManager(api=fake_api, local_dir=local_dir,
+                          metadata=meta, downloader=None, uploader=fake_uploader)
+
+        item = SyncItem(
+            relative_path="docs/test.md",
+            local_path=os.path.join(local_dir, "docs/test.md"),
+            cloud_id="F1", cloud_parent_id="D1", local_mtime=1000,
+            cloud_mtime=1000, is_dir=False,
+            action=SyncAction.UPLOAD, cloud_name="test.md",
+            domain=0, cloud_ctime=900)
+
+        os.makedirs(os.path.join(local_dir, "docs"), exist_ok=True)
+        with open(os.path.join(local_dir, "docs/test.md"), "w") as f:
+            f.write("edited content")
+
+        with patch("src.sync.engine.logging") as mock_log:
+            mgr._do_upload(item)
+            warning_calls = [c for c in mock_log.warning.call_args_list
+                             if "domain=0" in str(c)]
+            self.assertTrue(len(warning_calls) > 0,
+                            "Should warn about domain=0 upload")
+
+        meta.close()
 
 
 if __name__ == "__main__":

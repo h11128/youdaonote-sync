@@ -337,6 +337,73 @@ def _detect_cross_dir_duplicates(
     return count, pending_deletes
 
 
+def discard_orphan_duplicates(
+    cloud_files: Dict,
+    local_files: Dict,
+    local_dir: str,
+    hash_cache: Optional[Dict[str, str]] = None,
+) -> int:
+    """清理孤儿本地副本：only_local 中与 both 集合内容相同的文件不需要上传。
+
+    场景：云端移动了文件 A→B，同步把 B 下载到本地，但旧路径 A 的本地副本未清理。
+    此时 B 在 both 集合（两端都有），A 在 only_local。如果 A 和 B 文件名相同且
+    内容一致，则 A 是孤儿副本，从 local_files 移除以阻止上传。
+
+    content hash 已在 compute_content_hash 层面对 .md/.txt 做了格式归一化，
+    因此 hash 匹配能自动识别仅有 Markdown 格式差异的等价文件。
+
+    :return: 跳过的文件数
+    """
+    only_local_paths = set(local_files.keys()) - set(cloud_files.keys())
+    both_paths = set(local_files.keys()) & set(cloud_files.keys())
+
+    local_candidates = [p for p in only_local_paths
+                        if not local_files[p].get("is_dir")]
+    both_files = {p for p in both_paths
+                  if not local_files[p].get("is_dir")
+                  and not cloud_files[p].get("is_dir")}
+
+    if not local_candidates or not both_files:
+        return 0
+
+    both_name_index: Dict[str, List[str]] = defaultdict(list)
+    for bp in both_files:
+        norm = normalize_filename(os.path.basename(bp)).lower()
+        both_name_index[norm].append(bp)
+
+    count = 0
+    for lp in local_candidates:
+        norm = normalize_filename(os.path.basename(lp)).lower()
+        candidates = both_name_index.get(norm)
+        if not candidates:
+            continue
+
+        lp_abs = local_files[lp]["path"]
+        lp_hash = (hash_cache.get(lp_abs) if hash_cache else None) \
+            or compute_content_hash(lp_abs)
+        if not lp_hash:
+            continue
+        if hash_cache is not None:
+            hash_cache[lp_abs] = lp_hash
+
+        for bp in candidates:
+            bp_abs = local_files[bp]["path"]
+            bp_hash = (hash_cache.get(bp_abs) if hash_cache else None) \
+                or compute_content_hash(bp_abs)
+            if bp_hash and hash_cache is not None:
+                hash_cache[bp_abs] = bp_hash
+
+            if lp_hash == bp_hash:
+                logging.info(f"跳过孤儿副本: {lp} (内容与 {bp} 相同)")
+                local_files.pop(lp)
+                count += 1
+                break
+
+    if count > 0:
+        logging.info(f"孤儿副本清理: 跳过了 {count} 个重复文件的上传")
+    return count
+
+
 def reconcile_moves(
     cloud_files: Dict,
     local_files: Dict,
