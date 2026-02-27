@@ -2,6 +2,7 @@
 Three-way merge for text files using diff3 algorithm.
 """
 
+import bisect
 import difflib
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -32,25 +33,43 @@ def _blocks_to_edits(
     return edits
 
 
-def _find_edit(
-    edits: List[Tuple[int, int, int, int, bool]], lo: int, hi: int,
-) -> Optional[Tuple[int, int, bool]]:
-    if lo == hi:
-        for base_lo, base_hi, other_lo, other_hi, is_same in edits:
+class _EditIndex:
+    """Binary-searchable index over sorted edit spans for O(log E) lookups."""
+
+    __slots__ = ("_edits", "_starts")
+
+    def __init__(self, edits: List[Tuple[int, int, int, int, bool]]):
+        self._edits = edits
+        self._starts = [e[0] for e in edits]
+
+    def find(self, lo: int, hi: int) -> Optional[Tuple[int, int, bool]]:
+        if lo == hi:
+            return self._find_insertion_point(lo)
+        return self._find_range(lo, hi)
+
+    def _find_insertion_point(self, lo: int) -> Optional[Tuple[int, int, bool]]:
+        idx = bisect.bisect_right(self._starts, lo) - 1
+        search_range = range(max(0, idx - 1), min(len(self._edits), idx + 3))
+        for i in search_range:
+            base_lo, base_hi, other_lo, other_hi, is_same = self._edits[i]
             if base_lo == lo and base_hi == lo and not is_same:
                 return (other_lo, other_hi, False)
-        for base_lo, base_hi, other_lo, other_hi, is_same in edits:
-            if base_lo <= lo and lo <= base_hi and is_same:
+        for i in search_range:
+            base_lo, base_hi, other_lo, other_hi, is_same = self._edits[i]
+            if base_lo <= lo <= base_hi and is_same:
                 mapped = other_lo + (lo - base_lo)
                 return (mapped, mapped, True)
         return None
 
-    for base_lo, base_hi, other_lo, other_hi, is_same in edits:
-        if base_lo <= lo and hi <= base_hi:
-            if is_same:
-                return (other_lo + (lo - base_lo), other_lo + (hi - base_lo), True)
-            return (other_lo, other_hi, False)
-    return None
+    def _find_range(self, lo: int, hi: int) -> Optional[Tuple[int, int, bool]]:
+        idx = bisect.bisect_right(self._starts, lo) - 1
+        for i in range(max(0, idx - 1), min(len(self._edits), idx + 3)):
+            base_lo, base_hi, other_lo, other_hi, is_same = self._edits[i]
+            if base_lo <= lo and hi <= base_hi:
+                if is_same:
+                    return (other_lo + (lo - base_lo), other_lo + (hi - base_lo), True)
+                return (other_lo, other_hi, False)
+        return None
 
 
 def three_way_merge(base: str, ours: str, theirs: str) -> MergeResult:
@@ -66,6 +85,8 @@ def three_way_merge(base: str, ours: str, theirs: str) -> MergeResult:
     edits_theirs = _blocks_to_edits(
         len(base_lines), len(theirs_lines), sm_theirs.get_matching_blocks()
     )
+    idx_ours = _EditIndex(edits_ours)
+    idx_theirs = _EditIndex(edits_theirs)
 
     break_points = {0, len(base_lines)}
     for e in edits_ours:
@@ -92,8 +113,8 @@ def three_way_merge(base: str, ours: str, theirs: str) -> MergeResult:
     for lo, hi in segments:
         if lo > hi:
             continue
-        ours_info = _find_edit(edits_ours, lo, hi)
-        theirs_info = _find_edit(edits_theirs, lo, hi)
+        ours_info = idx_ours.find(lo, hi)
+        theirs_info = idx_theirs.find(lo, hi)
         if ours_info is None or theirs_info is None:
             output.extend(base_lines[lo:hi])
             continue

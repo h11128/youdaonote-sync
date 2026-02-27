@@ -570,6 +570,36 @@ class SyncMetadata:
                 for row in rows
             }
 
+    def get_cloud_file_summaries(self) -> Dict[str, Dict[str, Any]]:
+        """获取所有有 file_id 的文件的摘要信息（用于扫描缓存重建）。
+
+        只返回 path, file_id, parent_id, cloud_mtime, create_time, domain，
+        比 get_all_files() 少加载 content_hash/last_sync_at 等字段。
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT path, file_id, parent_id, cloud_mtime, create_time, domain "
+                "FROM files WHERE file_id != ''"
+            ).fetchall()
+            result: Dict[str, Dict[str, Any]] = {}
+            for path, fid, pid, cmtime, ctime, domain in rows:
+                result[path] = {
+                    "file_id": fid,
+                    "parent_id": pid or "",
+                    "cloud_mtime": cmtime,
+                    "create_time": ctime or 0,
+                    "domain": domain,
+                }
+            return result
+
+    def get_stale_cloud_paths(self, active_paths: set) -> List[str]:
+        """返回有 file_id 但不在 active_paths 中的文件路径（用于清理过期缓存）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT path FROM files WHERE file_id != ''"
+            ).fetchall()
+            return [r[0] for r in rows if r[0] not in active_paths]
+
     # ========== 目录相关方法 ==========
 
     def get_dir_id(self, local_path: str) -> Optional[str]:
@@ -623,6 +653,25 @@ class SyncMetadata:
                 if row[2]:
                     info["parent_id"] = row[2]
                 result[row[0]] = info
+            return result
+
+    def get_all_file_meta_for_dedup(self) -> Dict[str, Dict[str, Any]]:
+        """批量获取去重所需的文件元数据（content_hash, local_mtime, file_id）。
+
+        比 get_all_files() 更轻量，只返回去重阶段需要的字段。
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT path, content_hash, local_mtime, file_id FROM files"
+            ).fetchall()
+            result: Dict[str, Dict[str, Any]] = {}
+            for path, chash, lmtime, fid in rows:
+                info: Dict[str, Any] = {"local_mtime": lmtime or 0}
+                if chash:
+                    info["content_hash"] = chash
+                if fid:
+                    info["file_id"] = fid
+                result[path] = info
             return result
 
     # ========== 查询方法 ==========

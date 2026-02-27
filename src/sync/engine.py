@@ -36,7 +36,7 @@ from src.sync.utils import (
     compute_content_hash, compute_hash_from_bytes,
     retry_with_backoff, decide_action,
 )
-from src.sync.scanner import async_scan_cloud, scan_local, matches_selective, map_cloud_name
+from src.sync.scanner import async_scan_cloud, scan_local, matches_selective, map_cloud_name, compile_selective_filter
 from src.sync.decision import calibrate_metadata, build_item
 from src.sync.moves import reconcile_moves, discard_orphan_duplicates, PendingMove
 
@@ -408,16 +408,13 @@ class SyncManager:
         导致虚假的 DOWNLOAD 决策。目录的 dir_id 映射仍保留在 metadata 中，
         calibrate_metadata 可以正常使用。
         """
-        all_files = self.metadata.get_all_files()
+        summaries = self.metadata.get_cloud_file_summaries()
         cloud_files: Dict[str, Dict] = {}
-        for path, info in all_files.items():
-            fid = info.get("file_id")
-            if not fid:
-                continue
+        for path, info in summaries.items():
             if ".conflict." in os.path.basename(path):
                 continue
             cloud_files[path] = {
-                "id": fid,
+                "id": info["file_id"],
                 "parent_id": info.get("parent_id", ""),
                 "name": os.path.basename(path),
                 "is_dir": False,
@@ -452,11 +449,10 @@ class SyncManager:
                         create_time=info.get("ctime"),
                     )
 
-            stale_count = 0
-            for path, info in self.metadata.get_all_files().items():
-                if info.get("file_id") and path not in scan_file_paths:
-                    self.metadata.clear_cloud_id(path)
-                    stale_count += 1
+            stale_paths = self.metadata.get_stale_cloud_paths(scan_file_paths)
+            for path in stale_paths:
+                self.metadata.clear_cloud_id(path)
+            stale_count = len(stale_paths)
             if stale_count > 0:
                 logging.info(f"扫描缓存: 清理 {stale_count} 条云端已不存在的记录")
 
@@ -618,9 +614,9 @@ class SyncManager:
             self._save_scan_version(cloud_files, max_version)
 
         if self._sync_include or self._sync_exclude:
+            filt = compile_selective_filter(self._sync_include, self._sync_exclude)
             cloud_files = {k: v for k, v in cloud_files.items()
-                          if matches_selective(k, self._sync_include,
-                                               self._sync_exclude)}
+                          if filt.matches(k)}
 
         cloud_files = {k: v for k, v in cloud_files.items()
                        if ".conflict." not in os.path.basename(k)}

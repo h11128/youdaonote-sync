@@ -235,27 +235,77 @@ async def async_scan_cloud(
 
         return subdirs
 
-    # BFS: 逐层并发扫描（visited 防止循环引用导致死循环）
+    # Queue-based BFS: worker 空闲即取下一目录，无层级等待
     visited: set = {dir_id}
-    pending = [(dir_id, base)]
-    while pending:
-        tasks = [_fetch_dir(did, bp) for did, bp in pending]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        pending = []
-        for result in results:
-            if isinstance(result, BaseException):
-                logging.error(f"扫描目录异常: {result}")
-                continue
-            for sub_id, sub_path in result:
-                if sub_id not in visited:
-                    visited.add(sub_id)
-                    pending.append((sub_id, sub_path))
+    q: asyncio.Queue = asyncio.Queue()
+    await q.put((dir_id, base))
+    active = 1  # outstanding tasks (queued or in-flight)
+    done_event = asyncio.Event()
+
+    async def _worker():
+        nonlocal active
+        while True:
+            did, bp = await q.get()
+            try:
+                subdirs = await _fetch_dir(did, bp)
+                for sub_id, sub_path in subdirs:
+                    if sub_id not in visited:
+                        visited.add(sub_id)
+                        active += 1
+                        await q.put((sub_id, sub_path))
+            except Exception as e:
+                logging.error(f"扫描目录异常: {bp} - {e}")
+            finally:
+                active -= 1
+                if active == 0:
+                    done_event.set()
+
+    workers = [asyncio.create_task(_worker())
+               for _ in range(max_concurrent)]
+    await done_event.wait()
+    for w in workers:
+        w.cancel()
 
     return files
 
 
+class _SelectiveFilter:
+    """Pre-compiled fnmatch patterns for include/exclude filtering."""
+
+    __slots__ = ("_include_re", "_exclude_re")
+
+    def __init__(self, include: List[str], exclude: List[str]):
+        self._include_re = self._compile(include) if include else None
+        self._exclude_re = self._compile(exclude) if exclude else None
+
+    @staticmethod
+    def _compile(patterns: List[str]) -> "re.Pattern":
+        import re as _re
+        parts = []
+        for pat in patterns:
+            parts.append(fnmatch.translate(pat).rstrip(r"\Z$"))
+            glob_pat = f"**/{pat}"
+            parts.append(fnmatch.translate(glob_pat).rstrip(r"\Z$"))
+        combined = "|".join(f"(?:{p})" for p in parts)
+        return _re.compile(f"(?:{combined})\\Z", _re.DOTALL)
+
+    def matches(self, rel_path: str) -> bool:
+        if self._exclude_re and self._exclude_re.match(rel_path):
+            return False
+        if self._include_re:
+            return bool(self._include_re.match(rel_path))
+        return True
+
+
+def compile_selective_filter(
+    include: List[str], exclude: List[str],
+) -> "_SelectiveFilter":
+    """Create a pre-compiled filter. Call .matches(path) for O(1) pattern check."""
+    return _SelectiveFilter(include, exclude)
+
+
 def matches_selective(rel_path: str, include: List[str], exclude: List[str]) -> bool:
-    """检查路径是否通过选择性同步过滤。"""
+    """检查路径是否通过选择性同步过滤（兼容旧调用，逐次编译）。"""
     if exclude:
         for pat in exclude:
             if fnmatch.fnmatch(rel_path, pat) or fnmatch.fnmatch(rel_path, f"**/{pat}"):
@@ -339,10 +389,8 @@ def scan_local(local_dir: str, base_path: str = "",
         files.update(partial)
 
     if sync_include or sync_exclude:
-        inc = sync_include or []
-        exc = sync_exclude or []
-        files = {k: v for k, v in files.items()
-                 if matches_selective(k, inc, exc)}
+        filt = _SelectiveFilter(sync_include or [], sync_exclude or [])
+        files = {k: v for k, v in files.items() if filt.matches(k)}
 
     return files
 

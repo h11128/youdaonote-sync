@@ -7,13 +7,18 @@ YoudaoNoteDownload 仅负责单文件下载，不再包含遍历逻辑。
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Tuple, TYPE_CHECKING
 
 from src.common import get_script_directory, normalize_sep
 
 if TYPE_CHECKING:
     from src.protocols import DirBrowser
     from src.transfer.download import YoudaoNoteDownload
+
+_DownloadTask = Tuple[str, str, str, int, int]  # (file_id, name, local_dir, mtime, ctime)
+
+DOWNLOAD_WORKERS = 8
 
 
 class PullEngine:
@@ -59,7 +64,9 @@ class PullEngine:
                     return False
 
             logging.info(f"开始全量导出到: {local_dir}")
-            self._download_dir_recursively(root_id, local_dir)
+            tasks = self._collect_download_tasks(root_id, local_dir)
+            logging.info(f"扫描完成: {len(tasks)} 个文件待下载")
+            self._execute_downloads(tasks)
             logging.info("全量导出完成!")
             return True
 
@@ -67,8 +74,9 @@ class PullEngine:
             logging.error(f"全量导出失败: {e}")
             return False
 
-    def _download_dir_recursively(self, dir_id: str, local_dir: str) -> None:
-        """递归下载目录"""
+    def _collect_download_tasks(self, dir_id: str, local_dir: str) -> List[_DownloadTask]:
+        """递归遍历云端目录树，收集所有文件下载任务（目录立即创建）。"""
+        tasks: List[_DownloadTask] = []
         dir_info = self.api.get_dir_info_by_id(dir_id)
         entries = dir_info.get('entries', [])
 
@@ -80,11 +88,39 @@ class PullEngine:
 
             if is_dir:
                 sub_dir = normalize_sep(os.path.join(local_dir, name))
-                if not os.path.exists(sub_dir):
-                    os.makedirs(sub_dir, exist_ok=True)
-                self._download_dir_recursively(entry_id, sub_dir)
+                os.makedirs(sub_dir, exist_ok=True)
+                tasks.extend(self._collect_download_tasks(entry_id, sub_dir))
             else:
                 modify_time = file_entry.get('modifyTimeForSort', 0)
                 create_time = file_entry.get('createTimeForSort', 0)
-                self.downloader.download_file(
-                    entry_id, name, local_dir, modify_time, create_time)
+                tasks.append((entry_id, name, local_dir, modify_time, create_time))
+
+        return tasks
+
+    def _execute_downloads(self, tasks: List[_DownloadTask]) -> None:
+        """并发下载所有文件。"""
+        if not tasks:
+            return
+
+        workers = min(len(tasks), DOWNLOAD_WORKERS)
+        succeeded, failed = 0, 0
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(
+                    self.downloader.download_file,
+                    fid, name, ldir, mtime, ctime,
+                ): (fid, name)
+                for fid, name, ldir, mtime, ctime in tasks
+            }
+            for fut in as_completed(futures):
+                fid, name = futures[fut]
+                try:
+                    fut.result()
+                    succeeded += 1
+                except Exception as e:
+                    failed += 1
+                    logging.error(f"下载失败: {name} ({fid}) - {e}")
+
+        if failed > 0:
+            logging.warning(f"下载统计: 成功={succeeded}, 失败={failed}")

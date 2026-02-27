@@ -96,10 +96,13 @@ def _build_indexes(
     内部实现：一次文件系统遍历同时构建 hash 分组和资源引用集合。
     当 need_refs=False 时跳过 Markdown 解析，节省 I/O。
     hash_cache: sync 阶段已计算的 abs_path → hash 缓存，命中则跳过重算。
+
+    使用批量查询预加载所有 metadata，避免 N+1 SQL 查询。
     """
     hash_index: Dict[str, List[str]] = defaultdict(list)
     referenced: Set[str] = set()
     updated = 0
+    all_meta = metadata.get_all_file_meta_for_dedup() if metadata else {}
 
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -110,33 +113,31 @@ def _build_indexes(
             full = safe_long_path(os.path.join(dirpath, f))
             rel = normalize_sep(os.path.relpath(full, root))
 
-            # ---- hash 索引（优先级：hash_cache > metadata cache > 重新计算）----
             h = None
             if hash_cache:
                 h = hash_cache.get(full)
-            if not h and metadata:
-                info = metadata.get_file_info(rel)
-                if info and "content_hash" in info:
-                    cached_mtime = info.get("local_mtime", 0)
+            if not h:
+                meta_info = all_meta.get(rel)
+                if meta_info and "content_hash" in meta_info:
+                    cached_mtime = meta_info.get("local_mtime", 0)
                     try:
                         current_mtime = int(os.path.getmtime(full))
                     except OSError:
                         continue
                     if current_mtime == cached_mtime:
-                        h = info["content_hash"]
+                        h = meta_info["content_hash"]
             if not h:
                 h = compute_content_hash(full)
                 if h:
                     if hash_cache is not None:
                         hash_cache[full] = h
-                    if metadata and metadata.get_file_info(rel):
+                    if metadata and rel in all_meta:
                         metadata.update_content_hash(rel, h)
                         updated += 1
 
             if h:
                 hash_index[h].append(rel)
 
-            # ---- 引用索引（仅 .md 文件） ----
             if need_refs and f.endswith(".md"):
                 md_dir = os.path.dirname(full)
                 try:
@@ -174,12 +175,15 @@ def _build_indexes_from_scan(
 
     Phase 2c: 引用索引增量更新——只重新解析 mtime 变化的 md 文件，
     其余文件从 metadata 缓存读取。
+
+    使用批量查询预加载所有 metadata，避免 N+1 SQL 查询。
     """
     hash_index: Dict[str, List[str]] = defaultdict(list)
     referenced: Set[str] = set()
     updated = 0
 
     cached_refs = metadata.get_all_cached_refs() if metadata else {}
+    all_meta = metadata.get_all_file_meta_for_dedup() if metadata else {}
 
     for rel, info in local_files.items():
         if info.get("is_dir"):
@@ -192,29 +196,24 @@ def _build_indexes_from_scan(
         h = None
         if hash_cache:
             h = hash_cache.get(full)
-        meta_info = None
-        if not h and metadata:
-            meta_info = metadata.get_file_info(rel)
-            if meta_info and "content_hash" in meta_info:
-                cached_mtime = meta_info.get("local_mtime", 0)
-                current_mtime = info.get("mtime", 0)
-                if current_mtime == cached_mtime:
-                    h = meta_info["content_hash"]
+        meta_info = all_meta.get(rel)
+        if not h and meta_info and "content_hash" in meta_info:
+            cached_mtime = meta_info.get("local_mtime", 0)
+            current_mtime = info.get("mtime", 0)
+            if current_mtime == cached_mtime:
+                h = meta_info["content_hash"]
         if not h:
             h = compute_content_hash(full)
             if h:
                 if hash_cache is not None:
                     hash_cache[full] = h
-                if metadata and metadata.get_file_info(rel):
+                if metadata and rel in all_meta:
                     metadata.update_content_hash(rel, h)
                     updated += 1
         if h:
             hash_index[h].append(rel)
 
-        # Phase 2c: incremental ref index
         if f.endswith(".md"):
-            if meta_info is None and metadata:
-                meta_info = metadata.get_file_info(rel)
             cached_mtime = meta_info.get("local_mtime", 0) if meta_info else 0
             current_mtime = info.get("mtime", 0)
 
