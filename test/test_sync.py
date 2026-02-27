@@ -1160,6 +1160,33 @@ class MapCloudNameTest(unittest.TestCase):
         # Then
         self.assertEqual(result, ".md")
 
+    def test_trailing_space_note(self):
+        """'title .note' → 'title.md' (trailing space in stem stripped)"""
+        # Given
+        name = "Does Eating Slowly Help You Lose Weight .note"
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, "Does Eating Slowly Help You Lose Weight.md")
+
+    def test_trailing_space_no_ext(self):
+        """'title ' → 'title.md' (trailing space in stem stripped, no ext)"""
+        # Given
+        name = "Does Eating Slowly Help You Lose Weight "
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, "Does Eating Slowly Help You Lose Weight.md")
+
+    def test_trailing_space_md(self):
+        """'title .md' → 'title.md' (trailing space in stem stripped, .md ext)"""
+        # Given
+        name = "title .md"
+        # When
+        result = map_cloud_name(name)
+        # Then
+        self.assertEqual(result, "title.md")
+
 
 class NormalizeFilenameTest(unittest.TestCase):
     """normalize_filename() 文件名净化"""
@@ -1226,6 +1253,24 @@ class NormalizeFilenameTest(unittest.TestCase):
         result = normalize_filename(name)
         # Then
         self.assertEqual(result, "")
+
+    def test_space_before_extension(self):
+        """'title .md' → 'title.md' (space before ext stripped)"""
+        # Given
+        name = "Does Eating Slowly Help You Lose Weight .md"
+        # When
+        result = normalize_filename(name)
+        # Then
+        self.assertEqual(result, "Does Eating Slowly Help You Lose Weight.md")
+
+    def test_space_before_ext_with_special_chars(self):
+        """'a:b .md' → 'ab.md' (special chars removed + space before ext)"""
+        # Given
+        name = "a:b .md"
+        # When
+        result = normalize_filename(name)
+        # Then
+        self.assertEqual(result, "ab.md")
 
 
 class FilterByDirectionTest(unittest.TestCase):
@@ -2409,8 +2454,8 @@ class CrossDirMoveDirectionTest(unittest.TestCase):
 
         self.assertEqual(count, 1)
         self.assertEqual(len(pending), 1)
-        self.assertEqual(pending[0][0], "CLOUD1")
-        self.assertEqual(pending[0][2], "new_dir/doc.md")
+        self.assertEqual(pending[0].file_id, "CLOUD1")
+        self.assertEqual(pending[0].new_local_path, "new_dir/doc.md")
         self.assertNotIn("old_dir/doc.md", cloud_files)
         self.assertIn("new_dir/doc.md", only_local)
 
@@ -2450,8 +2495,8 @@ class CrossDirMoveDirectionTest(unittest.TestCase):
         self.assertNotIn("old_dir/doc.md", only_local)
         self.assertIn("new_dir/doc.md", local_files)
 
-    def test_pending_deletes_include_local_path(self):
-        """pending_deletes 元组包含 3 个元素: (file_id, old_cloud_path, new_local_path)"""
+    def test_pending_deletes_include_local_path_and_domain(self):
+        """pending tuple 包含 4 个元素: (file_id, old_cloud_path, new_local_path, domain)"""
         from src.sync.moves import _detect_cross_dir_duplicates
         import xxhash
 
@@ -2464,7 +2509,8 @@ class CrossDirMoveDirectionTest(unittest.TestCase):
         only_local = {"a/f.md"}
         only_cloud = {"b/f.md"}
         cloud_files = {
-            "b/f.md": {"id": "C1", "parent_id": "P", "mtime": 500, "is_dir": False}
+            "b/f.md": {"id": "C1", "parent_id": "P", "mtime": 500,
+                        "is_dir": False, "domain": 1}
         }
         local_files = {
             "a/f.md": {"path": local_path, "mtime": 1000, "is_dir": False}
@@ -2479,10 +2525,10 @@ class CrossDirMoveDirectionTest(unittest.TestCase):
 
         self.assertEqual(count, 1)
         self.assertEqual(len(pending), 1)
-        fid, old_path, new_path = pending[0]
-        self.assertEqual(fid, "C1")
-        self.assertEqual(old_path, "b/f.md")
-        self.assertEqual(new_path, "a/f.md")
+        self.assertEqual(pending[0].file_id, "C1")
+        self.assertEqual(pending[0].old_cloud_path, "b/f.md")
+        self.assertEqual(pending[0].new_local_path, "a/f.md")
+        self.assertEqual(pending[0].domain, 1)
 
 
 # ========== 扫描缓存测试 ==========
@@ -2575,6 +2621,17 @@ class ScanCacheTest(unittest.TestCase):
         self.meta.set_dir_info("docs", dir_id="D1", parent_id="ROOT")
         result = self.manager._load_cloud_files_from_cache()
         self.assertNotIn("docs", result)
+
+    def test_cache_excludes_conflict_files(self):
+        """.conflict. 文件不从缓存加载（scan_local 也跳过它们）"""
+        self.meta.set_file_info(
+            "diary/04-13.conflict.20260214_190827.md",
+            file_id="C1", cloud_mtime=1000)
+        self.meta.set_file_info("diary/normal.md",
+                                file_id="C2", cloud_mtime=2000)
+        result = self.manager._load_cloud_files_from_cache()
+        self.assertNotIn("diary/04-13.conflict.20260214_190827.md", result)
+        self.assertIn("diary/normal.md", result)
 
     def test_cache_skips_local_only_files(self):
         """没有 file_id 的纯本地文件不出现在缓存中"""
@@ -2888,6 +2945,158 @@ def _make_manager(api, local_dir, metadata):
         downloader=None,
         uploader=None,
     )
+
+
+# ========== metadata rename_path 测试 ==========
+
+class MetadataRenamePathTest(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_rename_preserves_all_fields(self):
+        """rename_path 保留 file_id、content_hash 等所有字段"""
+        self.meta.set_file_info("old/doc.md", file_id="F1", cloud_mtime=1000,
+                                local_mtime=900, content_hash="h123")
+        self.meta.set_original_domain("old/doc.md", 0)
+
+        result = self.meta.rename_path("old/doc.md", "new/doc.md")
+        self.assertTrue(result)
+
+        self.assertIsNone(self.meta.get_file_info("old/doc.md"))
+        info = self.meta.get_file_info("new/doc.md")
+        self.assertIsNotNone(info)
+        self.assertEqual(info["file_id"], "F1")
+        self.assertEqual(info["cloud_mtime"], 1000)
+        self.assertEqual(info["local_mtime"], 900)
+        self.assertEqual(info["content_hash"], "h123")
+        self.assertEqual(info["original_domain"], 0)
+
+    def test_rename_nonexistent_returns_false(self):
+        """重命名不存在的路径返回 False"""
+        result = self.meta.rename_path("no/such.md", "new.md")
+        self.assertFalse(result)
+
+    def test_rename_with_conflict_removes_old(self):
+        """目标路径已存在时：删除旧路径记录（不崩溃）"""
+        self.meta.set_file_info("old.md", file_id="F1", cloud_mtime=100)
+        self.meta.set_file_info("new.md", file_id="F2", cloud_mtime=200)
+
+        result = self.meta.rename_path("old.md", "new.md")
+        self.assertFalse(result)
+        self.assertIsNone(self.meta.get_file_info("old.md"))
+
+
+# ========== _execute_cloud_moves 测试 ==========
+
+class ExecuteCloudMovesTest(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.local_dir = os.path.join(self.tmpdir, "notes")
+        os.makedirs(self.local_dir)
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _make_manager(self):
+        from src.sync.engine import SyncManager
+        from unittest.mock import MagicMock
+
+        api = MagicMock()
+        api.move_file.return_value = {"responseCode": 0}
+        api.rename_file.return_value = {"responseCode": 0}
+
+        uploader = MagicMock()
+        uploader.ensure_parent_dir.return_value = "NEW_PARENT_ID"
+
+        mgr = SyncManager(
+            api=api, local_dir=self.local_dir, metadata=self.meta,
+            downloader=None, uploader=uploader)
+        return mgr, api, uploader
+
+    def test_move_calls_api_and_updates_metadata(self):
+        """成功移动: 调用 move_file API + metadata 从旧路径迁移到新路径"""
+        mgr, api, _ = self._make_manager()
+
+        self.meta.set_file_info("old_dir/doc.md", file_id="F1",
+                                cloud_mtime=1000, content_hash="abc")
+
+        local_file = os.path.join(self.local_dir, "new_dir", "doc.md")
+        os.makedirs(os.path.dirname(local_file), exist_ok=True)
+        with open(local_file, "w") as f:
+            f.write("content")
+
+        from src.sync.moves import PendingMove
+        mgr._pending_moves = [PendingMove("F1", "old_dir/doc.md", "new_dir/doc.md", 1)]
+        moved = mgr._execute_cloud_moves()
+
+        self.assertEqual(moved, {"new_dir/doc.md"})
+        api.move_file.assert_called_once_with("F1", "NEW_PARENT_ID", 1)
+        api.rename_file.assert_not_called()
+
+        self.assertIsNone(self.meta.get_file_info("old_dir/doc.md"))
+        info = self.meta.get_file_info("new_dir/doc.md")
+        self.assertEqual(info["file_id"], "F1")
+        self.assertEqual(info["content_hash"], "abc")
+
+    def test_move_with_rename(self):
+        """文件名也变了时，同时调用 rename_file"""
+        mgr, api, _ = self._make_manager()
+
+        self.meta.set_file_info("old/a.md", file_id="F2", cloud_mtime=500)
+
+        local_file = os.path.join(self.local_dir, "new", "b.md")
+        os.makedirs(os.path.dirname(local_file), exist_ok=True)
+        with open(local_file, "w") as f:
+            f.write("x")
+
+        from src.sync.moves import PendingMove
+        mgr._pending_moves = [PendingMove("F2", "old/a.md", "new/b.md", 1)]
+        moved = mgr._execute_cloud_moves()
+
+        self.assertEqual(moved, {"new/b.md"})
+        api.move_file.assert_called_once()
+        api.rename_file.assert_called_once_with("F2", "b.md", 1)
+
+    def test_move_failure_falls_back(self):
+        """move_file API 抛异常 → 存入 _failed_moves"""
+        mgr, api, _ = self._make_manager()
+        api.move_file.side_effect = Exception("API error")
+
+        self.meta.set_file_info("old/f.md", file_id="F3", cloud_mtime=100)
+
+        from src.sync.moves import PendingMove
+        mgr._pending_moves = [PendingMove("F3", "old/f.md", "new/f.md", 1)]
+        moved = mgr._execute_cloud_moves()
+
+        self.assertEqual(moved, set())
+        self.assertEqual(len(mgr._failed_moves), 1)
+        self.assertIsNotNone(self.meta.get_file_info("old/f.md"))
+
+    def test_ensure_parent_failure_falls_back(self):
+        """ensure_parent_dir 返回 None → 存入 _failed_moves"""
+        mgr, api, uploader = self._make_manager()
+        uploader.ensure_parent_dir.return_value = None
+
+        self.meta.set_file_info("old/g.md", file_id="F4", cloud_mtime=100)
+
+        from src.sync.moves import PendingMove
+        mgr._pending_moves = [PendingMove("F4", "old/g.md", "new/g.md", 0)]
+        moved = mgr._execute_cloud_moves()
+
+        self.assertEqual(moved, set())
+        self.assertEqual(len(mgr._failed_moves), 1)
+        api.move_file.assert_not_called()
 
 
 if __name__ == "__main__":

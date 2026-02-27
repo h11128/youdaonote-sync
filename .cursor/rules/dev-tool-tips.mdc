@@ -1,9 +1,16 @@
 ---
-description: Development tool tips — Vitest Windows drive letter bug, YAML schema design for LLM annotation, StrReplace strategies
+description: "开发工具技巧和环境配置 — WSL、CRLF、换行符、Vitest、Mermaid、StrReplace、Cursor hooks、preToolUse。Development tool tips, WSL line endings, Mermaid validation, StrReplace strategies, Cursor hook format."
 alwaysApply: false
 ---
 
 # Dev Tool Tips
+
+## WSL 文件换行符
+
+WSL 文件必须用 LF。hooks 中的 `crlf_auto_fix` 规则会自动修复 CRLF。
+
+**快速修复**: `sed -i 's/\r$//' <file>`
+**典型报错**: `syntax error near unexpected token $'\r'`
 
 ## Vitest 4.0 Windows 盘符 Bug
 
@@ -12,6 +19,17 @@ GitHub Issue: vitest-dev/vitest#9507
 
 **根因**: `fs.realpath()` 不修正盘符大小写，模块解析路径不一致。
 **解决**: `cd /E/path && npx vitest run`（Cursor shell 默认小写盘符，需手动切换）
+
+## Mermaid 图验证
+
+写 Mermaid 图后用 `npx @mermaid-js/mermaid-cli` 验证渲染。hooks 中 R17a/b/c 规则会自动检测常见问题。
+
+**规则**: 禁 `<br/>`、禁 `xychart-beta`、subgraph 用英文 ID + 中文 label。
+
+**验证流程**（遵守脚本先写文件规则）:
+1. 将提取 + 验证逻辑写入 `.local-scripts/validate_mermaid.py`
+2. 运行 `python3 .local-scripts/validate_mermaid.py <target.md>`
+3. 逐个检查生成的 .svg 文件
 
 ## YAML Schema Design (LLM 标注)
 
@@ -27,3 +45,10 @@ GitHub Issue: vitest-dev/vitest#9507
 - Reduce Scope: Use shorter, unique feature strings
 - Use Anchors: Section headers or unique comments
 - Verify First: Read file to ensure exact format match
+
+## Cursor Hook 响应格式
+
+Cursor 对所有拦截类 hook（`beforeShellExecution`、`preToolUse`、`beforeMCPExecution`）统一使用 `permission` 字段：
+
+**正确**: `{"permission": "deny", "agent_message": "原因"}` / `{"permission": "allow"}`
+**错误**: `{"decision": "deny", "reason": "..."}` — Cursor 会静默忽略

@@ -1,21 +1,24 @@
 """
-API 分页诊断工具 — 合并了 3 个分页 debug 脚本。
+API 诊断工具。
 
 子命令:
-  basic   拉指定目录，检查条目数量和分页字段
-  detail  模拟分页循环，检查去重和退出条件
-  large   测试不同 page_size 参数的效果
+  basic    拉指定目录，检查条目数量和分页字段
+  detail   模拟分页循环，检查去重和退出条件
+  large    测试不同 page_size 参数的效果
+  status   诊断 API 连通性和 500 错误
 
 用法:
-  python .local-scripts/diagnose_api.py basic --dir "内在世界/日记/2025"
-  python .local-scripts/diagnose_api.py detail --dir "内在世界/日记/2025"
-  python .local-scripts/diagnose_api.py large --dir "内在世界/日记/2025"
-  python .local-scripts/diagnose_api.py basic --dir-id "WEBxxxxx"
+  python tools/debug/diagnose_api.py basic --dir "内在世界/日记/2025"
+  python tools/debug/diagnose_api.py detail --dir "内在世界/日记/2025"
+  python tools/debug/diagnose_api.py large --dir "内在世界/日记/2025"
+  python tools/debug/diagnose_api.py basic --dir-id "WEBxxxxx"
+  python tools/debug/diagnose_api.py status
 """
 
 import argparse
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -187,6 +190,48 @@ def cmd_large(args):
         print(f"  搜索 '{args.search}': {len(found)}: {found[:5]}...")
 
 
+# ===== 子命令：status =====
+
+def cmd_status(_args):
+    """诊断 API 连通性：尝试几个端点，报告状态码和 headers。"""
+    api = _login()
+
+    # 1. get_root_dir_info_id
+    url = api.ROOT_ID_URL.format(cstk=api.cstk)
+    data = {"path": "/", "entire": "true", "purge": "false", "cstk": api.cstk}
+    print("--- 请求 1: get_root_dir_info_id ---")
+    try:
+        resp = api.session.post(url, data=data)
+        print(f"Status: {resp.status_code}")
+        for k in ('content-type', 'server', 'date', 'retry-after'):
+            if k in resp.headers:
+                print(f"  {k}: {resp.headers[k]}")
+        print(f"Body: {resp.text[:500]}")
+    except Exception as e:
+        print(f"Error: {e}")
+
+    time.sleep(2)
+
+    # 2. 用户信息（轻量级）
+    print("\n--- 请求 2: 用户信息 ---")
+    user_url = (f"https://note.youdao.com/yws/api/personal/user"
+                f"?method=get&keyfrom=web&cstk={api.cstk}")
+    try:
+        resp = api.session.post(user_url, data={"cstk": api.cstk})
+        print(f"Status: {resp.status_code}")
+        print(f"Body: {resp.text[:500]}")
+    except Exception as e:
+        print(f"Error: {e}")
+
+    # 3. Cookie 状态
+    print("\n--- Cookie 信息 ---")
+    for name, value in api.session.cookies.items():
+        if name in ('YNOTE_CSTK', 'YNOTE_SESS', 'YNOTE_LOGIN'):
+            print(f"  {name}: {value[:20]}... (len={len(value)})")
+        else:
+            print(f"  {name}: (present)")
+
+
 # ===== 主入口 =====
 
 def main():
@@ -214,12 +259,15 @@ def main():
             p.add_argument("--page-size", type=int, default=200,
                            help="每页大小（默认 200）")
 
+    sub.add_parser("status", help="诊断 API 连通性和 500 错误")
+
     args = parser.parse_args()
 
     dispatch = {
         "basic": cmd_basic,
         "detail": cmd_detail,
         "large": cmd_large,
+        "status": cmd_status,
     }
 
     if args.command is None:

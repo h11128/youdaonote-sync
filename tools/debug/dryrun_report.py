@@ -33,6 +33,14 @@ from src.sync.metadata import SyncMetadata
 LOCAL_DIR = "E:/Projects/notes"
 
 
+def _fmt_ts(ts) -> str:
+    """Unix timestamp → 'YYYY-MM-DD HH:MM' or '—'."""
+    if not ts:
+        return "—"
+    from datetime import datetime
+    return datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
+
+
 # ===== 共用初始化 =====
 
 def _init():
@@ -49,6 +57,12 @@ def _init():
     items = mgr.collect_items(cloud_dir_id, "", dry_run=True)
     items, _ = filter_by_direction(items, SyncDirection.BOTH)
     return api, meta, mgr, items
+
+
+def _get_move_map(mgr):
+    """从 mgr._pending_moves 构建 new_local_path → old_cloud_path 的映射。"""
+    return {m.new_local_path: m.old_cloud_path
+            for m in getattr(mgr, '_pending_moves', [])}
 
 
 def _classify(items):
@@ -78,8 +92,9 @@ def _classify(items):
 
 def cmd_summary(args, _ctx=None):
     """按目录分组输出 upload/download/conflict 统计 + 与上次对比。"""
-    _, meta, _, items = _ctx or _init()
+    _, meta, mgr, items = _ctx or _init()
     c = _classify(items)
+    move_map = _get_move_map(mgr)
 
     # 按 action/type 计数
     stats = Counter()
@@ -95,6 +110,12 @@ def cmd_summary(args, _ctx=None):
         print(f"  {key:25s}: {stats[key]:5d}")
         total += stats[key]
     print(f"  {'总计':25s}: {total:5d}")
+
+    move_cnt = sum(1 for i in c["upload_files"]
+                   if i.relative_path in move_map)
+    if move_cnt:
+        new_cnt = stats.get("upload_file", 0) - move_cnt
+        print(f"\n  上传拆分: {new_cnt} 新文件/修改 + {move_cnt} 跨目录移动")
 
     # 上传文件按顶层目录分组
     print()
@@ -148,19 +169,61 @@ def cmd_summary(args, _ctx=None):
 
 # ===== 子命令：list =====
 
+def _download_tag(item, meta, local_dir):
+    """为下载项生成标签。"""
+    info = meta.get_file_info(item.relative_path)
+    local_exists = os.path.exists(os.path.join(local_dir, item.relative_path))
+    if info is None:
+        return "云端新文件"
+    if local_exists:
+        cloud_mt = item.cloud_mtime or 0
+        meta_cloud = info.get("cloud_mtime", 0) or 0
+        if cloud_mt > meta_cloud:
+            return "云端更新"
+        return "本地有但未被扫描到"
+    if info.get("local_mtime", 0) == 0:
+        return "云端有/本地未下载"
+    return "已校准未下载"
+
+
+def _dl_reason_inline(item, meta, local_dir):
+    """下载原因（一句话，含时间戳），用于文件清单表格。"""
+    info = meta.get_file_info(item.relative_path)
+    local_exists = os.path.exists(os.path.join(local_dir, item.relative_path))
+    ts = _fmt_ts(item.cloud_mtime)
+    if info is None:
+        return f"首次发现（云端 {ts}）"
+    if info.get("local_mtime", 0) == 0:
+        return f"从未下载（云端 {ts}）"
+    if item.cloud_mtime and info.get("cloud_mtime") and item.cloud_mtime > info["cloud_mtime"]:
+        return f"云端更新（{_fmt_ts(info['cloud_mtime'])} → {ts}）"
+    if not local_exists:
+        return f"有记录但本地无文件（云端 {ts}）"
+    return f"待同步（云端 {ts}）"
+
+
+def _upload_tag(item, meta, move_map):
+    """为上传项生成标签：跨目录移动 / 本地新文件 / 本地修改。"""
+    if item.relative_path in move_map:
+        old = move_map[item.relative_path]
+        return f"跨目录移动 ← {old}"
+    info = meta.get_file_info(item.relative_path)
+    cloud_id = info.get("file_id", "") if info else ""
+    return "本地新文件" if not cloud_id else "本地修改"
+
+
 def cmd_list(args, _ctx=None):
     """列出所有非 SKIP 项，标注原因。"""
-    _, meta, _, items = _ctx or _init()
+    _, meta, mgr, items = _ctx or _init()
     c = _classify(items)
+    move_map = _get_move_map(mgr)
 
     # 上传文件
     print("=" * 70)
     print(f"  上传文件 ({len(c['upload_files'])} 个)")
     print("=" * 70)
     for i, item in enumerate(c["upload_files"], 1):
-        info = meta.get_file_info(item.relative_path)
-        cloud_id = info.get("file_id", "") if info else ""
-        tag = "本地新文件" if not cloud_id else "本地修改"
+        tag = _upload_tag(item, meta, move_map)
         print(f"  {i:3d}. [{tag}] {item.relative_path}")
 
     # 上传目录
@@ -179,14 +242,7 @@ def cmd_list(args, _ctx=None):
     print(f"  下载文件 ({len(c['download_files'])} 个)")
     print("=" * 70)
     for i, item in enumerate(c["download_files"], 1):
-        info = meta.get_file_info(item.relative_path)
-        local_exists = os.path.exists(os.path.join(LOCAL_DIR, item.relative_path))
-        if info and info.get("local_mtime", 0) == 0:
-            tag = "云端有/本地未下载"
-        elif local_exists:
-            tag = "本地有但未被扫描到"
-        else:
-            tag = "云端新文件"
+        tag = _download_tag(item, meta, LOCAL_DIR)
         ext = os.path.splitext(item.relative_path)[1] or "(无扩展名)"
         print(f"  {i:3d}. [{tag}] {item.relative_path}  [{ext}]")
 
@@ -209,11 +265,17 @@ def cmd_list(args, _ctx=None):
             print(f"  {i:3d}. {item.relative_path}")
 
     # 汇总
+    move_count = sum(1 for i in c["upload_files"]
+                     if i.relative_path in move_map)
+    new_count = len(c["upload_files"]) - move_count
+
     print()
     print("=" * 70)
     print("  汇总")
     print("=" * 70)
     print(f"  上传: {len(c['upload_files'])} 文件 + {len(c['upload_dirs'])} 目录")
+    if move_count:
+        print(f"    其中: {new_count} 新文件/修改 + {move_count} 跨目录移动")
     print(f"  下载: {len(c['download_files'])} 文件 + {len(c['download_dirs'])} 目录")
     print(f"  冲突: {len(c['conflicts'])}")
     print(f"  跳过: {c['skip_count']}")
@@ -529,8 +591,9 @@ def cmd_full(args, _ctx=None):
         os.path.dirname(os.path.abspath(__file__)), "dryrun_full_report.md")
 
     ctx = _ctx or _init()
-    _, meta, _, items = ctx
+    _, meta, mgr, items = ctx
     c = _classify(items)
+    move_map = _get_move_map(mgr)
 
     L = []  # lines buffer
     w = L.append
@@ -555,6 +618,9 @@ def cmd_full(args, _ctx=None):
         key = (item.action.value, "dir" if item.is_dir else "file")
         action_counts[key] += 1
 
+    move_file_count = sum(1 for i in c["upload_files"]
+                          if i.relative_path in move_map)
+
     for action_name in ["upload", "download", "conflict", "skip"]:
         fc = action_counts.get((action_name, "file"), 0)
         dc = action_counts.get((action_name, "dir"), 0)
@@ -566,30 +632,30 @@ def cmd_full(args, _ctx=None):
     w(f"| **总计** | | | **{total}** |")
     w("")
 
-    # 上传文件按顶层目录
+    if move_file_count:
+        new_file_count = action_counts.get(("upload", "file"), 0) - move_file_count
+        w(f"> **上传拆分**: {new_file_count} 新文件/修改 + "
+          f"{move_file_count} 跨目录移动（移动后删除旧云端文件）")
+        w("")
+
+    # 上传/下载文件按顶层目录 — 合并成一张表
     upload_by_top = Counter()
     for item in c["upload_files"]:
         upload_by_top[item.relative_path.split("/")[0]] += 1
-
-    w("### 上传文件按目录")
-    w("")
-    w("| 目录 | 文件数 |")
-    w("|------|--------|")
-    for top, cnt in sorted(upload_by_top.items(), key=lambda x: -x[1]):
-        w(f"| {top} | {cnt} |")
-    w("")
-
-    # 下载文件按顶层目录
     dl_by_top = Counter()
     for item in c["download_files"]:
         dl_by_top[item.relative_path.split("/")[0]] += 1
 
-    w("### 下载文件按目录")
+    all_tops = sorted(set(upload_by_top) | set(dl_by_top),
+                      key=lambda t: -(upload_by_top.get(t, 0) + dl_by_top.get(t, 0)))
+    w("### 文件按目录分布")
     w("")
-    w("| 目录 | 文件数 |")
-    w("|------|--------|")
-    for top, cnt in sorted(dl_by_top.items(), key=lambda x: -x[1]):
-        w(f"| {top} | {cnt} |")
+    w("| 目录 | 上传 | 下载 |")
+    w("|------|------|------|")
+    for top in all_tops:
+        up = upload_by_top.get(top, 0) or ""
+        dl = dl_by_top.get(top, 0) or ""
+        w(f"| {top} | {up} | {dl} |")
     w("")
 
     # 冲突
@@ -606,15 +672,13 @@ def cmd_full(args, _ctx=None):
     w("## 2. 文件清单（带原因标注）")
     w("")
 
-    # 上传文件
+    # 上传文件 — 区分新文件、修改、跨目录移动
     w(f"### 上传文件（{len(c['upload_files'])} 个）")
     w("")
     w("| # | 标签 | 路径 |")
     w("|---|------|------|")
     for i, item in enumerate(c["upload_files"], 1):
-        info = meta.get_file_info(item.relative_path)
-        cloud_id = info.get("file_id", "") if info else ""
-        tag = "本地新文件" if not cloud_id else "本地修改"
+        tag = _upload_tag(item, meta, move_map)
         w(f"| {i} | {tag} | `{item.relative_path}` |")
     w("")
 
@@ -630,22 +694,14 @@ def cmd_full(args, _ctx=None):
             w(f"| {i} | {tag} | `{item.relative_path}` |")
         w("")
 
-    # 下载文件
+    # 下载文件 — 合并标签和详情到一张表
     w(f"### 下载文件（{len(c['download_files'])} 个）")
     w("")
-    w("| # | 标签 | 路径 | 扩展名 |")
-    w("|---|------|------|--------|")
+    w("| # | 路径 | 原因 |")
+    w("|---|------|------|")
     for i, item in enumerate(c["download_files"], 1):
-        info = meta.get_file_info(item.relative_path)
-        local_exists = os.path.exists(os.path.join(LOCAL_DIR, item.relative_path))
-        if info and info.get("local_mtime", 0) == 0:
-            tag = "云端有/本地未下载"
-        elif local_exists:
-            tag = "本地有但未被扫描到"
-        else:
-            tag = "云端新文件"
-        ext = os.path.splitext(item.relative_path)[1] or "(无)"
-        w(f"| {i} | {tag} | `{item.relative_path}` | {ext} |")
+        reason = _dl_reason_inline(item, meta, LOCAL_DIR)
+        w(f"| {i} | `{item.relative_path}` | {reason} |")
     w("")
 
     # 下载目录
@@ -684,10 +740,13 @@ def cmd_full(args, _ctx=None):
     w("")
 
     # 上传元数据分析
-    w("### 上传文件元数据分析")
+    w("### 上传文件来源分析")
     w("")
+    move_cnt = sum(1 for i in upload_files if i.relative_path in move_map)
     no_meta = has_meta_no_cid = has_meta_with_cid = 0
     for item in upload_files:
+        if item.relative_path in move_map:
+            continue
         info = meta.get_file_info(item.relative_path)
         if info is None:
             no_meta += 1
@@ -698,178 +757,73 @@ def cmd_full(args, _ctx=None):
 
     w("| 分类 | 数量 | 说明 |")
     w("|------|------|------|")
-    w(f"| 无元数据 | {no_meta} | 完全新文件 |")
-    w(f"| 有元数据无 cloud_id | {has_meta_no_cid} | 本地创建但从未上传 |")
-    w(f"| 有元数据有 cloud_id | {has_meta_with_cid} | 本地修改了已有云端文件 |")
+    w(f"| 跨目录移动 | {move_cnt} | 本地重组了目录，同步后删除旧云端路径 |")
+    w(f"| 全新文件 | {no_meta} | 本地新建，云端没有对应记录 |")
+    w(f"| 已知未上传 | {has_meta_no_cid} | 本地创建过同步记录，但从未上传到云端 |")
+    w(f"| 本地修改 | {has_meta_with_cid} | 云端已有，本地做了修改 |")
     w("")
 
     if has_meta_with_cid > 0:
-        w("**有 cloud_id 但仍要上传的文件（本地修改）：**")
+        w("**本地修改的文件详情：**")
         w("")
         count = 0
         for item in upload_files:
             info = meta.get_file_info(item.relative_path)
             if info and info.get("file_id"):
-                w(f"- `{item.relative_path}` — local_mtime={item.local_mtime}, "
-                  f"meta_local={info.get('local_mtime')}, meta_cloud={info.get('cloud_mtime')}")
+                w(f"- `{item.relative_path}` — 本地修改于 "
+                  f"{_fmt_ts(item.local_mtime)}，上次同步 "
+                  f"{_fmt_ts(info.get('cloud_mtime'))}")
                 count += 1
                 if count >= 5:
                     w(f"- ... 还有 {has_meta_with_cid - 5} 个")
                     break
         w("")
 
-    # 上传目录分析
-    w("### 上传目录分析")
-    w("")
-    dir_has_meta = sum(1 for i in upload_dirs if meta.get_dir_id(i.relative_path))
-    dir_no_meta = len(upload_dirs) - dir_has_meta
-    w(f"- 有 dir_id: {dir_has_meta}")
-    w(f"- 无 dir_id: {dir_no_meta}")
-    if dir_no_meta > 0:
-        w("")
-        for item in upload_dirs:
-            if not meta.get_dir_id(item.relative_path):
-                w(f"  - `{item.relative_path}`")
-    w("")
-
     # 下载分析
     downloads = [i for i in items if i.action == SyncAction.DOWNLOAD]
     dl_dirs = [i for i in downloads if i.is_dir]
     dl_files = [i for i in downloads if not i.is_dir]
 
-    w("### 下载文件元数据分析")
-    w("")
-    dl_no_meta = dl_has_meta = dl_meta_local_zero = dl_cloud_changed = 0
+    # 下载来源汇总 — 只有多个分类有数据时才用表格，否则一句话
+    dl_no_meta = dl_calibrated = dl_never_dl = dl_cloud_changed = 0
     for item in dl_files:
         info = meta.get_file_info(item.relative_path)
         if info is None:
             dl_no_meta += 1
-        else:
-            dl_has_meta += 1
-            if info.get("local_mtime", 0) == 0:
-                dl_meta_local_zero += 1
-            if (item.cloud_mtime and info.get("cloud_mtime")
-                    and item.cloud_mtime > info["cloud_mtime"]):
-                dl_cloud_changed += 1
-
-    w("| 分类 | 数量 | 说明 |")
-    w("|------|------|------|")
-    w(f"| 无元数据 | {dl_no_meta} | 云端新文件，本地从未见过 |")
-    w(f"| local_mtime=0 | {dl_meta_local_zero} | 只有云端，本地没下载过 |")
-    w(f"| 云端有更新 | {dl_cloud_changed} | 需要覆盖本地旧版 |")
-    w(f"| 其他有元数据 | {dl_has_meta - dl_meta_local_zero - dl_cloud_changed} | |")
-    w("")
-
-    # 下载文件示例（前 15 个带原因）
-    w("**下载文件详细原因（前 15 个）：**")
-    w("")
-    for item in dl_files[:15]:
-        info = meta.get_file_info(item.relative_path)
-        if info is None:
-            reason = "无元数据"
         elif info.get("local_mtime", 0) == 0:
-            reason = "从未下载 (local_mtime=0)"
+            dl_never_dl += 1
         elif (item.cloud_mtime and info.get("cloud_mtime")
-              and item.cloud_mtime > info["cloud_mtime"]):
-            reason = f"云端更新 (cloud={item.cloud_mtime} > meta={info['cloud_mtime']})"
+                and item.cloud_mtime > info["cloud_mtime"]):
+            dl_cloud_changed += 1
         else:
-            reason = (f"meta_local={info.get('local_mtime')}, "
-                      f"meta_cloud={info.get('cloud_mtime')}, "
-                      f"cloud_now={item.cloud_mtime}")
-        w(f"- `{item.relative_path}` — {reason}")
-    w("")
+            dl_calibrated += 1
 
-    # ════════════════════════════════════════════
-    # 4. Edge Cases
-    # ════════════════════════════════════════════
-    w("## 4. 边界情况分析")
-    w("")
-
-    # 4.1 下载项中 local_mtime ≠ 0
-    dl_non_zero = [
-        i for i in items
-        if (i.action == SyncAction.DOWNLOAD and not i.is_dir
-            and (meta.get_file_info(i.relative_path) or {}).get("local_mtime", 0) != 0)
+    dl_cats = [
+        ("首次发现", dl_no_meta, "云端新文件，本地从未见过"),
+        ("从未下载", dl_never_dl, "有记录但本地没下载过"),
+        ("云端有更新", dl_cloud_changed, "云端修改了，需覆盖本地旧版"),
+        ("有记录但本地无文件", dl_calibrated, "同步记录存在，但本地文件不在"),
     ]
-    w(f"### 4.1 下载项中 local_mtime ≠ 0 的文件（{len(dl_non_zero)} 个）")
-    w("")
-    if dl_non_zero:
-        w("| 路径 | 本地存在 | cloud_mtime | local_mtime | meta_cloud | meta_local |")
-        w("|------|----------|-------------|-------------|------------|------------|")
-        for item in dl_non_zero:
-            info = meta.get_file_info(item.relative_path)
-            local_exists = os.path.exists(os.path.join(LOCAL_DIR, item.relative_path))
-            mc = info.get('cloud_mtime', 'N/A') if info else 'N/A'
-            ml = info.get('local_mtime', 'N/A') if info else 'N/A'
-            w(f"| `{item.relative_path}` | {local_exists} | {item.cloud_mtime} | "
-              f"{item.local_mtime} | {mc} | {ml} |")
+    nonzero = [(n, c, d) for n, c, d in dl_cats if c > 0]
+    if len(nonzero) == 1:
+        name, cnt, desc = nonzero[0]
+        w(f"### 下载来源分析")
         w("")
-    else:
-        w("无。")
+        w(f"> 全部 {cnt} 个下载文件均为：**{name}**（{desc}）")
         w("")
-
-    # 4.2 上传文件分析
-    up_files_all = [i for i in items if i.action == SyncAction.UPLOAD and not i.is_dir]
-    local_only_new = []
-    for item in up_files_all:
-        info = meta.get_file_info(item.relative_path)
-        local_only_new.append({
-            "path": item.relative_path,
-            "has_cloud_id": bool(info and info.get("file_id")),
-        })
-
-    pure_local = [f for f in local_only_new if not f["has_cloud_id"]]
-    has_cloud = [f for f in local_only_new if f["has_cloud_id"]]
-
-    w(f"### 4.2 上传文件来源分析")
-    w("")
-    w(f"- 纯本地（无 cloud_id）: {len(pure_local)}")
-    w(f"- 有 cloud_id: {len(has_cloud)}")
-    w("")
-
-    year_counts = Counter()
-    for f in pure_local:
-        parts = f["path"].split("/")
-        year = "unknown"
-        for part in parts:
-            if part.isdigit() and 2014 <= int(part) <= 2026:
-                year = part
-                break
-            if part.startswith("20") and len(part) == 4:
-                year = part
-                break
-        year_counts[year] += 1
-
-    w("**纯本地文件按年份分布：**")
-    w("")
-    w("| 年份 | 数量 |")
-    w("|------|------|")
-    for year in sorted(year_counts.keys()):
-        w(f"| {year} | {year_counts[year]} |")
-    w("")
-
-    # 4.3 上传目录分析
-    up_dirs = [i for i in items if i.action == SyncAction.UPLOAD and i.is_dir]
-    images_dirs = [d for d in up_dirs
-                   if d.relative_path.endswith(("/images", "/attachments"))]
-    other_dirs = [d for d in up_dirs
-                  if not d.relative_path.endswith(("/images", "/attachments"))]
-
-    w("### 4.3 上传目录分析")
-    w("")
-    w(f"- images/attachments 目录: {len(images_dirs)}")
-    w(f"- 其他目录: {len(other_dirs)}")
-    w("")
-    if other_dirs:
-        for d in other_dirs:
-            dir_id = meta.get_dir_id(d.relative_path)
-            w(f"  - `{d.relative_path}` (dir_id={'有' if dir_id else '无'})")
+    elif nonzero:
+        w("### 下载来源分析")
+        w("")
+        w("| 分类 | 数量 | 说明 |")
+        w("|------|------|------|")
+        for name, cnt, desc in dl_cats:
+            w(f"| {name} | {cnt} | {desc} |")
         w("")
 
     # ════════════════════════════════════════════
-    # 5. 上传/下载同名文件交叉检查
+    # 4. 上传/下载同名文件交叉检查
     # ════════════════════════════════════════════
-    w("## 5. 上传/下载同名文件交叉检查")
+    w("## 4. 上传/下载同名文件交叉检查")
     w("")
     w("> 检测上传列表和下载列表中文件名相同但路径不同的项。")
     w("> 这通常意味着同一文件在本地和云端被放到了不同目录，同步后会产生重复。")

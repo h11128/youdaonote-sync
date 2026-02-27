@@ -466,6 +466,37 @@ class YoudaoNoteApi(object):
         response = self.http_post(url, data=data)
         return self._safe_json(response)
 
+    def move_file(self, file_id: str, new_parent_id: str,
+                  domain: int = 1) -> dict:
+        """
+        移动笔记到另一个目录（只改 parentId，保留 file_id 和历史）。
+
+        :param file_id: 笔记 ID（不变）
+        :param new_parent_id: 目标目录的 ID
+        :param domain: 笔记类型，0=普通笔记，1=Markdown
+        :return: API 响应
+        """
+        if not file_id:
+            raise ValueError("file_id 不能为空")
+        if not new_parent_id:
+            raise ValueError("new_parent_id 不能为空")
+        self._require_auth()
+        now = int(time.time())
+        data = {
+            "fileId": file_id,
+            "parentId": new_parent_id,
+            "domain": domain,
+            "rootVersion": -1,
+            "sessionId": "",
+            "modifyTime": now,
+            "transactionId": file_id,
+            "transactionTime": now,
+            "cstk": self.cstk,
+        }
+        url = self.PUSH_URL.format(cstk=self.cstk)
+        response = self.http_post(url, data=data)
+        return self._safe_json(response)
+
     def delete_file(self, file_id: str) -> dict:
         """
         删除笔记（移到回收站）

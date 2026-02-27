@@ -119,6 +119,7 @@ class SyncMetadata:
             self._conn.commit()
             self._run_migrations()
             self._migrate_json_if_needed()
+            self._normalize_stored_paths()
         except Exception:
             self._conn.close()
             self._conn = None
@@ -198,6 +199,51 @@ class SyncMetadata:
             logging.info(f"JSON 元数据已迁移到 SQLite，旧文件: {backup}")
         except OSError:
             pass
+
+    _NORM_PATHS_FLAG = "paths_normalized_v1"
+
+    def _normalize_stored_paths(self) -> None:
+        """One-time migration: strip trailing whitespace from path stems.
+
+        map_cloud_name() now strips trailing spaces before the extension,
+        so metadata paths must match.  Also invalidates the cloud scan cache
+        to force a re-scan with the corrected path logic.
+        """
+        if self.get_state(self._NORM_PATHS_FLAG):
+            return
+
+        renamed = 0
+        for table in ("files", "directories"):
+            rows = self._conn.execute(
+                f"SELECT path FROM {table}"
+            ).fetchall()
+            for (old_path,) in rows:
+                parts = old_path.rsplit("/", 1)
+                basename = parts[-1] if len(parts) > 1 else parts[0]
+                prefix = parts[0] + "/" if len(parts) > 1 else ""
+                stem, ext = os.path.splitext(basename)
+                new_stem = stem.rstrip()
+                if new_stem == stem:
+                    continue
+                new_path = prefix + new_stem + ext
+                existing = self._conn.execute(
+                    f"SELECT 1 FROM {table} WHERE path = ?", (new_path,)
+                ).fetchone()
+                if existing:
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE path = ?", (old_path,))
+                else:
+                    self._conn.execute(
+                        f"UPDATE {table} SET path = ? WHERE path = ?",
+                        (new_path, old_path))
+                renamed += 1
+
+        self.set_state(self._NORM_PATHS_FLAG, "1")
+        if renamed > 0:
+            self.set_state("last_cloud_version", "0")
+            logging.info(
+                f"路径规范化迁移: 修正了 {renamed} 条路径，已失效扫描缓存")
+        self._conn.commit()
 
     def load(self) -> None:
         """兼容接口。SQLite 模式下数据始终在 DB 中，无需显式加载。"""
@@ -455,6 +501,24 @@ class SyncMetadata:
         with self._lock:
             path = self._normalize_path(local_path)
             self._conn.execute("DELETE FROM files WHERE path = ?", (path,))
+
+    def rename_path(self, old_path: str, new_path: str) -> bool:
+        """将文件元数据从旧路径迁移到新路径（用于云端 move 后更新记录）。
+
+        保留 file_id、content_hash、original_domain 等所有字段，只改 path。
+        如果旧路径不存在则返回 False。
+        """
+        with self._lock:
+            old_norm = self._normalize_path(old_path)
+            new_norm = self._normalize_path(new_path)
+            try:
+                cur = self._conn.execute(
+                    "UPDATE files SET path = ? WHERE path = ?",
+                    (new_norm, old_norm))
+                return cur.rowcount > 0
+            except sqlite3.IntegrityError:
+                self._conn.execute("DELETE FROM files WHERE path = ?", (old_norm,))
+                return False
 
     def clear_cloud_id(self, local_path: str) -> None:
         """清除文件的云端 ID（标记为纯本地记录，不再视为云端文件）。"""

@@ -33,11 +33,13 @@ def map_cloud_name(name: str) -> str:
 
     .note/.clip/无扩展名 → 加 .md 后缀（下载后会转成 markdown）。
     其他扩展名保持不变。
+    stem 部分去除尾部空格，与下载时 _optimize_file_name() 的 strip() 一致。
     """
-    _, ext = os.path.splitext(name)
+    stem, ext = os.path.splitext(name)
+    stem = stem.rstrip()
     if ext in (".note", ".clip") or ext == "":
-        return (name[:-len(ext)] if ext else name) + ".md"
-    return name
+        return stem + ".md"
+    return stem + ext
 
 
 def scan_cloud(api: "DirBrowser", dir_id: str, base: str = "",

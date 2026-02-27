@@ -630,6 +630,95 @@ class CalibrateMetadataBatchTest(unittest.TestCase):
             self.assertIsNotNone(info)
             self.assertEqual(info["file_id"], f"cloud_{i}")
 
+    def test_incomplete_entry_recalibrated(self):
+        """last_sync_at=0 且无 content_hash 的记录应被重新校准"""
+        from src.sync.decision import calibrate_metadata
+        local_dir = os.path.join(self.tmpdir, "notes")
+        os.makedirs(local_dir, exist_ok=True)
+
+        p = os.path.join(local_dir, "diary.md")
+        with open(p, "w") as f:
+            f.write("diary content")
+
+        # 模拟从云端扫描导入的不完整记录：file_id 有值，
+        # local_mtime 用了 cloud_mtime（1000），但没有 content_hash
+        self.meta.set_file_info("diary.md", file_id="F1",
+                                cloud_mtime=1000, local_mtime=1000)
+
+        actual_mtime = int(os.path.getmtime(p))
+        cloud_files = {
+            "diary.md": {"id": "F1", "mtime": 1000, "parent_id": "R",
+                         "domain": 1, "ctime": 900},
+        }
+        local_files = {
+            "diary.md": {"path": p, "mtime": actual_mtime, "is_dir": False},
+        }
+
+        count = calibrate_metadata(self.meta, cloud_files, local_files)
+        self.assertEqual(count, 1)
+
+        info = self.meta.get_file_info("diary.md")
+        self.assertEqual(info["local_mtime"], actual_mtime)
+        self.assertTrue(info.get("content_hash"))
+        self.assertGreater(info.get("last_sync_at", 0), 0)
+
+    def test_complete_entry_not_recalibrated(self):
+        """有 content_hash 的记录不应被重复校准"""
+        from src.sync.decision import calibrate_metadata
+        local_dir = os.path.join(self.tmpdir, "notes")
+        os.makedirs(local_dir, exist_ok=True)
+
+        p = os.path.join(local_dir, "ok.md")
+        with open(p, "w") as f:
+            f.write("ok content")
+
+        self.meta.set_file_info("ok.md", file_id="F2",
+                                cloud_mtime=1000, local_mtime=1000,
+                                content_hash="abc123")
+
+        cloud_files = {
+            "ok.md": {"id": "F2", "mtime": 1000, "parent_id": "R",
+                      "domain": 1, "ctime": 900},
+        }
+        local_files = {
+            "ok.md": {"path": p, "mtime": 2000, "is_dir": False},
+        }
+
+        count = calibrate_metadata(self.meta, cloud_files, local_files)
+        self.assertEqual(count, 0)
+
+        info = self.meta.get_file_info("ok.md")
+        self.assertEqual(info["local_mtime"], 1000)
+        self.assertEqual(info["content_hash"], "abc123")
+
+    def test_synced_entry_not_recalibrated(self):
+        """last_sync_at > 0 的记录不应被重复校准（即使无 hash）"""
+        from src.sync.decision import calibrate_metadata
+        local_dir = os.path.join(self.tmpdir, "notes")
+        os.makedirs(local_dir, exist_ok=True)
+
+        p = os.path.join(local_dir, "synced.md")
+        with open(p, "w") as f:
+            f.write("synced content")
+
+        self.meta.set_file_info("synced.md", file_id="F3",
+                                cloud_mtime=1000, local_mtime=1000)
+        self.meta.mark_synced("synced.md", ts=999)
+
+        cloud_files = {
+            "synced.md": {"id": "F3", "mtime": 1000, "parent_id": "R",
+                          "domain": 1, "ctime": 900},
+        }
+        local_files = {
+            "synced.md": {"path": p, "mtime": 2000, "is_dir": False},
+        }
+
+        count = calibrate_metadata(self.meta, cloud_files, local_files)
+        self.assertEqual(count, 0)
+
+        info = self.meta.get_file_info("synced.md")
+        self.assertEqual(info["local_mtime"], 1000)
+
 
 # ========== Integration: sync_log in _record_file_change =========
 

@@ -58,7 +58,9 @@ def calibrate_metadata(
                         cloud_mtime=cloud["mtime"],
                     )
                     calibrated += 1
-                continue
+                if meta.get("content_hash") or meta.get("last_sync_at", 0) > 0:
+                    continue
+                # 不完整记录（从云端扫描/桌面导入但未真正同步）→ 落入完整校准
 
             local_path = local["path"]
             content_hash = (hash_cache.get(local_path) if hash_cache else None) \

@@ -10,9 +10,19 @@ import re
 import shutil
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from src.sync.metadata import SyncMetadata
+
+
+@dataclass
+class PendingMove:
+    """跨目录移动：保留 file_id 在云端直接 move，而非 upload+delete。"""
+    file_id: str
+    old_cloud_path: str
+    new_local_path: str
+    domain: int = 1
 from src.sync.utils import compute_content_hash
 
 
@@ -27,7 +37,8 @@ def normalize_filename(name: str) -> str:
     name = name.replace('\n', '').replace('\r', '')
     name = name.lstrip('\u3000')  # 全角空格
     name = re.sub(r' {2,}', ' ', name)  # 去特殊字符后可能留下连续空格
-    name = name.strip()
+    stem, ext = os.path.splitext(name)
+    name = stem.strip() + ext.strip()
     return name
 
 
@@ -289,7 +300,7 @@ def _detect_cross_dir_duplicates(
 
     # ── 第 5 步：根据时间戳决定方向 ──
     count = 0
-    pending_deletes: List[Tuple[str, str, str]] = []  # (file_id, old_cloud_path, new_local_path)
+    pending_deletes: List[PendingMove] = []
 
     for local_path, cloud_path, reason in matched:
         local_mtime = local_files[local_path].get("mtime", 0)
@@ -297,16 +308,16 @@ def _detect_cross_dir_duplicates(
         local_wins = local_mtime >= cloud_mtime
 
         if local_wins:
-            # 本地路径更新 → 保留本地路径（将作为 UPLOAD），旧云端文件排队删除
+            # 本地路径更新 → engine 会先尝试 API move，失败再 fallback 到 upload+delete
             logging.info(f"跨目录移动(本地新): {cloud_path} → {local_path} ({reason})")
-            old_fid = cloud_files[cloud_path].get("id", "")
+            ci = cloud_files[cloud_path]
+            old_fid = ci.get("id", "")
+            domain = ci.get("domain", 1)
             if old_fid:
-                pending_deletes.append((old_fid, cloud_path, local_path))
-            cloud_files.pop(cloud_path)  # 从 cloud_files 移除，防止 build_item 生成 DOWNLOAD
+                pending_deletes.append(PendingMove(old_fid, cloud_path, local_path, domain))
+            cloud_files.pop(cloud_path)
             only_cloud.discard(cloud_path)
-            # local_path 留在 only_local → engine 会正常上传
-            if not dry_run:
-                metadata.remove_file_info(cloud_path)
+            # local_path 留在 only_local → engine fallback 时用作 UPLOAD
         else:
             # 云端路径更新 → 本地跟随云端（移动本地文件到云端路径）
             logging.info(f"跨目录移动(云端新): {local_path} → {cloud_path} ({reason})")
@@ -411,7 +422,7 @@ def reconcile_moves(
     local_dir: str,
     dry_run: bool = False,
     hash_cache: Optional[Dict[str, str]] = None,
-) -> List[Tuple[str, str, str]]:
+) -> List[PendingMove]:
     """检测并处理文件移动/重命名（编排层）。
 
     三阶段检测：
@@ -422,7 +433,7 @@ def reconcile_moves(
        云端更新 → 本地跟随云端路径
 
     :param hash_cache: 可选的 abs_path → hash 缓存，避免重复计算
-    :return: [(file_id, old_cloud_path, new_local_path), ...] 待删除的旧云端文件
+    :return: [(file_id, old_cloud_path, new_local_path, domain), ...] 待移动的云端文件
     """
     cloud_id_to_path = {
         ci["id"]: cp

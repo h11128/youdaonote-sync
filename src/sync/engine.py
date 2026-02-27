@@ -38,7 +38,7 @@ from src.sync.utils import (
 )
 from src.sync.scanner import async_scan_cloud, scan_local, matches_selective, map_cloud_name
 from src.sync.decision import calibrate_metadata, build_item
-from src.sync.moves import reconcile_moves, discard_orphan_duplicates
+from src.sync.moves import reconcile_moves, discard_orphan_duplicates, PendingMove
 
 _STATE_CLOUD_VERSION = "last_cloud_version"
 _STATE_SCAN_TIME = "last_scan_time"
@@ -160,7 +160,8 @@ class SyncManager:
         self._meta_dirty = 0
         self._git = git or GitHelper(local_dir)
         self._hash_cache: Dict[str, str] = {}  # abs_path → content_hash
-        self._pending_deletes: List[tuple] = []  # [(file_id, old_cloud_path, new_local_path), ...]
+        self._pending_moves: List[PendingMove] = []
+        self._failed_moves: List[PendingMove] = []
         self._uploaded_paths: set = set()  # 成功上传的 rel_path 集合
 
     # ========== 内部辅助 ==========
@@ -285,8 +286,8 @@ class SyncManager:
             f"错误={self.stats['errors']}"
         )
 
-        if not dry_run and self._pending_deletes:
-            self._cleanup_old_cloud_files()
+        if not dry_run and self._failed_moves:
+            self._fallback_delete_old_files()
 
         has_file_changes = self.stats["downloaded"] > 0 or self.stats["uploaded"] > 0
         dedup_deleted_paths: List[str] = []
@@ -314,6 +315,10 @@ class SyncManager:
                 print_preview(item)
             print_dryrun_summary(all_items)
         else:
+            if self._pending_moves:
+                moved = self._execute_cloud_moves()
+                if moved:
+                    items = [i for i in items if i.relative_path not in moved]
             await self._async_execute_all(items, direction)
 
     def _run_dedup(self, dry_run: bool = False) -> Dict:
@@ -332,31 +337,64 @@ class SyncManager:
             logging.error(f"去重扫描失败: {e}")
             return {}
 
-    def _cleanup_old_cloud_files(self) -> None:
-        """删除跨目录移动后遗留的旧云端文件。
+    def _execute_cloud_moves(self) -> set:
+        """通过 API 移动云端文件（保留 file_id 和历史），返回成功移动的 new_local_path 集合。
 
-        只有对应的新路径上传成功后才删除旧云端文件，否则跳过以防止数据丢失。
+        失败的移动会存入 _failed_moves，后续由 upload+delete 流程兜底。
         """
-        for file_id, old_cloud_path, new_local_path in self._pending_deletes:
-            if new_local_path not in self._uploaded_paths:
-                logging.warning(
-                    f"跳过删除旧云端文件(对应上传未成功): "
-                    f"{old_cloud_path} ({file_id}), 期望上传={new_local_path}")
+        moved_paths = set()
+        for m in self._pending_moves:
+            new_parent_id = self.uploader.ensure_parent_dir(m.new_local_path)
+            if not new_parent_id:
+                logging.warning(f"云端移动失败(无法解析目标目录): {m.old_cloud_path} → {m.new_local_path}")
+                self._failed_moves.append(m)
                 continue
             try:
-                self.api.delete_file(file_id)
-                self.metadata.remove_file_info(old_cloud_path)
-                logging.info(f"已删除旧云端文件: {old_cloud_path} ({file_id})")
+                self.api.move_file(m.file_id, new_parent_id, m.domain)
+
+                old_name = os.path.basename(m.old_cloud_path)
+                new_name = os.path.basename(m.new_local_path)
+                if old_name != new_name:
+                    self.api.rename_file(m.file_id, new_name, m.domain)
+
+                self.metadata.rename_path(m.old_cloud_path, m.new_local_path)
+                self.metadata.mark_synced(m.new_local_path)
+
+                local_abs = os.path.join(self.local_dir, m.new_local_path)
+                if os.path.exists(local_abs):
+                    actual_mtime = int(os.path.getmtime(local_abs))
+                    self.metadata.update_local_mtime(m.new_local_path, actual_mtime)
+
+                moved_paths.add(m.new_local_path)
+                logging.info(f"云端移动完成: {m.old_cloud_path} → {m.new_local_path} (file_id={m.file_id})")
             except Exception as e:
-                logging.error(f"删除旧云端文件失败: {old_cloud_path} ({file_id}) - {e}")
-        self._pending_deletes = []
+                logging.warning(f"云端移动失败(回退到上传+删除): {m.old_cloud_path} → {m.new_local_path} - {e}")
+                self._failed_moves.append(m)
+        return moved_paths
+
+    def _fallback_delete_old_files(self) -> None:
+        """upload+delete 兜底：对 move API 失败的文件，在新文件上传成功后删除旧云端文件。"""
+        for m in self._failed_moves:
+            if m.new_local_path not in self._uploaded_paths:
+                logging.warning(
+                    f"跳过删除旧云端文件(对应上传未成功): "
+                    f"{m.old_cloud_path} ({m.file_id}), 期望上传={m.new_local_path}")
+                continue
+            try:
+                self.api.delete_file(m.file_id)
+                self.metadata.remove_file_info(m.old_cloud_path)
+                logging.info(f"已删除旧云端文件(兜底): {m.old_cloud_path} ({m.file_id})")
+            except Exception as e:
+                logging.error(f"删除旧云端文件失败: {m.old_cloud_path} ({m.file_id}) - {e}")
+        self._failed_moves = []
 
     def collect_items(self, cloud_dir_id: str, cloud_path: str = "",
                       dry_run: bool = False) -> List[SyncItem]:
         """同步版收集差异项（供 dry-run 报告等外部工具使用）"""
         self._hash_cache = {}
         self._local_files = None
-        self._pending_deletes = []
+        self._pending_moves = []
+        self._failed_moves = []
         return asyncio.run(self._async_collect_items(
             cloud_dir_id, cloud_path, dry_run))
 
@@ -375,6 +413,8 @@ class SyncManager:
         for path, info in all_files.items():
             fid = info.get("file_id")
             if not fid:
+                continue
+            if ".conflict." in os.path.basename(path):
                 continue
             cloud_files[path] = {
                 "id": fid,
@@ -582,6 +622,9 @@ class SyncManager:
                           if matches_selective(k, self._sync_include,
                                                self._sync_exclude)}
 
+        cloud_files = {k: v for k, v in cloud_files.items()
+                       if ".conflict." not in os.path.basename(k)}
+
         calibrate_metadata(self.metadata, cloud_files, local_files,
                            hash_cache=self._hash_cache)
         pre_move_keys = set(cloud_files.keys()) | set(local_files.keys())
@@ -596,7 +639,7 @@ class SyncManager:
             affected_local = {k: v for k, v in local_files.items() if k in changed_keys}
             calibrate_metadata(self.metadata, affected_cloud, affected_local,
                                hash_cache=self._hash_cache)
-        self._pending_deletes = pending_deletes
+        self._pending_moves = pending_deletes
         self._local_files = local_files
 
         # Phase 2a: parallel hash warmup for files that need comparison
