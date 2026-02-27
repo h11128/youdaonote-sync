@@ -42,6 +42,16 @@ class FilePusher(Protocol):
         modify_time: int = ...,
         is_create: bool = ...,
     ) -> dict: ...
+    def push_binary_file(
+        self,
+        file_id: str,
+        parent_id: str,
+        name: str,
+        file_bytes: bytes,
+        create_time: int = ...,
+        modify_time: int = ...,
+        is_create: bool = ...,
+    ) -> dict: ...
     def create_dir(self, parent_id: str, name: str) -> dict: ...
 
 

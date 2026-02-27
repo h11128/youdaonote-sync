@@ -108,7 +108,7 @@ class YoudaoNoteUpload:
         rel_path = relative_path or file_name
         suffix = os.path.splitext(file_name)[1].lower()
 
-        handler_name = self._UPLOAD_HANDLERS.get(suffix, "_upload_markdown")
+        handler_name = self._UPLOAD_HANDLERS.get(suffix, "_upload_auto")
         handler = getattr(self, handler_name)
         return handler(local_path, parent_id, rel_path, force)
 
@@ -198,6 +198,8 @@ class YoudaoNoteUpload:
         try:
             with open(local_path, "r", encoding="utf-8") as f:
                 content = f.read()
+        except UnicodeDecodeError as e:
+            return False, f"[BINARY]{e}"
         except Exception as e:
             return False, f"读取文件失败: {e}"
 
@@ -242,6 +244,76 @@ class YoudaoNoteUpload:
         return self._push_and_record(
             file_info, note_name, NoteDomain.NOTE, note_json,
             parent_id, relative_path, local_mtime)
+
+    def _upload_auto(
+        self,
+        local_path: str,
+        parent_id: str,
+        relative_path: str,
+        force: bool = False,
+    ) -> Tuple[bool, Optional[str]]:
+        """未知后缀：先尝试文本上传，编码失败则回退到二进制。"""
+        ok, err = self._upload_markdown(local_path, parent_id, relative_path, force)
+        if not ok and err and err.startswith("[BINARY]"):
+            return self._upload_binary(local_path, parent_id, relative_path, force)
+        return ok, err
+
+    def _upload_binary(
+        self,
+        local_path: str,
+        parent_id: str,
+        relative_path: str,
+        force: bool = False,
+    ) -> Tuple[bool, Optional[str]]:
+        """上传二进制文件（PDF、图片等）via multipart。"""
+        file_name = os.path.basename(local_path)
+        local_mtime = int(os.path.getmtime(local_path))
+
+        skip, file_info = self._check_skip(relative_path, local_mtime, force)
+        if skip:
+            return True, None
+
+        try:
+            with open(local_path, "rb") as f:
+                file_bytes = f.read()
+        except Exception as e:
+            return False, f"读取二进制文件失败: {e}"
+
+        if file_info and file_info.get("file_id"):
+            file_id = file_info["file_id"]
+            is_create = False
+            logging.info(f"更新(二进制): {relative_path}")
+        else:
+            file_id = generate_file_id()
+            is_create = True
+            logging.info(f"创建(二进制): {relative_path}")
+
+        try:
+            result = self.api.push_binary_file(
+                file_id=file_id,
+                parent_id=parent_id,
+                name=file_name,
+                file_bytes=file_bytes,
+                is_create=is_create,
+            )
+
+            if "entry" in result:
+                cloud_mtime = result["entry"].get("modifyTimeForSort", local_mtime)
+                self.metadata.set_file_info(
+                    local_path=relative_path,
+                    file_id=file_id,
+                    cloud_mtime=cloud_mtime,
+                    local_mtime=local_mtime,
+                    parent_id=parent_id,
+                    domain=NoteDomain.MARKDOWN,
+                )
+                logging.info(f"上传成功(二进制): {relative_path}")
+                return True, None
+            else:
+                error_msg = result.get("error", str(result))
+                return False, f"上传失败(二进制): {error_msg}"
+        except (OSError, RuntimeError) as e:
+            return False, f"上传异常(二进制): {e}"
 
     def upload_folder(
         self,

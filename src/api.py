@@ -1,5 +1,6 @@
 import json
 import logging
+import mimetypes
 import os
 import time
 import uuid
@@ -430,6 +431,62 @@ class YoudaoNoteApi(object):
 
         url = self.PUSH_URL.format(cstk=self.cstk)
         response = self.http_post(url, data=data)
+        return self._safe_json(response)
+
+    def push_binary_file(
+        self,
+        file_id: str,
+        parent_id: str,
+        name: str,
+        file_bytes: bytes,
+        create_time: int = None,
+        modify_time: int = None,
+        is_create: bool = False,
+    ) -> dict:
+        """
+        上传二进制文件（PDF、图片等）via multipart/form-data。
+
+        与 push_file 共用 PUSH_URL，但用 multipart file 字段代替 bodyString。
+        """
+        if not file_id:
+            raise ValueError("file_id 不能为空")
+        if not parent_id:
+            raise ValueError("parent_id 不能为空")
+        if not name:
+            raise ValueError("name 不能为空")
+        self._require_auth()
+        now = int(time.time())
+        create_time = create_time or now
+        modify_time = modify_time or now
+
+        data = {
+            "fileId": file_id,
+            "parentId": parent_id,
+            "domain": NoteDomain.MARKDOWN,
+            "rootVersion": -1,
+            "sessionId": "",
+            "modifyTime": modify_time,
+            "transactionId": file_id,
+            "transactionTime": modify_time,
+            "cstk": self.cstk,
+            "tags": "",
+            "resources": ";",
+        }
+
+        if is_create:
+            data["name"] = name
+            data["dir"] = "false"
+            data["createTime"] = create_time
+            data["req_from"] = "create"
+        else:
+            data["req_from"] = "save"
+
+        mime, _ = mimetypes.guess_type(name)
+        mime = mime or "application/octet-stream"
+
+        url = self.PUSH_URL.format(cstk=self.cstk)
+        files = {"file": (name, file_bytes, mime)}
+        response = self.http_post(url, data=data, files=files)
         return self._safe_json(response)
 
     def rename_file(self, file_id: str, new_name: str, domain: int = 1) -> dict:
