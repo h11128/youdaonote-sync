@@ -77,8 +77,8 @@ def _detect_cloud_moves(
 
         if not dry_run:
             ci = cloud_files[cloud_new]
-            metadata.set_file_info(
-                local_path=cloud_new,
+            metadata.record_sync(
+                cloud_new,
                 file_id=fid,
                 cloud_mtime=ci["mtime"],
                 local_mtime=local_files[cloud_new]["mtime"],
@@ -86,6 +86,8 @@ def _detect_cloud_moves(
                 domain=ci["domain"],
                 content_hash=fmeta.get("content_hash"),
                 create_time=ci["ctime"],
+                action="moved",
+                direction="pull",
             )
             if local_rel != cloud_new:
                 metadata.remove_file_info(local_rel)
@@ -332,8 +334,8 @@ def _detect_cross_dir_duplicates(
 
             if not dry_run:
                 ci = cloud_files[cloud_path]
-                metadata.set_file_info(
-                    local_path=cloud_path,
+                metadata.record_sync(
+                    cloud_path,
                     file_id=FileId(ci["id"]),
                     cloud_mtime=ci["mtime"],
                     local_mtime=local_info["mtime"],
@@ -341,6 +343,8 @@ def _detect_cross_dir_duplicates(
                     domain=ci["domain"],
                     content_hash=local_hash_map.get(local_path),
                     create_time=ci["ctime"],
+                    action="moved",
+                    direction="pull",
                 )
 
         count += 1

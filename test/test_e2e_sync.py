@@ -18,6 +18,7 @@ import httpx
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.sync.engine import SyncManager, SyncDirection
+from src.sync.utils import UploadResult, DirId
 from src.sync.metadata import SyncMetadata
 
 
@@ -85,7 +86,14 @@ class MockUploader:
             "local_path": local_path, "parent_id": parent_id,
             "rel_path": rel_path,
         })
-        return True, None
+        local_mtime = int(os.path.getmtime(local_path)) if os.path.exists(local_path) else 0
+        return True, UploadResult(
+            file_id=f"FID_{os.path.basename(local_path)}",
+            cloud_mtime=local_mtime,
+            local_mtime=local_mtime,
+            parent_id=DirId(parent_id),
+            domain=1,
+        )
 
     def ensure_cloud_dir(self, dir_name, parent_id, relative_path,
                          defer_save=False):

@@ -6,11 +6,14 @@
 
 - 📥 全量导出笔记（支持增量更新）
 - 🔄 双向同步（本地 ↔ 云端）
+- 👀 自动同步模式（持续监听文件变化）
 - 📝 自动转换 XML/JSON 格式为 Markdown
 - 🖼️ 下载图片到本地或上传到图床
+- 🔍 智能去重（自动清理云端重复文件）
+- 📦 Git 自动提交（同步后自动 commit）
 - 🖥️ GUI 图形界面
 - ⌨️ CLI 命令行工具
-- 🔍 搜索笔记功能
+- 🔎 搜索笔记功能
 
 ## 安装
 
@@ -25,7 +28,13 @@ pip install youdaonote-sync[full]
 ```bash
 git clone https://github.com/DeppWang/youdaonote-sync.git
 cd youdaonote-sync
-pip install -r requirements.txt
+pip install -e ".[full]"
+```
+
+安装 Playwright 浏览器（用于自动登录）：
+
+```bash
+playwright install chromium
 ```
 
 ## 快速开始
@@ -36,8 +45,6 @@ pip install -r requirements.txt
 # 自动登录（会弹出浏览器，扫码或输入账号登录）
 python -m src login
 ```
-
-> 首次运行前需安装 Playwright：`pip install playwright && playwright install chromium`
 
 ### 2. 导出笔记
 
@@ -58,6 +65,9 @@ python -m src pull --ydnote-dir 工作笔记
 # 双向同步（云端和本地互相更新）
 python -m src sync
 
+# 自动同步模式（持续监听文件变化 + 定时轮询云端）
+python -m src sync --watch
+
 # 只上传（本地 → 云端）
 python -m src sync --push
 
@@ -69,6 +79,12 @@ python -m src sync --dry-run
 
 # 指定同步目录
 python -m src sync --dir E:/Projects/notes
+
+# 不自动 git commit
+python -m src sync --no-git
+
+# 不自动去重
+python -m src sync --no-dedup
 ```
 
 同步规则：
@@ -76,6 +92,7 @@ python -m src sync --dir E:/Projects/notes
 - 只有云端有的文件 → 下载到本地
 - 两边都有且有修改 → 较新的版本覆盖较旧的
 - 支持 Markdown 和普通笔记格式
+- 自动检测并清理云端重复文件
 
 ### 4. 其他命令
 
@@ -85,6 +102,9 @@ python -m src gui
 
 # 列出目录结构
 python -m src list
+
+# 列出指定目录（深度 3 层）
+python -m src list 工作笔记 --depth 3
 
 # 搜索笔记
 python -m src search 关键词
@@ -112,11 +132,17 @@ python -m src download 关键词
 │   │   └── controller.py   # GUI 业务逻辑
 │   ├── sync/               # 同步引擎
 │   │   ├── engine.py       # 同步主流程
-│   │   ├── scanner.py      # 文件扫描
-│   │   ├── decision.py     # 同步决策
+│   │   ├── scanner.py      # 文件扫描（本地 + 云端）
+│   │   ├── decision.py     # 同步决策（冲突解决）
 │   │   ├── moves.py        # 移动/重命名检测
-│   │   ├── dedup.py        # 去重逻辑
-│   │   ├── metadata.py     # 同步元数据管理
+│   │   ├── dedup.py        # 云端去重逻辑
+│   │   ├── metadata.py     # 同步元数据管理（SQLite）
+│   │   ├── merkle.py       # Merkle Tree 快速变更检测
+│   │   ├── bloom.py        # Bloom Filter 快速查找
+│   │   ├── rolling_hash.py # 滚动哈希（内容相似度检测）
+│   │   ├── git_helper.py   # Git 自动提交
+│   │   ├── merge.py        # 冲突合并
+│   │   ├── desktop_data.py # 桌面客户端数据解析
 │   │   └── utils.py        # 同步工具函数（枚举、数据类、哈希）
 │   ├── transfer/           # 传输模块
 │   │   ├── download.py     # 下载引擎（单文件下载 + 类型检测）
@@ -126,13 +152,18 @@ python -m src download 关键词
 │   │   ├── image.py        # 图片下载/链接迁移
 │   │   └── image_upload.py # 图片上传到外部图床（SM.MS）
 │   └── convert/            # 格式转换
-│       ├── note_convert.py # 云端格式 → Markdown
+│       ├── note_convert.py # 云端格式 → Markdown（统一入口）
+│       ├── xml_convert.py  # XML 格式解析
+│       ├── json_convert.py # JSON 格式解析
 │       └── md_to_note.py   # Markdown → 有道 JSON
 ├── config/                 # 配置文件
 │   ├── cookies.json        # 登录凭证（自动生成）
 │   ├── config.json         # 导出配置
-│   └── sync_metadata.json  # 同步元数据（自动生成）
-└── tools/                  # 辅助工具
+│   └── sync_metadata.db    # 同步元数据（SQLite，自动生成）
+├── tools/                  # 辅助工具
+│   ├── cli/                # 命令行辅助工具
+│   └── debug/              # 调试诊断工具
+└── test/                   # 测试用例
 ```
 
 ## 配置文件
@@ -163,20 +194,28 @@ python -m src --help
   download   搜索并下载
 
 # pull 参数
-  --dir, -d       导出目录（默认: ./youdaonote-sync）
+  --dir, -d         导出目录（默认: ./youdaonote-sync）
   --ydnote-dir, -y  只导出有道云中的指定目录
 
 # sync 参数
-  --dir, -d       本地同步目录（默认从配置读取）
-  --push          只上传（本地 → 云端）
-  --pull          只下载（云端 → 本地）
-  --dry-run       预览模式（不执行实际操作）
+  --dir, -d         本地同步目录（默认从配置读取）
+  --push            只上传（本地 → 云端）
+  --pull            只下载（云端 → 本地）
+  --dry-run         预览模式（不执行实际操作）
+  --watch, -w       自动同步模式（监听文件变化 + 定时轮询）
+  --interval, -i    云端轮询间隔秒数（默认 60）
+  --no-git          不自动 git commit
+  --no-dedup        不自动去重
+
+# list 参数
+  path              目录路径（可选）
+  --depth, -n       显示深度（默认: 2）
 
 # search/download 参数
-  keyword         搜索关键词
-  --type, -t      搜索类型 (all/folder/file)
-  --exact, -e     精确匹配
-  --dir, -d       下载目录
+  keyword           搜索关键词
+  --type, -t        搜索类型 (all/folder/file)
+  --exact, -e       精确匹配
+  --dir, -d         下载目录
 ```
 
 ## 常见问题
@@ -195,13 +234,33 @@ python -m src login
 # 安装完整依赖
 pip install youdaonote-sync[full]
 
-# 或手动安装
-pip install playwright && playwright install chromium
+# 安装 Playwright 浏览器
+playwright install chromium
 ```
 
 ### GUI 启动失败
 
 确保系统已安装 tkinter（Python 自带，通常无需额外安装）。
+
+### 同步冲突
+
+当本地和云端都有修改时，默认使用较新版本覆盖较旧版本。使用 `--dry-run` 预览同步操作：
+
+```bash
+python -m src sync --dry-run
+```
+
+### 自动同步模式
+
+使用 `--watch` 模式可以持续监听文件变化并自动同步：
+
+```bash
+# 默认 60 秒轮询一次云端
+python -m src sync --watch
+
+# 自定义轮询间隔（120 秒）
+python -m src sync --watch --interval 120
+```
 
 ## 开发
 
@@ -215,6 +274,16 @@ pytest test/
 # 格式化代码
 black src/
 ```
+
+## 依赖说明
+
+| 依赖 | 用途 | 安装方式 |
+|------|------|----------|
+| httpx | HTTP 客户端 | 核心依赖 |
+| markdownify | HTML → Markdown | 核心依赖 |
+| playwright | 自动登录 | `[login]` 或 `[full]` |
+| watchdog | 文件监听 | `[watch]` 或 `[full]` |
+| win32-setctime | Windows 文件时间 | `[windows]` 或 `[full]` |
 
 ## License
 

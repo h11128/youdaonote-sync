@@ -32,7 +32,7 @@ from dataclasses import replace as dc_replace
 from src.sync.utils import (
     SyncDirection, SyncAction, SyncItem,          # noqa: F401 — re-exported
     CloudFileInfo, LocalFileInfo, SyncStats, DedupStats,
-    FileId, DirId, ContentHash,
+    FileId, DirId, ContentHash, UploadResult,
     filter_by_direction, empty_stats,
     print_preview, print_dryrun_summary, backup_file,
     compute_content_hash, compute_hash_from_bytes,
@@ -185,44 +185,57 @@ class SyncManager:
             self.metadata.save()
             self._meta_dirty = 0
 
-    def _record_file_change(self, item: SyncItem, stat_key: str,
-                            local_mtime: int = None,
-                            content_hash: ContentHash = None) -> None:
-        """记录一次文件同步成功：更新元数据 + 统计 + 变动列表 + 操作日志。"""
+    def _record_file_change(
+        self,
+        item: SyncItem,
+        stat_key: str,
+        local_mtime: Optional[int] = None,
+        content_hash: Optional[ContentHash] = None,
+        upload_result: Optional[UploadResult] = None,
+    ) -> None:
+        """Record a successful sync via the single ``metadata.record_sync`` entry point."""
         old_hash = None
         meta = self.metadata.get_file_info(item.relative_path)
         if meta:
             old_hash = meta.get("content_hash")
 
-        if stat_key == "downloaded":
-            self.metadata.set_file_info(
-                item.relative_path, FileId(item.cloud_id), item.cloud_mtime,
-                local_mtime, item.cloud_parent_id, item.domain,
-                content_hash=content_hash,
-                create_time=item.cloud_ctime,
-            )
-            if item.domain is not None:
-                self.metadata.set_original_domain(item.relative_path, item.domain)
-        elif stat_key == "uploaded" and content_hash:
-            self.metadata.update_content_hash(
-                item.relative_path, content_hash)
-
-        # Phase 2b: cache cloud hash on successful sync
-        if content_hash:
-            self.metadata.set_cloud_content_hash(item.relative_path, content_hash)
-
-        self.metadata.mark_synced(item.relative_path)
-
-        # Phase 2d: sync operation log
         direction = "pull" if stat_key == "downloaded" else "push"
-        self.metadata.log_sync_action(
-            path=item.relative_path,
-            action=stat_key,
-            direction=direction,
-            old_hash=old_hash,
-            new_hash=content_hash,
-            cloud_id=item.cloud_id,
-        )
+
+        if stat_key == "downloaded":
+            self.metadata.record_sync(
+                item.relative_path,
+                file_id=FileId(item.cloud_id),
+                cloud_mtime=item.cloud_mtime,
+                local_mtime=local_mtime or 0,
+                parent_id=item.cloud_parent_id,
+                domain=item.domain,
+                content_hash=content_hash,
+                cloud_content_hash=content_hash,
+                original_domain=item.domain,
+                create_time=item.cloud_ctime,
+                action=stat_key,
+                direction=direction,
+                old_hash=old_hash,
+            )
+        elif stat_key == "uploaded":
+            if not upload_result:
+                logging.error(
+                    "_record_file_change called for upload without UploadResult: %s",
+                    item.relative_path)
+                return
+            self.metadata.record_sync(
+                item.relative_path,
+                file_id=upload_result.file_id,
+                cloud_mtime=upload_result.cloud_mtime,
+                local_mtime=upload_result.local_mtime,
+                parent_id=upload_result.parent_id,
+                domain=upload_result.domain,
+                content_hash=content_hash,
+                cloud_content_hash=content_hash,
+                action=stat_key,
+                direction=direction,
+                old_hash=old_hash,
+            )
 
         with self._lock:
             if stat_key == "uploaded":
@@ -274,6 +287,9 @@ class SyncManager:
         self._hash_cache = {}
         self._local_files = None
         self._uploaded_paths = set()
+
+        if not dry_run:
+            self.metadata.heal(self.local_dir, auto_fix=True)
 
         try:
             asyncio.run(self._async_main(cloud_dir_id, cloud_path, direction, dry_run))
@@ -361,12 +377,22 @@ class SyncManager:
                     self.api.rename_file(m.file_id, new_name, m.domain)
 
                 self.metadata.rename_path(m.old_cloud_path, m.new_local_path)
-                self.metadata.mark_synced(m.new_local_path)
 
                 local_abs = os.path.join(self.local_dir, m.new_local_path)
-                if os.path.exists(local_abs):
-                    actual_mtime = int(os.path.getmtime(local_abs))
-                    self.metadata.update_local_mtime(m.new_local_path, actual_mtime)
+                local_mtime = (int(os.path.getmtime(local_abs))
+                               if os.path.exists(local_abs) else 0)
+                cloud_mtime = int(time.time())
+
+                self.metadata.record_sync(
+                    m.new_local_path,
+                    file_id=m.file_id,
+                    cloud_mtime=cloud_mtime,
+                    local_mtime=local_mtime,
+                    parent_id=new_parent_id,
+                    domain=m.domain,
+                    action="moved",
+                    direction="push",
+                )
 
                 moved_paths.add(m.new_local_path)
                 logging.info(f"云端移动完成: {m.old_cloud_path} → {m.new_local_path} (file_id={m.file_id})")
@@ -870,7 +896,7 @@ class SyncManager:
             try:
                 local_mtime = int(os.stat(item.local_path).st_mtime)
             except OSError:
-                local_mtime = item.cloud_mtime
+                local_mtime = item.cloud_mtime or int(time.time())
             content_hash = compute_content_hash(item.local_path)
             if content_hash:
                 with self._lock:
@@ -918,14 +944,19 @@ class SyncManager:
             self._record_error(item.relative_path, "无法确定云端父目录")
             return
 
-        ok, err = retry_with_backoff(lambda: self.uploader.upload_file(
+        ok, result = retry_with_backoff(lambda: self.uploader.upload_file(
             item.local_path, parent_id, item.relative_path, force=True))
         if ok:
-            self._record_file_change(
-                item, "uploaded", content_hash=content_hash)
-            logging.info(f"上传完成: {item.relative_path}")
+            if isinstance(result, UploadResult):
+                self._record_file_change(
+                    item, "uploaded", content_hash=content_hash,
+                    upload_result=result)
+                logging.info(f"上传完成: {item.relative_path}")
+            else:
+                self._inc_stat("skipped")
+                logging.info(f"上传跳过(非实际上传): {item.relative_path}")
         else:
-            self._record_error(item.relative_path, f"上传失败 - {err}")
+            self._record_error(item.relative_path, f"上传失败 - {result}")
 
     def _do_conflict(self, item: SyncItem,
                      direction: SyncDirection) -> None:
@@ -1007,19 +1038,22 @@ class SyncManager:
         self.metadata.save_base_content(
             item.relative_path, merged_bytes, content_hash or "")
 
-        # 合并结果必须上传到云端，否则云端仍是旧版本导致永久分歧
         parent_id = (item.cloud_parent_id
                      or self.uploader.ensure_parent_dir(item.relative_path))
         if parent_id:
-            ok, err = retry_with_backoff(lambda: self.uploader.upload_file(
+            ok, result = retry_with_backoff(lambda: self.uploader.upload_file(
                 item.local_path, parent_id, item.relative_path, force=True))
-            if ok:
+            if ok and isinstance(result, UploadResult):
                 self._record_file_change(
-                    item, "uploaded", content_hash=content_hash)
+                    item, "uploaded", content_hash=content_hash,
+                    upload_result=result)
                 logging.info(f"diff3 合并+上传完成: {item.relative_path}")
                 return True
+            elif ok:
+                logging.error(f"diff3 合并后上传被跳过: {item.relative_path}")
+                return False
             else:
-                logging.error(f"diff3 合并后上传失败: {item.relative_path} - {err}")
+                logging.error(f"diff3 合并后上传失败: {item.relative_path} - {result}")
                 return False
         else:
             logging.error(f"diff3 合并后无法确定云端父目录: {item.relative_path}")

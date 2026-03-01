@@ -6,7 +6,7 @@
 
 import os
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 from typing import TYPE_CHECKING
 
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 from src.common import generate_file_id, NoteDomain, normalize_sep, FileId, DirId
 from src.sync.metadata import SyncMetadata
+from src.sync.utils import UploadResult
 
 
 class YoudaoNoteUpload:
@@ -88,15 +89,11 @@ class YoudaoNoteUpload:
         parent_id: DirId,
         relative_path: str = None,
         force: bool = False,
-    ) -> Tuple[bool, Optional[str]]:
-        """
-        上传单个文件
-        
-        :param local_path: 本地文件完整路径
-        :param parent_id: 云端父目录 ID
-        :param relative_path: 相对路径（用于元数据记录），默认使用文件名
-        :param force: 是否强制上传（忽略修改时间检查）
-        :return: (是否成功, 错误信息)
+    ) -> Tuple[bool, Union[str, UploadResult, None]]:
+        """Upload a single file.
+
+        :return: ``(True, UploadResult)`` on success, ``(True, None)`` when
+            skipped, or ``(False, error_message)`` on failure.
         """
         if not os.path.exists(local_path):
             return False, f"文件不存在: {local_path}"
@@ -138,10 +135,11 @@ class YoudaoNoteUpload:
         parent_id: DirId,
         relative_path: str,
         local_mtime: int,
-    ) -> Tuple[bool, Optional[str]]:
-        """
-        执行 push_file 并更新元数据。
-        _upload_markdown 和 upload_note 的共用尾段。
+    ) -> Tuple[bool, Union[str, UploadResult, None]]:
+        """Execute push_file and return an :class:`UploadResult` on success.
+
+        Metadata is **not** written here — the caller (engine) is responsible
+        for calling ``metadata.record_sync`` with the returned result.
         """
         if file_info and file_info.get("file_id"):
             file_id = file_info["file_id"]
@@ -159,21 +157,20 @@ class YoudaoNoteUpload:
                 name=cloud_name,
                 domain=domain,
                 body_string=body,
+                modify_time=local_mtime,
                 is_create=is_create,
             )
 
             if "entry" in result:
                 cloud_mtime = result["entry"].get("modifyTimeForSort", local_mtime)
-                self.metadata.set_file_info(
-                    local_path=relative_path,
+                logging.info(f"上传成功: {relative_path}")
+                return True, UploadResult(
                     file_id=file_id,
                     cloud_mtime=cloud_mtime,
                     local_mtime=local_mtime,
                     parent_id=parent_id,
                     domain=domain,
                 )
-                logging.info(f"上传成功: {relative_path}")
-                return True, None
             else:
                 error_msg = result.get("error", str(result))
                 return False, f"上传失败: {error_msg}"
@@ -186,7 +183,7 @@ class YoudaoNoteUpload:
         parent_id: DirId,
         relative_path: str,
         force: bool = False,
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> Tuple[bool, Union[str, UploadResult, None]]:
         """上传 Markdown 文件"""
         file_name = os.path.basename(local_path)
         local_mtime = int(os.path.getmtime(local_path))
@@ -216,7 +213,7 @@ class YoudaoNoteUpload:
         parent_id: DirId,
         relative_path: str,
         force: bool = False,
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> Tuple[bool, Union[str, UploadResult, None]]:
         """上传普通笔记（将 Markdown 转换为有道 JSON 格式）"""
         from src.convert.md_to_note import markdown_to_note_json
 
@@ -251,12 +248,12 @@ class YoudaoNoteUpload:
         parent_id: DirId,
         relative_path: str,
         force: bool = False,
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> Tuple[bool, Union[str, UploadResult, None]]:
         """未知后缀：先尝试文本上传，编码失败则回退到二进制。"""
-        ok, err = self._upload_markdown(local_path, parent_id, relative_path, force)
-        if not ok and err and err.startswith("[BINARY]"):
+        ok, result = self._upload_markdown(local_path, parent_id, relative_path, force)
+        if not ok and isinstance(result, str) and result.startswith("[BINARY]"):
             return self._upload_binary(local_path, parent_id, relative_path, force)
-        return ok, err
+        return ok, result
 
     def _upload_binary(
         self,
@@ -264,8 +261,12 @@ class YoudaoNoteUpload:
         parent_id: DirId,
         relative_path: str,
         force: bool = False,
-    ) -> Tuple[bool, Optional[str]]:
-        """上传二进制文件（PDF、图片等）via multipart。"""
+    ) -> Tuple[bool, Union[str, UploadResult, None]]:
+        """Upload a binary file (PDF, images, etc.) via multipart.
+
+        Returns ``(True, UploadResult)`` on success so that the caller can
+        call ``metadata.record_sync`` with it.
+        """
         file_name = os.path.basename(local_path)
         local_mtime = int(os.path.getmtime(local_path))
 
@@ -294,21 +295,20 @@ class YoudaoNoteUpload:
                 parent_id=parent_id,
                 name=file_name,
                 file_bytes=file_bytes,
+                modify_time=local_mtime,
                 is_create=is_create,
             )
 
             if "entry" in result:
                 cloud_mtime = result["entry"].get("modifyTimeForSort", local_mtime)
-                self.metadata.set_file_info(
-                    local_path=relative_path,
+                logging.info(f"上传成功(二进制): {relative_path}")
+                return True, UploadResult(
                     file_id=file_id,
                     cloud_mtime=cloud_mtime,
                     local_mtime=local_mtime,
                     parent_id=parent_id,
                     domain=NoteDomain.MARKDOWN,
                 )
-                logging.info(f"上传成功(二进制): {relative_path}")
-                return True, None
             else:
                 error_msg = result.get("error", str(result))
                 return False, f"上传失败(二进制): {error_msg}"
@@ -354,26 +354,35 @@ class YoudaoNoteUpload:
                 continue
 
             if os.path.isfile(item_path):
-                # 上传文件
                 suffix = os.path.splitext(item)[1].lower()
                 
                 if suffix == ".md":
                     if upload_as_note:
-                        success, error = self.upload_note(
+                        ok, result = self.upload_note(
                             item_path, parent_id, relative_path
                         )
                     else:
-                        success, error = self._upload_markdown(
+                        ok, result = self._upload_markdown(
                             item_path, parent_id, relative_path
                         )
-                    
-                    if success:
+
+                    if ok:
+                        if isinstance(result, UploadResult):
+                            self.metadata.record_sync(
+                                relative_path,
+                                file_id=result.file_id,
+                                cloud_mtime=result.cloud_mtime,
+                                local_mtime=result.local_mtime,
+                                parent_id=result.parent_id,
+                                domain=result.domain,
+                                action="uploaded",
+                                direction="push",
+                            )
                         success_count += 1
                     else:
                         fail_count += 1
-                        errors.append(error)
+                        errors.append(result)
                 else:
-                    # 非 .md 文件暂时跳过
                     logging.debug(f"跳过非 Markdown 文件: {relative_path}")
 
             elif os.path.isdir(item_path) and recursive:

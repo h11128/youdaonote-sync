@@ -368,12 +368,14 @@ def cmd_decision(args):
 
         if file_meta and cloud and local:
             action = decide_action(
+                local_exists=True,
+                cloud_exists=True,
                 cloud_mtime=cloud.get("mtime", 0),
                 local_mtime=local.get("mtime", 0),
                 meta_cloud_mtime=file_meta.get("cloud_mtime", 0),
                 meta_local_mtime=file_meta.get("local_mtime", 0),
-                meta_content_hash=file_meta.get("content_hash"),
-                local_path=local.get("path"),
+                meta_hash=file_meta.get("content_hash"),
+                previously_synced=True,
             )
             print(f"  decide_action 结果: {action}")
             print(f"    cloud_mtime={cloud.get('mtime')}, "

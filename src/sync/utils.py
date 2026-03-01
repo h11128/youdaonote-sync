@@ -100,6 +100,16 @@ class FileMetaInfo(_FileMetaBase, total=False):
     original_domain: int
 
 
+@dataclass(frozen=True)
+class UploadResult:
+    """Returned by upload methods so that the caller can record metadata."""
+    file_id: FileId
+    cloud_mtime: int
+    local_mtime: int
+    parent_id: DirId
+    domain: int
+
+
 class SyncStats(TypedDict):
     """同步统计信息"""
     downloaded: int

@@ -90,27 +90,33 @@ class SyncMetadataTest(unittest.TestCase):
         # Then
         self.assertIsNone(self.meta.get_file_id("x.md"))
 
-    def test_update_local_mtime(self):
-        """更新本地修改时间"""
-        # Given
-        self.meta.set_file_info("x.md", "WEB1", cloud_mtime=100, local_mtime=100)
-
+    def test_record_sync_sets_all_fields(self):
+        """record_sync atomically writes all metadata fields"""
         # When
-        self.meta.update_local_mtime("x.md", 200)
+        self.meta.record_sync(
+            "x.md",
+            file_id="WEB1",
+            cloud_mtime=200,
+            local_mtime=100,
+            parent_id="DIR1",
+            domain=1,
+            content_hash="hash_abc",
+            cloud_content_hash="hash_abc",
+            action="uploaded",
+            direction="push",
+        )
 
         # Then
-        self.assertEqual(self.meta.get_file_info("x.md")["local_mtime"], 200)
-
-    def test_update_cloud_mtime(self):
-        """更新云端修改时间"""
-        # Given
-        self.meta.set_file_info("x.md", "WEB1", cloud_mtime=100, local_mtime=100)
-
-        # When
-        self.meta.update_cloud_mtime("x.md", 300)
-
-        # Then
-        self.assertEqual(self.meta.get_file_info("x.md")["cloud_mtime"], 300)
+        info = self.meta.get_file_info("x.md")
+        self.assertIsNotNone(info)
+        self.assertEqual(info["file_id"], "WEB1")
+        self.assertEqual(info["cloud_mtime"], 200)
+        self.assertEqual(info["local_mtime"], 100)
+        self.assertEqual(info.get("parent_id"), "DIR1")
+        self.assertEqual(info.get("domain"), 1)
+        self.assertEqual(info.get("content_hash"), "hash_abc")
+        self.assertEqual(info.get("cloud_content_hash"), "hash_abc")
+        self.assertGreater(info.get("last_sync_at", 0), 0)
 
     def test_find_by_file_id(self):
         """根据云端 ID 反查本地路径"""
@@ -1133,9 +1139,10 @@ class UploadHandlerDispatchTest(unittest.TestCase):
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_upload_binary_calls_push_binary_file(self):
-        """_upload_binary 应调用 api.push_binary_file 并记录元数据"""
+        """_upload_binary returns UploadResult and calls api.push_binary_file"""
         from unittest.mock import MagicMock
         from src.transfer.upload import YoudaoNoteUpload
+        from src.sync.utils import UploadResult
 
         tmpdir = tempfile.mkdtemp()
         try:
@@ -1151,10 +1158,12 @@ class UploadHandlerDispatchTest(unittest.TestCase):
             meta = SyncMetadata(metadata_path=os.path.join(tmpdir, "meta.json"))
             uploader = YoudaoNoteUpload(mock_api, meta)
 
-            ok, err = uploader._upload_binary(pdf_path, "parent1", "doc.pdf", force=True)
+            ok, result = uploader._upload_binary(pdf_path, "parent1", "doc.pdf", force=True)
 
             self.assertTrue(ok)
-            self.assertIsNone(err)
+            self.assertIsInstance(result, UploadResult)
+            self.assertEqual(result.cloud_mtime, 1000)
+            self.assertEqual(result.parent_id, "parent1")
             mock_api.push_binary_file.assert_called_once()
             call_kwargs = mock_api.push_binary_file.call_args
             self.assertEqual(call_kwargs.kwargs["name"], "doc.pdf")
@@ -2482,6 +2491,219 @@ class MetadataVerifyTest(unittest.TestCase):
         self.meta.save()
         issues = self.meta.verify(self.local_dir)
         self.assertEqual(len(issues), 0)
+
+
+# ========== record_sync 测试 ==========
+
+class RecordSyncTest(unittest.TestCase):
+    """metadata.record_sync — single atomic post-sync write"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_creates_new_record(self):
+        self.meta.record_sync(
+            "a/test.md",
+            file_id="WEB1",
+            cloud_mtime=200,
+            local_mtime=100,
+            parent_id="DIR1",
+            domain=1,
+            content_hash="hash_a",
+            action="uploaded",
+            direction="push",
+        )
+        info = self.meta.get_file_info("a/test.md")
+        self.assertIsNotNone(info)
+        self.assertEqual(info["file_id"], "WEB1")
+        self.assertEqual(info["cloud_mtime"], 200)
+        self.assertEqual(info["local_mtime"], 100)
+        self.assertEqual(info.get("parent_id"), "DIR1")
+        self.assertEqual(info.get("domain"), 1)
+        self.assertEqual(info.get("content_hash"), "hash_a")
+        self.assertGreater(info.get("last_sync_at", 0), 0)
+
+    def test_updates_existing_record(self):
+        self.meta.set_file_info("b.md", "WEB1", cloud_mtime=100, local_mtime=50)
+        self.meta.record_sync(
+            "b.md",
+            file_id="WEB1",
+            cloud_mtime=300,
+            local_mtime=200,
+            content_hash="hash_b",
+            action="downloaded",
+            direction="pull",
+        )
+        info = self.meta.get_file_info("b.md")
+        self.assertEqual(info["cloud_mtime"], 300)
+        self.assertEqual(info["local_mtime"], 200)
+        self.assertEqual(info.get("content_hash"), "hash_b")
+
+    def test_preserves_optional_fields_on_update(self):
+        self.meta.set_file_info("c.md", "WEB1", cloud_mtime=100, local_mtime=50,
+                                parent_id="DIR1", domain=1)
+        self.meta.record_sync(
+            "c.md",
+            file_id="WEB1",
+            cloud_mtime=200,
+            local_mtime=150,
+        )
+        info = self.meta.get_file_info("c.md")
+        self.assertEqual(info.get("parent_id"), "DIR1")
+        self.assertEqual(info.get("domain"), 1)
+
+    def test_sets_original_domain_once(self):
+        self.meta.record_sync(
+            "d.md",
+            file_id="WEB1",
+            cloud_mtime=100,
+            local_mtime=50,
+            original_domain=0,
+            action="downloaded",
+            direction="pull",
+        )
+        self.assertEqual(self.meta.get_original_domain("d.md"), 0)
+
+        self.meta.record_sync(
+            "d.md",
+            file_id="WEB1",
+            cloud_mtime=200,
+            local_mtime=150,
+            original_domain=1,
+        )
+        self.assertEqual(self.meta.get_original_domain("d.md"), 0)
+
+    def test_writes_sync_log(self):
+        self.meta.record_sync(
+            "e.md",
+            file_id="WEB1",
+            cloud_mtime=100,
+            local_mtime=50,
+            action="uploaded",
+            direction="push",
+        )
+        logs = self.meta.get_sync_log(limit=10, path="e.md")
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0]["path"], "e.md")
+        self.assertEqual(logs[0]["action"], "uploaded")
+        self.assertEqual(logs[0]["direction"], "push")
+
+    def test_empty_path_raises(self):
+        with self.assertRaises(ValueError):
+            self.meta.record_sync(
+                "",
+                file_id="WEB1",
+                cloud_mtime=100,
+                local_mtime=50,
+            )
+
+
+# ========== heal 测试 ==========
+
+class MetadataHealTest(unittest.TestCase):
+    """metadata.heal — lightweight self-healing pass"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.local_dir = os.path.join(self.tmpdir, "notes")
+        os.makedirs(self.local_dir)
+        self.meta = SyncMetadata(os.path.join(self.tmpdir, "meta.json"))
+
+    def tearDown(self):
+        self.meta.close()
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_detects_orphan_without_file_id(self):
+        self.meta.set_file_info("ghost.md", "", cloud_mtime=0, local_mtime=100)
+        self.meta.save()
+        stats = self.meta.heal(self.local_dir, auto_fix=False)
+        self.assertEqual(stats["orphan"], 1)
+        self.assertIsNotNone(self.meta.get_file_info("ghost.md"))
+
+    def test_fixes_orphan_when_auto_fix(self):
+        self.meta.set_file_info("ghost.md", "", cloud_mtime=0, local_mtime=100)
+        self.meta.save()
+        self.meta.heal(self.local_dir, auto_fix=True)
+        self.assertIsNone(self.meta.get_file_info("ghost.md"))
+
+    def test_detects_mtime_drift(self):
+        from src.sync.utils import compute_content_hash
+        fpath = os.path.join(self.local_dir, "drift.md")
+        with open(fpath, "w") as f:
+            f.write("same content")
+        real_hash = compute_content_hash(fpath)
+        real_mtime = int(os.path.getmtime(fpath))
+
+        self.meta.set_file_info("drift.md", "WEB1", cloud_mtime=100,
+                                local_mtime=real_mtime - 100,
+                                content_hash=real_hash)
+        self.meta.save()
+
+        stats = self.meta.heal(self.local_dir, auto_fix=False)
+        self.assertEqual(stats["mtime_drift"], 1)
+
+    def test_fixes_mtime_drift(self):
+        from src.sync.utils import compute_content_hash
+        fpath = os.path.join(self.local_dir, "drift2.md")
+        with open(fpath, "w") as f:
+            f.write("same content 2")
+        real_hash = compute_content_hash(fpath)
+        real_mtime = int(os.path.getmtime(fpath))
+
+        self.meta.set_file_info("drift2.md", "WEB1", cloud_mtime=100,
+                                local_mtime=real_mtime - 50,
+                                content_hash=real_hash)
+        self.meta.save()
+
+        self.meta.heal(self.local_dir, auto_fix=True)
+        info = self.meta.get_file_info("drift2.md")
+        self.assertEqual(info["local_mtime"], real_mtime)
+
+    def test_backfills_missing_hash(self):
+        fpath = os.path.join(self.local_dir, "nohash.md")
+        with open(fpath, "w") as f:
+            f.write("need hash")
+        self.meta.set_file_info("nohash.md", "WEB1", cloud_mtime=100,
+                                local_mtime=int(os.path.getmtime(fpath)))
+        self.meta.save()
+
+        stats = self.meta.heal(self.local_dir, auto_fix=True)
+        self.assertEqual(stats["hash_backfill"], 1)
+        info = self.meta.get_file_info("nohash.md")
+        self.assertIsNotNone(info.get("content_hash"))
+
+    def test_detects_zero_cloud_mtime(self):
+        fpath = os.path.join(self.local_dir, "zerocloud.md")
+        with open(fpath, "w") as f:
+            f.write("zero cloud")
+        self.meta.set_file_info("zerocloud.md", "WEB1", cloud_mtime=0,
+                                local_mtime=100)
+        self.meta.save()
+
+        stats = self.meta.heal(self.local_dir, auto_fix=False)
+        self.assertEqual(stats["zero_cloud"], 1)
+
+    def test_clean_metadata_reports_nothing(self):
+        from src.sync.utils import compute_content_hash
+        fpath = os.path.join(self.local_dir, "ok.md")
+        with open(fpath, "w") as f:
+            f.write("all good")
+        real_hash = compute_content_hash(fpath)
+        real_mtime = int(os.path.getmtime(fpath))
+        self.meta.set_file_info("ok.md", "WEB1", cloud_mtime=100,
+                                local_mtime=real_mtime,
+                                content_hash=real_hash)
+        self.meta.save()
+
+        stats = self.meta.heal(self.local_dir, auto_fix=False)
+        self.assertEqual(sum(stats.values()), 0)
 
 
 # ========== Feature: matches_selective 测试 ==========

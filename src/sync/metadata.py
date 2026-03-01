@@ -481,6 +481,110 @@ class SyncMetadata:
                 ),
             )
 
+    def record_sync(
+        self,
+        local_path: str,
+        *,
+        file_id: FileId,
+        cloud_mtime: int,
+        local_mtime: int,
+        parent_id: Optional[DirId] = None,
+        domain: Optional[int] = None,
+        content_hash: Optional[ContentHash] = None,
+        cloud_content_hash: Optional[ContentHash] = None,
+        original_domain: Optional[int] = None,
+        create_time: Optional[int] = None,
+        action: Optional[str] = None,
+        direction: Optional[str] = None,
+        old_hash: Optional[ContentHash] = None,
+        detail: Optional[str] = None,
+    ) -> None:
+        """Record a complete sync outcome atomically.
+
+        Single entry point for all post-sync metadata updates.  In one
+        transaction it: upserts the file row (core + optional fields), sets
+        ``last_sync_at``, optionally writes ``original_domain`` (first-time
+        only), and appends a ``sync_log`` entry.
+
+        SOT rules enforced here:
+        - ``local_mtime`` must be > 0 (snapshot of ``os.path.getmtime`` at
+          sync time).
+        - ``cloud_mtime`` should come from the API response
+          (``modifyTimeForSort``) or from ``time.time()`` for moves.
+        """
+        if not local_path:
+            raise ValueError("local_path must not be empty")
+        if local_mtime <= 0:
+            logging.warning(
+                "record_sync: local_mtime <= 0 for %s (got %s), "
+                "this will break future change detection",
+                local_path, local_mtime,
+            )
+        if cloud_mtime <= 0:
+            logging.warning(
+                "record_sync: cloud_mtime <= 0 for %s (got %s), "
+                "SOT requires API response or time.time()",
+                local_path, cloud_mtime,
+            )
+        if not file_id:
+            logging.warning(
+                "record_sync: empty file_id for %s", local_path,
+            )
+
+        now = int(time.time())
+        with self._lock:
+            path = self._normalize_path(local_path)
+
+            self._conn.execute(
+                "INSERT INTO files "
+                "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, "
+                " content_hash, create_time, last_sync_at, cloud_content_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET "
+                "  file_id = excluded.file_id,"
+                "  cloud_mtime = excluded.cloud_mtime,"
+                "  local_mtime = excluded.local_mtime,"
+                "  last_sync_at = excluded.last_sync_at,"
+                "  parent_id = COALESCE(excluded.parent_id, files.parent_id),"
+                "  domain = COALESCE(excluded.domain, files.domain),"
+                "  content_hash = COALESCE(excluded.content_hash, files.content_hash),"
+                "  create_time = CASE WHEN excluded.create_time IS NOT NULL"
+                "                      AND excluded.create_time > 0"
+                "                     THEN excluded.create_time"
+                "                     ELSE files.create_time END,"
+                "  cloud_content_hash = COALESCE(excluded.cloud_content_hash,"
+                "                                files.cloud_content_hash)",
+                (
+                    path,
+                    file_id or "",
+                    cloud_mtime,
+                    local_mtime,
+                    parent_id,
+                    domain,
+                    content_hash,
+                    create_time if create_time and create_time > 0 else None,
+                    now,
+                    cloud_content_hash,
+                ),
+            )
+
+            if original_domain is not None:
+                self._conn.execute(
+                    "UPDATE files SET original_domain = ? "
+                    "WHERE path = ? AND original_domain IS NULL",
+                    (original_domain, path),
+                )
+
+            if action:
+                self._conn.execute(
+                    "INSERT INTO sync_log "
+                    "(timestamp, path, action, direction, "
+                    " old_hash, new_hash, cloud_id, detail) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (now, path, action, direction,
+                     old_hash, content_hash, file_id, detail),
+                )
+
     def cache_cloud_file_info(
         self,
         local_path: str,
@@ -574,32 +678,6 @@ class SyncMetadata:
             path = self._normalize_path(local_path)
             self._conn.execute(
                 "UPDATE files SET file_id = '' WHERE path = ?", (path,))
-
-    def update_local_mtime(self, local_path: str, mtime: int) -> None:
-        """
-        更新本地文件的修改时间记录
-
-        :param local_path: 本地文件的相对路径
-        :param mtime: 新的修改时间
-        """
-        with self._lock:
-            path = self._normalize_path(local_path)
-            self._conn.execute(
-                "UPDATE files SET local_mtime = ? WHERE path = ?", (mtime, path)
-            )
-
-    def update_cloud_mtime(self, local_path: str, mtime: int) -> None:
-        """
-        更新云端文件的修改时间记录
-
-        :param local_path: 本地文件的相对路径
-        :param mtime: 新的修改时间
-        """
-        with self._lock:
-            path = self._normalize_path(local_path)
-            self._conn.execute(
-                "UPDATE files SET cloud_mtime = ? WHERE path = ?", (mtime, path)
-            )
 
     def remove_file(self, local_path: str) -> None:
         """删除文件的元数据记录（remove_file_info 的别名）。"""
@@ -1103,3 +1181,89 @@ class SyncMetadata:
         if auto_fix and issues:
             self.save()
         return issues
+
+    # ========== 自愈 (Phase SOT) ==========
+
+    def heal(self, local_dir: str, auto_fix: bool = False) -> Dict[str, int]:
+        """Lightweight self-healing pass run before each sync.
+
+        Detects and optionally repairs common metadata inconsistencies:
+
+        1. **local_mtime drift** — ``os.path.getmtime`` differs from metadata
+           but ``content_hash`` is unchanged → silently update ``local_mtime``
+           (file was touched/copied without content change).
+        2. **orphan records** — metadata row exists but local file is missing
+           *and* there is no ``file_id`` (pure local stub) → delete row.
+        3. **cloud_mtime = 0** — legacy migration leftover → log warning.
+        4. **content_hash missing** — has ``file_id`` and ``local_mtime > 0``
+           but no hash → compute and backfill.
+
+        :param auto_fix: When ``False`` only reports; when ``True`` writes fixes.
+        :return: ``{"mtime_drift": n, "orphan": n, "zero_cloud": n, "hash_backfill": n}``
+        """
+        from src.sync.utils import compute_content_hash
+
+        stats = {"mtime_drift": 0, "orphan": 0, "zero_cloud": 0, "hash_backfill": 0}
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT path, file_id, cloud_mtime, local_mtime, content_hash "
+                "FROM files"
+            ).fetchall()
+
+        for path, file_id, cloud_mtime, local_mtime, meta_hash in rows:
+            full = os.path.join(local_dir, path)
+            exists = os.path.exists(full)
+
+            # 1. Orphan: no local file and no cloud identity
+            if not exists and not file_id:
+                stats["orphan"] += 1
+                if auto_fix:
+                    self.remove_file_info(path)
+                continue
+
+            if not exists:
+                continue
+
+            actual_mtime = int(os.path.getmtime(full))
+
+            # 2. local_mtime drift
+            if local_mtime and actual_mtime != local_mtime and meta_hash:
+                actual_hash = compute_content_hash(full)
+                if actual_hash and actual_hash == meta_hash:
+                    stats["mtime_drift"] += 1
+                    if auto_fix:
+                        with self._lock:
+                            self._conn.execute(
+                                "UPDATE files SET local_mtime = ? WHERE path = ?",
+                                (actual_mtime, path),
+                            )
+
+            # 3. cloud_mtime = 0
+            if cloud_mtime == 0 and file_id:
+                stats["zero_cloud"] += 1
+                if not auto_fix:
+                    logging.debug("heal: cloud_mtime=0 for %s", path)
+
+            # 4. content_hash missing — only safe to backfill when mtime
+            #    matches (file untouched since last sync)
+            if (not meta_hash and file_id and local_mtime > 0
+                    and actual_mtime == local_mtime):
+                actual_hash = compute_content_hash(full)
+                if actual_hash:
+                    stats["hash_backfill"] += 1
+                    if auto_fix:
+                        self.update_content_hash(path, actual_hash)
+
+        if auto_fix:
+            self.save()
+
+        total = sum(stats.values())
+        if total > 0:
+            logging.info(
+                "heal(%s): mtime_drift=%d, orphan=%d, zero_cloud=%d, hash_backfill=%d",
+                "fix" if auto_fix else "check",
+                stats["mtime_drift"], stats["orphan"],
+                stats["zero_cloud"], stats["hash_backfill"],
+            )
+        return stats
