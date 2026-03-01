@@ -19,6 +19,8 @@ venv/
 config/cookies.json
 config/browser_data/
 config/sync_metadata.json
+config/sync_metadata.db
+config/sync_metadata.db.db
 captured_api_requests.json
 logs/
 backups/
