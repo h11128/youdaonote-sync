@@ -11,7 +11,7 @@
 
 import logging
 import os
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from src.common import get_config_directory
 from src.cookies import CookieManager
@@ -182,7 +182,7 @@ def browser_login() -> int:
             context.close()
 
 
-def extract_cookies_from_browser() -> tuple:
+def extract_cookies_from_browser() -> Tuple[Optional[Dict], str]:
     """
     从本地浏览器（Chrome/Edge/Firefox 等）自动提取 cookies。
     需要安装 browser_cookie3 库。

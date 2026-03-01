@@ -8,7 +8,10 @@ import logging
 import os
 import subprocess
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.sync.utils import SyncStats
 
 
 class GitHelper:
@@ -43,7 +46,7 @@ class GitHelper:
         """检查是否有需要提交的变更"""
         return bool(changed_paths) and self.is_git_repo()
 
-    def commit_sync(self, changed_paths: List[str], stats: Dict,
+    def commit_sync(self, changed_paths: List[str], stats: "SyncStats",
                     dedup_deleted_paths: List[str] = None) -> bool:
         """
         将同步变更自动提交到 git。

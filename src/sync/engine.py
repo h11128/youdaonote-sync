@@ -31,6 +31,8 @@ from dataclasses import replace as dc_replace
 
 from src.sync.utils import (
     SyncDirection, SyncAction, SyncItem,          # noqa: F401 — re-exported
+    CloudFileInfo, LocalFileInfo, SyncStats, DedupStats,
+    FileId, DirId, ContentHash,
     filter_by_direction, empty_stats,
     print_preview, print_dryrun_summary, backup_file,
     compute_content_hash, compute_hash_from_bytes,
@@ -159,7 +161,7 @@ class SyncManager:
         self._lock = threading.Lock()
         self._meta_dirty = 0
         self._git = git or GitHelper(local_dir)
-        self._hash_cache: Dict[str, str] = {}  # abs_path → content_hash
+        self._hash_cache: Dict[str, ContentHash] = {}  # abs_path → content_hash
         self._pending_moves: List[PendingMove] = []
         self._failed_moves: List[PendingMove] = []
         self._uploaded_paths: set = set()  # 成功上传的 rel_path 集合
@@ -185,7 +187,7 @@ class SyncManager:
 
     def _record_file_change(self, item: SyncItem, stat_key: str,
                             local_mtime: int = None,
-                            content_hash: str = None) -> None:
+                            content_hash: ContentHash = None) -> None:
         """记录一次文件同步成功：更新元数据 + 统计 + 变动列表 + 操作日志。"""
         old_hash = None
         meta = self.metadata.get_file_info(item.relative_path)
@@ -194,7 +196,7 @@ class SyncManager:
 
         if stat_key == "downloaded":
             self.metadata.set_file_info(
-                item.relative_path, item.cloud_id, item.cloud_mtime,
+                item.relative_path, FileId(item.cloud_id), item.cloud_mtime,
                 local_mtime, item.cloud_parent_id, item.domain,
                 content_hash=content_hash,
                 create_time=item.cloud_ctime,
@@ -235,12 +237,12 @@ class SyncManager:
     def sync(
         self,
         direction: SyncDirection = SyncDirection.BOTH,
-        cloud_dir_id: str = None,
+        cloud_dir_id: DirId = None,
         cloud_path: str = "",
         dry_run: bool = False,
         auto_git: bool = True,
         auto_dedup: bool = True,
-    ) -> Dict:
+    ) -> SyncStats:
         """执行同步，返回统计信息。
 
         内部使用 asyncio 调度：
@@ -263,9 +265,9 @@ class SyncManager:
             if not dry_run:
                 lock.release()
 
-    def _sync_inner(self, cloud_dir_id: str, cloud_path: str,
+    def _sync_inner(self, cloud_dir_id: DirId, cloud_path: str,
                     direction: SyncDirection, dry_run: bool,
-                    auto_git: bool, auto_dedup: bool) -> Dict:
+                    auto_git: bool, auto_dedup: bool) -> SyncStats:
         logging.info(f"开始同步: 方向={direction.value}, 本地={self.local_dir}")
         self.stats = empty_stats()
         self._changed_paths = []
@@ -302,7 +304,7 @@ class SyncManager:
 
         return self.stats
 
-    async def _async_main(self, cloud_dir_id: str, cloud_path: str,
+    async def _async_main(self, cloud_dir_id: DirId, cloud_path: str,
                           direction: SyncDirection, dry_run: bool) -> None:
         """asyncio 主流程：扫描 → 决策 → 冲突精炼 → 执行。"""
         all_items = await self._async_collect_items(cloud_dir_id, cloud_path, dry_run)
@@ -321,7 +323,7 @@ class SyncManager:
                     items = [i for i in items if i.relative_path not in moved]
             await self._async_execute_all(items, direction)
 
-    def _run_dedup(self, dry_run: bool = False) -> Dict:
+    def _run_dedup(self, dry_run: bool = False) -> DedupStats:
         """执行基于内容 hash 的去重扫描（复用 scan_local 结果避免重复遍历）"""
         from src.sync.dedup import auto_dedup
         try:
@@ -335,7 +337,8 @@ class SyncManager:
             return stats
         except (OSError, ValueError) as e:
             logging.error(f"去重扫描失败: {e}")
-            return {}
+            return DedupStats(deleted=0, cloud_deleted=0, kept=0,
+                              skipped=0, groups=0, protected_refs=0)
 
     def _execute_cloud_moves(self) -> set:
         """通过 API 移动云端文件（保留 file_id 和历史），返回成功移动的 new_local_path 集合。
@@ -388,7 +391,7 @@ class SyncManager:
                 logging.error(f"删除旧云端文件失败: {m.old_cloud_path} ({m.file_id}) - {e}")
         self._failed_moves = []
 
-    def collect_items(self, cloud_dir_id: str, cloud_path: str = "",
+    def collect_items(self, cloud_dir_id: DirId, cloud_path: str = "",
                       dry_run: bool = False) -> List[SyncItem]:
         """同步版收集差异项（供 dry-run 报告等外部工具使用）"""
         self._hash_cache = {}
@@ -400,7 +403,7 @@ class SyncManager:
 
     # ========== 扫描缓存 ==========
 
-    def _load_cloud_files_from_cache(self) -> Dict[str, Dict]:
+    def _load_cloud_files_from_cache(self) -> Dict[str, CloudFileInfo]:
         """从 sync_metadata.db 重建 cloud_files 字典（与 scanner 返回格式兼容）。
 
         只加载有 file_id 的文件记录。目录不从缓存加载——scanner 在全量扫描时
@@ -409,56 +412,55 @@ class SyncManager:
         calibrate_metadata 可以正常使用。
         """
         summaries = self.metadata.get_cloud_file_summaries()
-        cloud_files: Dict[str, Dict] = {}
+        cloud_files: Dict[str, CloudFileInfo] = {}
         for path, info in summaries.items():
             if ".conflict." in os.path.basename(path):
                 continue
-            cloud_files[path] = {
-                "id": info["file_id"],
-                "parent_id": info.get("parent_id", ""),
-                "name": os.path.basename(path),
-                "is_dir": False,
-                "mtime": info.get("cloud_mtime", 0),
-                "ctime": info.get("create_time", 0),
-                "domain": info.get("domain", 0),
-            }
+            cloud_files[path] = CloudFileInfo(
+                id=info["file_id"],
+                parent_id=info.get("parent_id", ""),
+                name=os.path.basename(path),
+                is_dir=False,
+                mtime=info["cloud_mtime"],
+                ctime=info.get("create_time", 0),
+                domain=info.get("domain", 0),
+            )
         return cloud_files
 
-    def _save_scan_version(self, cloud_files: Dict[str, Dict], max_version: int) -> None:
+    def _save_scan_version(self, cloud_files: Dict[str, CloudFileInfo], max_version: int) -> None:
         """全量扫描后，将 cloud_files 回写到 metadata 并记录 version。
 
-        同时清理 metadata 中云端已不存在的文件记录（file_id 置空），
-        避免缓存加载时产生"幽灵"条目。
+        注意：陈旧路径清理由 _cleanup_stale_paths 单独执行，
+        必须在 reconcile_moves 之后调用，否则会破坏移动检测所需的 file_id 关联。
         """
-        scan_file_paths = {rel for rel, info in cloud_files.items()
-                           if not info.get("is_dir")}
-        scan_dir_paths = {rel for rel, info in cloud_files.items()
-                          if info.get("is_dir")}
-
         with self.metadata.batch():
             for rel, info in cloud_files.items():
-                if info.get("is_dir"):
-                    self.metadata.set_dir_info(rel, info["id"], info.get("parent_id", ""))
+                if info["is_dir"]:
+                    self.metadata.set_dir_info(rel, DirId(info["id"]), info["parent_id"])
                 else:
-                    self.metadata.set_file_info(
+                    self.metadata.cache_cloud_file_info(
                         local_path=rel,
-                        file_id=info["id"],
-                        cloud_mtime=info.get("mtime", 0),
-                        parent_id=info.get("parent_id"),
-                        domain=info.get("domain"),
-                        create_time=info.get("ctime"),
+                        file_id=FileId(info["id"]),
+                        cloud_mtime=info["mtime"],
+                        parent_id=info["parent_id"],
+                        domain=info["domain"],
+                        create_time=info["ctime"],
                     )
-
-            stale_paths = self.metadata.get_stale_cloud_paths(scan_file_paths)
-            for path in stale_paths:
-                self.metadata.clear_cloud_id(path)
-            stale_count = len(stale_paths)
-            if stale_count > 0:
-                logging.info(f"扫描缓存: 清理 {stale_count} 条云端已不存在的记录")
 
             self.metadata.set_state(_STATE_CLOUD_VERSION, str(max_version))
             self.metadata.set_state(_STATE_SCAN_TIME, str(int(time.time())))
         self.metadata.save()
+
+    def _cleanup_stale_paths(self, cloud_files: Dict[str, CloudFileInfo]) -> None:
+        """清理 metadata 中云端已不存在的文件记录（file_id 置空）。"""
+        scan_file_paths = {rel for rel, info in cloud_files.items()
+                           if not info["is_dir"]}
+        stale_paths = self.metadata.get_stale_cloud_paths(scan_file_paths)
+        if stale_paths:
+            with self.metadata.batch():
+                for path in stale_paths:
+                    self.metadata.clear_cloud_id(path)
+            logging.info(f"扫描缓存: 清理 {len(stale_paths)} 条云端已不存在的记录")
 
     def _fetch_current_version(self) -> int:
         """从 listRecent 获取云端当前最大 version 号。"""
@@ -482,8 +484,8 @@ class SyncManager:
             logging.debug(f"桌面客户端种子导入失败: {e}")
             return False
 
-    def _try_cached_cloud_scan(self, cloud_dir_id: str, cloud_path: str
-                               ) -> Optional[Dict[str, Dict]]:
+    def _try_cached_cloud_scan(self, cloud_dir_id: DirId, cloud_path: str
+                               ) -> Optional[Dict[str, CloudFileInfo]]:
         """尝试使用缓存的 cloud_files。返回 None 表示缓存不可用，需全量扫描。"""
         cached_version = self.metadata.get_state_int(_STATE_CLOUD_VERSION)
         if cached_version <= 0:
@@ -540,7 +542,7 @@ class SyncManager:
             f"扫描缓存: 变化量={len(changed)} 超过 listRecent 范围，需全量扫描")
         return None
 
-    def _apply_incremental_changes(self, cloud_files: Dict[str, Dict],
+    def _apply_incremental_changes(self, cloud_files: Dict[str, CloudFileInfo],
                                    changed_entries: list) -> None:
         """将 listRecent 中的变更条目应用到 cloud_files 和 metadata。"""
         with self.metadata.batch():
@@ -561,24 +563,24 @@ class SyncManager:
 
                 if is_dir:
                     if existing_path:
-                        cloud_files[existing_path] = {
-                            "id": fid, "parent_id": parent_id, "name": name,
-                            "is_dir": True, "mtime": 0, "ctime": 0, "domain": 0,
-                        }
+                        cloud_files[existing_path] = CloudFileInfo(
+                            id=fid, parent_id=parent_id, name=name,
+                            is_dir=True, mtime=0, ctime=0, domain=0,
+                        )
                         self.metadata.set_dir_info(existing_path, fid, parent_id)
                 else:
                     local_name = map_cloud_name(name)
                     mtime = fe.get("modifyTimeForSort", 0)
                     ctime = fe.get("createTimeForSort", 0)
                     domain = fe.get("domain", 0)
-                    info = {
-                        "id": fid, "parent_id": parent_id, "name": name,
-                        "is_dir": False, "mtime": mtime, "ctime": ctime,
-                        "domain": domain,
-                    }
+                    info = CloudFileInfo(
+                        id=fid, parent_id=parent_id, name=name,
+                        is_dir=False, mtime=mtime, ctime=ctime,
+                        domain=domain,
+                    )
                     if existing_path:
                         cloud_files[existing_path] = info
-                        self.metadata.set_file_info(
+                        self.metadata.cache_cloud_file_info(
                             local_path=existing_path, file_id=fid,
                             cloud_mtime=mtime, parent_id=parent_id,
                             domain=domain, create_time=ctime,
@@ -588,11 +590,12 @@ class SyncManager:
 
     # ========== 收集差异 ==========
 
-    async def _async_collect_items(self, cloud_dir_id: str,
+    async def _async_collect_items(self, cloud_dir_id: DirId,
                                    cloud_path: str,
                                    dry_run: bool = False) -> List[SyncItem]:
         """并发扫描云端（async）和本地（线程），然后做决策。"""
         cached_cloud = self._try_cached_cloud_scan(cloud_dir_id, cloud_path)
+        did_full_scan = cached_cloud is None
 
         if cached_cloud is not None:
             cloud_files = cached_cloud
@@ -610,8 +613,9 @@ class SyncManager:
                     self._sync_include, self._sync_exclude)
                 cloud_files, local_files = await asyncio.gather(cloud_task, local_task)
 
-            max_version = self._fetch_current_version()
-            self._save_scan_version(cloud_files, max_version)
+            if not dry_run:
+                max_version = self._fetch_current_version()
+                self._save_scan_version(cloud_files, max_version)
 
         if self._sync_include or self._sync_exclude:
             filt = compile_selective_filter(self._sync_include, self._sync_exclude)
@@ -621,8 +625,9 @@ class SyncManager:
         cloud_files = {k: v for k, v in cloud_files.items()
                        if ".conflict." not in os.path.basename(k)}
 
-        calibrate_metadata(self.metadata, cloud_files, local_files,
-                           hash_cache=self._hash_cache)
+        if not dry_run:
+            calibrate_metadata(self.metadata, cloud_files, local_files,
+                               hash_cache=self._hash_cache)
         pre_move_keys = set(cloud_files.keys()) | set(local_files.keys())
         pending_deletes = reconcile_moves(
             cloud_files, local_files, self.metadata,
@@ -630,11 +635,14 @@ class SyncManager:
             hash_cache=self._hash_cache)
         post_move_keys = set(cloud_files.keys()) | set(local_files.keys())
         changed_keys = post_move_keys - pre_move_keys
-        if changed_keys:
+        if changed_keys and not dry_run:
             affected_cloud = {k: v for k, v in cloud_files.items() if k in changed_keys}
             affected_local = {k: v for k, v in local_files.items() if k in changed_keys}
             calibrate_metadata(self.metadata, affected_cloud, affected_local,
                                hash_cache=self._hash_cache)
+        if did_full_scan and not dry_run:
+            self._cleanup_stale_paths(cloud_files)
+
         self._pending_moves = pending_deletes
         self._local_files = local_files
 
@@ -653,13 +661,14 @@ class SyncManager:
             for p in all_paths
         ]
 
-    async def _warmup_hash_cache(self, cloud_files: Dict, local_files: Dict) -> None:
+    async def _warmup_hash_cache(self, cloud_files: Dict[str, CloudFileInfo],
+                                 local_files: Dict[str, LocalFileInfo]) -> None:
         """并行预计算两端都有的文件的 content hash，后续 build_item 直接命中缓存。"""
         both = set(cloud_files.keys()) & set(local_files.keys())
         need_hash = []
         for rel in both:
             info = local_files[rel]
-            if info.get("is_dir"):
+            if info["is_dir"]:
                 continue
             abs_path = info["path"]
             if abs_path not in self._hash_cache:
@@ -706,18 +715,18 @@ class SyncManager:
 
         sem = asyncio.Semaphore(self.DOWNLOAD_WORKERS)
 
-        async def fetch_cloud_hash(item: SyncItem) -> Optional[str]:
+        async def fetch_cloud_hash(item: SyncItem) -> Optional[ContentHash]:
             # Phase 2b: try cached cloud hash first
             meta = self.metadata.get_file_info(item.relative_path)
             if meta and meta.get("cloud_content_hash"):
-                cached_cloud_mtime = meta.get("cloud_mtime", 0)
+                cached_cloud_mtime = meta["cloud_mtime"]
                 if cached_cloud_mtime == item.cloud_mtime:
                     return meta["cloud_content_hash"]
 
             async with sem:
                 try:
                     resp = await asyncio.to_thread(
-                        self.api.get_file_by_id, item.cloud_id)
+                        self.api.get_file_by_id, FileId(item.cloud_id))
                     cloud_hash = compute_hash_from_bytes(resp.content, item.relative_path)
                     if cloud_hash:
                         self.metadata.set_cloud_content_hash(
@@ -743,7 +752,7 @@ class SyncManager:
 
             previously_synced = (
                 meta is not None
-                and bool(meta.get("file_id"))
+                and bool(meta["file_id"])
                 and meta.get("last_sync_at", 0) > 0
             )
             new_action = decide_action(
@@ -751,8 +760,8 @@ class SyncManager:
                 cloud_exists=True,
                 local_mtime=item.local_mtime,
                 cloud_mtime=item.cloud_mtime,
-                meta_local_mtime=meta.get("local_mtime") if meta else None,
-                meta_cloud_mtime=meta.get("cloud_mtime") if meta else None,
+                meta_local_mtime=meta["local_mtime"] if meta else None,
+                meta_cloud_mtime=meta["cloud_mtime"] if meta else None,
                 local_hash=local_hash,
                 cloud_hash=cloud_hash,
                 meta_hash=meta_hash,
@@ -847,7 +856,7 @@ class SyncManager:
         os.makedirs(os.path.dirname(item.local_path), exist_ok=True)
         try:
             ok = retry_with_backoff(lambda: self.downloader.download_file(
-                file_id=item.cloud_id,
+                file_id=FileId(item.cloud_id),
                 file_name=item.cloud_name or os.path.basename(item.relative_path),
                 local_dir=os.path.dirname(item.local_path),
                 modify_time=item.cloud_mtime * 1000 if item.cloud_mtime else 0,
@@ -962,7 +971,7 @@ class SyncManager:
             return False
 
         try:
-            resp = self.api.get_file_by_id(item.cloud_id)
+            resp = self.api.get_file_by_id(FileId(item.cloud_id))
             theirs_bytes = resp.content
         except Exception:
             return False

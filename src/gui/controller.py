@@ -11,10 +11,10 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from src.api import YoudaoNoteApi
-from src.common import format_file_size, load_config
+from src.common import format_file_size, load_config, FileId, DirId
 from src.cookies import CookieManager
 from src.transfer.download import YoudaoNoteDownload
-from src.transfer.search import YoudaoNoteSearch
+from src.transfer.search import YoudaoNoteSearch, SearchType
 
 
 class GUIController:
@@ -69,7 +69,7 @@ class GUIController:
         self.current_path = "/"
         return dir_id, ""
 
-    def load_directory_contents(self, dir_id: str) -> Tuple[List[dict], List[dict], str]:
+    def load_directory_contents(self, dir_id: DirId) -> Tuple[List[dict], List[dict], str]:
         """
         加载指定目录的内容。
         返回 (folders, files, error_msg)。每个元素是 fileEntry dict。
@@ -85,7 +85,7 @@ class GUIController:
         except Exception as e:
             return [], [], f"加载目录内容失败: {e}"
 
-    def enter_folder(self, folder_name: str, folder_id: str) -> None:
+    def enter_folder(self, folder_name: str, folder_id: DirId) -> None:
         """更新导航状态（进入子文件夹）。"""
         if self.current_path == "/":
             self.current_path = f"/{folder_name}"
@@ -114,7 +114,7 @@ class GUIController:
         """
         self.is_search_mode = True
         try:
-            raw_results = self.searcher.search_by_name(keyword, search_type, exact_match)
+            raw_results = self.searcher.search_by_name(keyword, SearchType(search_type), exact_match)
             results = [
                 {"entry": r["entry"], "path": r["path"], "is_dir": r["is_dir"]}
                 for r in raw_results
@@ -125,10 +125,10 @@ class GUIController:
 
     # ---------- 下载 ----------
 
-    def download_file(self, file_id: str, file_name: str, local_dir: str) -> bool:
+    def download_file(self, file_id: FileId, file_name: str, local_dir: str) -> bool:
         return self.downloader.download_file(file_id, file_name, local_dir)
 
-    def download_folder(self, folder_id: str, folder_name: str, local_dir: str) -> bool:
+    def download_folder(self, folder_id: DirId, folder_name: str, local_dir: str) -> bool:
         return self.downloader.download_folder(folder_id, folder_name, local_dir)
 
     # ---------- 格式化 ----------

@@ -11,10 +11,10 @@ import os
 import time
 
 from src.api import YoudaoNoteApi
-from src.common import format_file_size, load_config
+from src.common import format_file_size, load_config, DirId
 from src.cookies import CookieManager
 from src.transfer.download import YoudaoNoteDownload
-from src.transfer.search import YoudaoNoteSearch
+from src.transfer.search import YoudaoNoteSearch, SearchType
 
 
 class YoudaoNoteCLI:
@@ -74,7 +74,7 @@ class YoudaoNoteCLI:
 
         self._print_directory(folder_id, "", max_depth, 0)
 
-    def _print_directory(self, dir_id: str, current_path: str,
+    def _print_directory(self, dir_id: DirId, current_path: str,
                          max_depth: int, current_depth: int):
         """递归打印目录"""
         if current_depth >= max_depth:
@@ -111,7 +111,7 @@ class YoudaoNoteCLI:
             return []
 
         print(f"🔍 搜索 '{name}' ...")
-        results = self.search_engine.search_by_name(name, search_type, exact_match)
+        results = self.search_engine.search_by_name(name, SearchType(search_type), exact_match)
 
         if not results:
             print("❌ 未找到匹配的项目")
@@ -130,7 +130,7 @@ class YoudaoNoteCLI:
         if not self.search_engine and not self.init_api():
             return False
 
-        results = self.search_engine.search_by_name(name, search_type, exact_match)
+        results = self.search_engine.search_by_name(name, SearchType(search_type), exact_match)
 
         if not results:
             print("❌ 未找到匹配的项目")

@@ -6,12 +6,20 @@
 """
 
 import logging
-from typing import List, Dict, Optional
+from enum import Enum
+from typing import List, Dict, Optional, TYPE_CHECKING
 
-from typing import TYPE_CHECKING
+from src.common import DirId
 
 if TYPE_CHECKING:
     from src.protocols import DirBrowser
+
+
+class SearchType(Enum):
+    """搜索范围类型"""
+    ALL = "all"
+    FOLDER = "folder"
+    FILE = "file"
 
 
 class YoudaoNoteSearch:
@@ -29,11 +37,11 @@ class YoudaoNoteSearch:
         """
         self.api = api
 
-    def get_root_id(self) -> str:
+    def get_root_id(self) -> DirId:
         """获取根目录 ID（委托给 api.get_root_id()）。"""
         return self.api.get_root_id()
 
-    def list_directory(self, dir_id: str = None) -> Dict:
+    def list_directory(self, dir_id: DirId = None) -> Dict:
         """
         列出目录内容
         :param dir_id: 目录 ID，为空则列出根目录
@@ -44,7 +52,7 @@ class YoudaoNoteSearch:
         
         return self.api.get_dir_info_by_id(dir_id)
 
-    def get_directory_entries(self, dir_id: str = None) -> List[Dict]:
+    def get_directory_entries(self, dir_id: DirId = None) -> List[Dict]:
         """
         获取目录下的所有条目（文件和文件夹）
         :param dir_id: 目录 ID，为空则获取根目录
@@ -68,7 +76,7 @@ class YoudaoNoteSearch:
         
         return result
 
-    def search_by_name(self, name: str, search_type: str = "all", 
+    def search_by_name(self, name: str, search_type: SearchType = SearchType.ALL,
                        exact_match: bool = False) -> List[Dict]:
         """
         根据名称搜索文件或文件夹
@@ -87,9 +95,10 @@ class YoudaoNoteSearch:
         
         return results
 
-    def _search_recursively(self, dir_id: str, target_name: str, search_type: str,
-                           exact_match: bool, results: List[Dict], 
-                           current_path: str = "", depth: int = 0):
+    def _search_recursively(self, dir_id: DirId, target_name: str,
+                           search_type: SearchType,
+                           exact_match: bool, results: List[Dict],
+                           current_path: str = "", depth: int = 0) -> None:
         """
         递归搜索
         :param dir_id: 当前目录 ID
@@ -122,14 +131,11 @@ class YoudaoNoteSearch:
                 else:
                     is_match = target_name.lower() in entry_name.lower()
 
-                # 根据搜索类型过滤
-                should_include = False
-                if search_type == "all":
-                    should_include = True
-                elif search_type == "folder" and is_dir:
-                    should_include = True
-                elif search_type == "file" and not is_dir:
-                    should_include = True
+                should_include = (
+                    search_type == SearchType.ALL
+                    or (search_type == SearchType.FOLDER and is_dir)
+                    or (search_type == SearchType.FILE and not is_dir)
+                )
 
                 if is_match and should_include:
                     results.append({
@@ -159,7 +165,7 @@ class YoudaoNoteSearch:
         :param exact_match: 是否精确匹配
         :return: 搜索结果列表
         """
-        return self.search_by_name(name, search_type="folder", exact_match=exact_match)
+        return self.search_by_name(name, search_type=SearchType.FOLDER, exact_match=exact_match)
 
     def search_files(self, name: str, exact_match: bool = False) -> List[Dict]:
         """
@@ -168,9 +174,9 @@ class YoudaoNoteSearch:
         :param exact_match: 是否精确匹配
         :return: 搜索结果列表
         """
-        return self.search_by_name(name, search_type="file", exact_match=exact_match)
+        return self.search_by_name(name, search_type=SearchType.FILE, exact_match=exact_match)
 
-    def find_folder_by_path(self, path: str) -> Optional[str]:
+    def find_folder_by_path(self, path: str) -> Optional[DirId]:
         """
         根据路径查找文件夹 ID
         :param path: 路径，如 "folder1/folder2"

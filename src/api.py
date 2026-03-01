@@ -4,12 +4,13 @@ import mimetypes
 import os
 import time
 import uuid
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import quote as url_quote
 
 import httpx
 
-from src.common import get_config_directory, NoteDomain
+from src.common import get_config_directory, NoteDomain, FileId, DirId
+from src.cookies import CookieEntry
 
 
 class YoudaoNoteApi(object):
@@ -100,18 +101,16 @@ class YoudaoNoteApi(object):
             follow_redirects=True,
         )
 
-    def _apply_cookies(self, cookies: list) -> Optional[str]:
+    def _apply_cookies(self, cookies: List[CookieEntry]) -> Optional[str]:
         """将 cookie 列表应用到 session 并提取 CSTK。"""
         for cookie in cookies:
-            if not isinstance(cookie, list) or len(cookie) < 4:
-                continue
             self.session.cookies.set(
-                cookie[0], cookie[1], domain=cookie[2], path=cookie[3]
+                cookie.name, cookie.value, domain=cookie.domain, path=cookie.path
             )
         self.cstk = None
         for cookie in cookies:
-            if isinstance(cookie, list) and len(cookie) >= 2 and cookie[0] == "YNOTE_CSTK":
-                self.cstk = cookie[1]
+            if cookie.name == "YNOTE_CSTK":
+                self.cstk = cookie.value
                 break
         if not self.cstk:
             return "YNOTE_CSTK 字段为空"
@@ -247,7 +246,7 @@ class YoudaoNoteApi(object):
         data = {"path": "/", "entire": "true", "purge": "false", "cstk": self.cstk}
         return self._safe_json(self.http_post(self.ROOT_ID_URL.format(cstk=self.cstk), data=data))
 
-    def get_root_id(self) -> str:
+    def get_root_id(self) -> DirId:
         """
         获取根目录 ID（带缓存）。
 
@@ -265,7 +264,7 @@ class YoudaoNoteApi(object):
                 raise RuntimeError(f"无法从 API 返回中提取根目录 ID: {list(root_info.keys())}")
         return self._cached_root_id
 
-    def get_dir_info_by_id(self, dir_id: str) -> dict:
+    def get_dir_info_by_id(self, dir_id: DirId) -> dict:
         """
         根据目录 ID 获取目录下所有文件信息（自动分页 + 去重）。
 
@@ -336,7 +335,7 @@ class YoudaoNoteApi(object):
         except Exception:
             return []
 
-    def get_file_by_id(self, file_id: str):
+    def get_file_by_id(self, file_id: FileId):
         """
         根据文件 ID 获取文件内容
         :param file_id:
@@ -356,14 +355,14 @@ class YoudaoNoteApi(object):
         return self.http_post(url, data=data)
 
     @staticmethod
-    def generate_file_id() -> str:
+    def generate_file_id() -> FileId:
         """生成新的文件 ID"""
-        return "WEB" + uuid.uuid4().hex
+        return FileId("WEB" + uuid.uuid4().hex)
 
     def push_file(
         self,
-        file_id: str,
-        parent_id: str,
+        file_id: FileId,
+        parent_id: DirId,
         name: str,
         domain: int,
         body_string: str,
@@ -435,8 +434,8 @@ class YoudaoNoteApi(object):
 
     def push_binary_file(
         self,
-        file_id: str,
-        parent_id: str,
+        file_id: FileId,
+        parent_id: DirId,
         name: str,
         file_bytes: bytes,
         create_time: int = None,
@@ -489,7 +488,7 @@ class YoudaoNoteApi(object):
         response = self.http_post(url, data=data, files=files)
         return self._safe_json(response)
 
-    def rename_file(self, file_id: str, new_name: str, domain: int = 1) -> dict:
+    def rename_file(self, file_id: FileId, new_name: str, domain: int = 1) -> dict:
         """
         重命名笔记
         
@@ -523,7 +522,7 @@ class YoudaoNoteApi(object):
         response = self.http_post(url, data=data)
         return self._safe_json(response)
 
-    def move_file(self, file_id: str, new_parent_id: str,
+    def move_file(self, file_id: FileId, new_parent_id: DirId,
                   domain: int = 1) -> dict:
         """
         移动笔记到另一个目录（只改 parentId，保留 file_id 和历史）。
@@ -554,7 +553,7 @@ class YoudaoNoteApi(object):
         response = self.http_post(url, data=data)
         return self._safe_json(response)
 
-    def delete_file(self, file_id: str) -> dict:
+    def delete_file(self, file_id: FileId) -> dict:
         """
         删除笔记（移到回收站）
         
@@ -569,7 +568,7 @@ class YoudaoNoteApi(object):
         response = self.http_post(url, data=data)
         return self._safe_json(response)
 
-    def create_dir(self, parent_id: str, name: str) -> dict:
+    def create_dir(self, parent_id: DirId, name: str) -> dict:
         """
         创建目录（通过 push 接口，与创建文件共用同一个端点）
         
@@ -619,7 +618,7 @@ class YoudaoNoteApi(object):
         
         return result
 
-    def get_file_info(self, file_id: str) -> dict:
+    def get_file_info(self, file_id: FileId) -> dict:
         """
         获取文件详细信息
         

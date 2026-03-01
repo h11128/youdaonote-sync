@@ -37,6 +37,9 @@ class MockSyncApi:
     def get_root_id(self) -> str:
         return "ROOT"
 
+    def list_recent(self, limit: int = 30) -> list:
+        return []
+
     def create_async_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             transport=httpx.MockTransport(self._handle))
@@ -136,6 +139,8 @@ def _sync_env(cloud_tree=None, file_contents=None):
         api=api, local_dir=sync_dir, metadata=meta,
         downloader=downloader, uploader=uploader, git=git,
     )
+    # Prevent real desktop client data from polluting test metadata
+    manager._try_seed_from_desktop = lambda: False
     try:
         yield manager, meta, downloader, uploader, sync_dir
     finally:
@@ -363,6 +368,7 @@ class E2EMetadataPersistenceTest(unittest.TestCase):
                 api=api, local_dir=sync_dir, metadata=meta1,
                 downloader=dl, uploader=MockUploader(), git=MockGit(),
             )
+            mgr._try_seed_from_desktop = lambda: False
             mgr.sync(direction=SyncDirection.PULL,
                      auto_git=False, auto_dedup=False)
             meta1.close()
@@ -386,14 +392,21 @@ class E2EContentHashDedupTest(unittest.TestCase):
         """本地文件的 hash 与 metadata 中已有云端文件相同 → 跳过上传"""
         from src.sync.utils import compute_content_hash
 
-        with _sync_env() as (mgr, meta, dl, ul, tmpdir):
-            # 准备一个本地文件
+        cloud = {
+            "ROOT": {"entries": [
+                _cloud_file("WEB_EXISTING", "cloud_existing.md", mtime=5000),
+            ]},
+        }
+        contents = {"WEB_EXISTING": b"identical content"}
+
+        with _sync_env(cloud, contents) as (mgr, meta, dl, ul, tmpdir):
+            # 准备一个本地文件（与云端 cloud_existing.md 内容相同）
             path_a = os.path.join(tmpdir, "a.md")
             with open(path_a, "w", encoding="utf-8") as f:
                 f.write("identical content")
             content_hash = compute_content_hash(path_a)
 
-            # 模拟：云端已有同内容文件（在 metadata 中记录）
+            # 在 metadata 中记录云端文件的 content_hash
             meta.set_file_info(
                 "cloud_existing.md", "WEB_EXISTING", cloud_mtime=5000,
                 content_hash=content_hash)
@@ -432,6 +445,7 @@ class E2EConflictTest(unittest.TestCase):
             meta.set_file_info(
                 "conflict.md", "WEB1", cloud_mtime=1000,
                 local_mtime=1000)
+            meta.mark_synced("conflict.md", ts=500)
 
             stats = mgr.sync(direction=SyncDirection.PULL,
                              auto_git=False, auto_dedup=False)

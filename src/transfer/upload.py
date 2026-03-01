@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.protocols import FilePusher
 
-from src.common import generate_file_id, NoteDomain, normalize_sep
+from src.common import generate_file_id, NoteDomain, normalize_sep, FileId, DirId
 from src.sync.metadata import SyncMetadata
 
 
@@ -42,7 +42,7 @@ class YoudaoNoteUpload:
 
     # ========== 供 SyncManager 调用的公开方法 ==========
 
-    def ensure_parent_dir(self, rel_path: str) -> Optional[str]:
+    def ensure_parent_dir(self, rel_path: str) -> Optional[DirId]:
         """
         确保文件的父目录在云端存在并返回其 ID。
         迭代创建不存在的中间目录（从根往下逐级创建）。
@@ -85,7 +85,7 @@ class YoudaoNoteUpload:
     def upload_file(
         self,
         local_path: str,
-        parent_id: str,
+        parent_id: DirId,
         relative_path: str = None,
         force: bool = False,
     ) -> Tuple[bool, Optional[str]]:
@@ -112,7 +112,7 @@ class YoudaoNoteUpload:
         handler = getattr(self, handler_name)
         return handler(local_path, parent_id, rel_path, force)
 
-    def _upload_note_skip(self, local_path: str, parent_id: str,
+    def _upload_note_skip(self, local_path: str, parent_id: DirId,
                           relative_path: str, force: bool = False
                           ) -> Tuple[bool, Optional[str]]:
         """.note 文件暂时跳过上传（需要特殊处理）。"""
@@ -135,7 +135,7 @@ class YoudaoNoteUpload:
         cloud_name: str,
         domain: int,
         body: str,
-        parent_id: str,
+        parent_id: DirId,
         relative_path: str,
         local_mtime: int,
     ) -> Tuple[bool, Optional[str]]:
@@ -183,7 +183,7 @@ class YoudaoNoteUpload:
     def _upload_markdown(
         self,
         local_path: str,
-        parent_id: str,
+        parent_id: DirId,
         relative_path: str,
         force: bool = False,
     ) -> Tuple[bool, Optional[str]]:
@@ -213,7 +213,7 @@ class YoudaoNoteUpload:
     def upload_note(
         self,
         local_path: str,
-        parent_id: str,
+        parent_id: DirId,
         relative_path: str,
         force: bool = False,
     ) -> Tuple[bool, Optional[str]]:
@@ -248,7 +248,7 @@ class YoudaoNoteUpload:
     def _upload_auto(
         self,
         local_path: str,
-        parent_id: str,
+        parent_id: DirId,
         relative_path: str,
         force: bool = False,
     ) -> Tuple[bool, Optional[str]]:
@@ -261,7 +261,7 @@ class YoudaoNoteUpload:
     def _upload_binary(
         self,
         local_path: str,
-        parent_id: str,
+        parent_id: DirId,
         relative_path: str,
         force: bool = False,
     ) -> Tuple[bool, Optional[str]]:
@@ -318,7 +318,7 @@ class YoudaoNoteUpload:
     def upload_folder(
         self,
         local_dir: str,
-        parent_id: str,
+        parent_id: DirId,
         base_dir: str = None,
         recursive: bool = True,
         upload_as_note: bool = False,
@@ -395,9 +395,9 @@ class YoudaoNoteUpload:
         return success_count, fail_count, errors
 
     def ensure_cloud_dir(
-        self, dir_name: str, parent_id: str, relative_path: str,
+        self, dir_name: str, parent_id: DirId, relative_path: str,
         defer_save: bool = False,
-    ) -> Optional[str]:
+    ) -> Optional[DirId]:
         """
         确保云端目录存在，不存在则创建
         

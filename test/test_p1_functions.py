@@ -511,7 +511,8 @@ class CalibrateMetadataTest(unittest.TestCase):
         file_path = os.path.join(self.tmpdir, "note.md")
         with open(file_path, "w") as f:
             f.write("# content")
-        cloud_files = {"note.md": {"id": "WEB1", "mtime": 1000, "is_dir": False, "parent_id": "P1"}}
+        cloud_files = {"note.md": {"id": "WEB1", "parent_id": "P1", "name": "note.md",
+                                    "is_dir": False, "mtime": 1000, "ctime": 0, "domain": 1}}
         local_files = {"note.md": {"path": file_path, "mtime": 1000, "is_dir": False}}
 
         # When
@@ -530,7 +531,9 @@ class CalibrateMetadataTest(unittest.TestCase):
         with open(file_path, "w") as f:
             f.write("# content")
         self.meta.set_file_info("note.md", "WEB1", cloud_mtime=1000, local_mtime=1000)
-        cloud_files = {"note.md": {"id": "WEB1", "mtime": 1000, "is_dir": False}}
+        self.meta.mark_synced("note.md")
+        cloud_files = {"note.md": {"id": "WEB1", "parent_id": "P1", "name": "note.md",
+                                    "is_dir": False, "mtime": 1000, "ctime": 0, "domain": 1}}
         local_files = {"note.md": {"path": file_path, "mtime": 1000, "is_dir": False}}
 
         # When
@@ -542,7 +545,8 @@ class CalibrateMetadataTest(unittest.TestCase):
     def test_only_one_side_not_calibrated(self):
         """只有一端存在时不校准"""
         # Given — 只有云端
-        cloud_files = {"note.md": {"id": "WEB1", "mtime": 1000, "is_dir": False}}
+        cloud_files = {"note.md": {"id": "WEB1", "parent_id": "", "name": "note.md",
+                                    "is_dir": False, "mtime": 1000, "ctime": 0, "domain": 1}}
         local_files = {}
 
         # When
@@ -573,7 +577,8 @@ class BuildItemTest(unittest.TestCase):
     def test_only_cloud_returns_download(self):
         """只有云端 → DOWNLOAD"""
         # Given
-        cloud = {"id": "WEB1", "mtime": 1000, "is_dir": False, "parent_id": "P1", "name": "note.md"}
+        cloud = {"id": "WEB1", "parent_id": "P1", "name": "note.md",
+                 "is_dir": False, "mtime": 1000, "ctime": 0, "domain": 1}
         local = None
 
         # When
@@ -605,7 +610,8 @@ class BuildItemTest(unittest.TestCase):
             f.write("# content")
         mtime = int(os.path.getmtime(file_path))
         self.meta.set_file_info("note.md", "WEB1", cloud_mtime=mtime, local_mtime=mtime)
-        cloud = {"id": "WEB1", "mtime": mtime, "is_dir": False, "parent_id": "P1", "name": "note.md"}
+        cloud = {"id": "WEB1", "parent_id": "P1", "name": "note.md",
+                 "is_dir": False, "mtime": mtime, "ctime": 0, "domain": 1}
         local = {"path": file_path, "mtime": mtime, "is_dir": False}
 
         # When
@@ -613,6 +619,63 @@ class BuildItemTest(unittest.TestCase):
 
         # Then
         self.assertEqual(item.action, SyncAction.SKIP)
+
+
+# ========== SearchType 测试 ==========
+
+class SearchTypeTest(unittest.TestCase):
+    """SearchType(Enum) 枚举行为和类型转换"""
+
+    def test_value_matches_string(self):
+        """SearchType 成员的 .value 与定义字符串一致"""
+        from src.transfer.search import SearchType
+
+        self.assertEqual(SearchType.ALL.value, "all")
+        self.assertEqual(SearchType.FOLDER.value, "folder")
+        self.assertEqual(SearchType.FILE.value, "file")
+
+    def test_string_to_enum_conversion(self):
+        """字符串可通过 SearchType() 构造函数转为枚举"""
+        from src.transfer.search import SearchType
+
+        self.assertIs(SearchType("all"), SearchType.ALL)
+        self.assertIs(SearchType("folder"), SearchType.FOLDER)
+        self.assertIs(SearchType("file"), SearchType.FILE)
+
+    def test_invalid_string_raises(self):
+        """无效字符串抛 ValueError（fail fast）"""
+        from src.transfer.search import SearchType
+
+        with self.assertRaises(ValueError):
+            SearchType("invalid")
+
+
+# ========== DownloadTask 测试 ==========
+
+class DownloadTaskTest(unittest.TestCase):
+    """DownloadTask NamedTuple named access"""
+
+    def test_named_field_access(self):
+        """NamedTuple 字段可通过名称访问"""
+        from src.transfer.pull import DownloadTask
+
+        t = DownloadTask("FID", "note.md", "/tmp", 1000, 500)
+
+        self.assertEqual(t.file_id, "FID")
+        self.assertEqual(t.name, "note.md")
+        self.assertEqual(t.local_dir, "/tmp")
+        self.assertEqual(t.modify_time, 1000)
+        self.assertEqual(t.create_time, 500)
+
+    def test_tuple_unpacking_still_works(self):
+        """NamedTuple 向后兼容 positional unpacking"""
+        from src.transfer.pull import DownloadTask
+
+        t = DownloadTask("FID", "note.md", "/tmp", 1000, 500)
+        fid, name, ldir, mtime, ctime = t
+
+        self.assertEqual(fid, "FID")
+        self.assertEqual(name, "note.md")
 
 
 if __name__ == "__main__":

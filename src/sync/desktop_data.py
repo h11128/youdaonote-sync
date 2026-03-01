@@ -11,6 +11,7 @@ import platform
 import sqlite3
 from typing import Optional, Dict, Tuple
 
+from src.common import FileId
 from src.sync.scanner import map_cloud_name
 
 logger = logging.getLogger(__name__)
@@ -187,7 +188,7 @@ def seed_metadata_from_desktop(metadata, data_dir: str = None) -> int:
         conn.close()
 
 
-def read_desktop_file(file_id: str, data_dir: str = None) -> Optional[bytes]:
+def read_desktop_file(file_id: FileId, data_dir: str = None) -> Optional[bytes]:
     """从桌面客户端本地缓存读取 domain=0 文件内容。
 
     桌面客户端将 domain=0 文件的 XML 存储在 file/<bucket>/<fileId>。

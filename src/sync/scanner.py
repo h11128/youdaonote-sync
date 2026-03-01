@@ -12,11 +12,12 @@ import logging
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import httpx
 
-from src.common import normalize_sep
+from src.common import normalize_sep, FileId, DirId
+from src.sync.utils import CloudFileInfo, LocalFileInfo
 
 if TYPE_CHECKING:
     from src.protocols import DirBrowser
@@ -42,21 +43,23 @@ def map_cloud_name(name: str) -> str:
     return stem + ext
 
 
-def scan_cloud(api: "DirBrowser", dir_id: str, base: str = "",
-               workers: int = DEFAULT_SCAN_WORKERS) -> Dict[str, Dict]:
+def scan_cloud(api: "DirBrowser", dir_id: DirId, base: str = "",
+               workers: int = DEFAULT_SCAN_WORKERS,
+               ) -> Dict[str, CloudFileInfo]:
     """并发获取云端文件列表（BFS + 线程池）。
 
-    返回 {relative_path: info_dict}，relative_path 已经过 map_cloud_name 映射。
+    返回 {relative_path: CloudFileInfo}，relative_path 已经过 map_cloud_name 映射。
     """
     if not dir_id:
         raise ValueError("dir_id 不能为空")
-    files: Dict[str, Dict] = {}
+    files: Dict[str, CloudFileInfo] = {}
     files_lock = threading.Lock()
 
-    def _fetch_dir(did: str, bpath: str) -> tuple:
+    def _fetch_dir(did: DirId, bpath: str,
+                   ) -> Tuple[List[Tuple[DirId, str]], Dict[str, CloudFileInfo]]:
         """获取一个目录的内容，返回 (子目录列表, 本目录文件 dict)"""
-        subdirs = []
-        local_batch: Dict[str, Dict] = {}
+        subdirs: List[Tuple[DirId, str]] = []
+        local_batch: Dict[str, CloudFileInfo] = {}
         try:
             entries = api.get_dir_info_by_id(did).get("entries", [])
         except Exception as e:
@@ -70,19 +73,21 @@ def scan_cloud(api: "DirBrowser", dir_id: str, base: str = "",
                 continue
 
             rel = f"{bpath}/{name}".lstrip("/") if bpath else name
-            info = {
-                "id": fe.get("id", ""),
-                "parent_id": did,
-                "name": name,
-                "is_dir": fe.get("dir", False),
-                "mtime": fe.get("modifyTimeForSort", 0),
-                "ctime": fe.get("createTimeForSort", 0),
-                "domain": fe.get("domain", 1),
-            }
+            is_dir_flag = fe.get("dir", False)
+            eid = fe.get("id", "")
+            info = CloudFileInfo(
+                id=DirId(eid) if is_dir_flag else FileId(eid),
+                parent_id=did,
+                name=name,
+                is_dir=is_dir_flag,
+                mtime=fe.get("modifyTimeForSort", 0),
+                ctime=fe.get("createTimeForSort", 0),
+                domain=fe.get("domain", 1),
+            )
 
-            if info["is_dir"]:
+            if is_dir_flag:
                 local_batch[rel] = info
-                subdirs.append((info["id"], rel))
+                subdirs.append((DirId(eid), rel))
             else:
                 local_name = map_cloud_name(name)
                 local_rel = f"{bpath}/{local_name}".lstrip("/") if bpath else local_name
@@ -150,10 +155,10 @@ async def async_scan_cloud(
     dir_url_template: str,
     page_size: int,
     cstk: str,
-    dir_id: str,
+    dir_id: DirId,
     base: str = "",
     max_concurrent: int = DEFAULT_SCAN_WORKERS,
-) -> Dict[str, Dict]:
+) -> Dict[str, CloudFileInfo]:
     """异步并发获取云端文件列表（BFS + asyncio.Semaphore）。
 
     与 scan_cloud() 返回格式完全一致，但使用 httpx.AsyncClient 实现真正的异步 I/O。
@@ -169,13 +174,13 @@ async def async_scan_cloud(
     if not dir_id:
         raise ValueError("dir_id 不能为空")
 
-    files: Dict[str, Dict] = {}
+    files: Dict[str, CloudFileInfo] = {}
     sem = asyncio.Semaphore(max_concurrent)
     max_pages = 50
 
-    async def _fetch_dir(did: str, bpath: str) -> List[tuple]:
+    async def _fetch_dir(did: DirId, bpath: str) -> List[Tuple[DirId, str]]:
         """获取一个目录的全部内容（自动分页 + 去重），返回子目录列表。"""
-        subdirs: List[tuple] = []
+        subdirs: List[Tuple[DirId, str]] = []
         seen_ids: set = set()
         offset = 0
 
@@ -211,19 +216,20 @@ async def async_scan_cloud(
                     continue
 
                 rel = f"{bpath}/{name}".lstrip("/") if bpath else name
-                info = {
-                    "id": eid,
-                    "parent_id": did,
-                    "name": name,
-                    "is_dir": fe.get("dir", False),
-                    "mtime": fe.get("modifyTimeForSort", 0),
-                    "ctime": fe.get("createTimeForSort", 0),
-                    "domain": fe.get("domain", 1),
-                }
+                is_dir_flag = fe.get("dir", False)
+                info = CloudFileInfo(
+                    id=DirId(eid) if is_dir_flag else FileId(eid),
+                    parent_id=did,
+                    name=name,
+                    is_dir=is_dir_flag,
+                    mtime=fe.get("modifyTimeForSort", 0),
+                    ctime=fe.get("createTimeForSort", 0),
+                    domain=fe.get("domain", 1),
+                )
 
-                if info["is_dir"]:
+                if is_dir_flag:
                     files[rel] = info
-                    subdirs.append((eid, rel))
+                    subdirs.append((DirId(eid), rel))
                 else:
                     local_name = map_cloud_name(name)
                     local_rel = f"{bpath}/{local_name}".lstrip("/") if bpath else local_name
@@ -319,8 +325,8 @@ def matches_selective(rel_path: str, include: List[str], exclude: List[str]) -> 
 
 
 def scan_local(local_dir: str, base_path: str = "",
-               sync_include: List[str] = None,
-               sync_exclude: List[str] = None) -> Dict[str, Dict]:
+               sync_include: Optional[List[str]] = None,
+               sync_exclude: Optional[List[str]] = None) -> Dict[str, LocalFileInfo]:
     """扫描本地目录（顶层子目录并行）。
 
     路径映射规则与 scan_cloud 保持一致：
@@ -341,7 +347,7 @@ def scan_local(local_dir: str, base_path: str = "",
         return {}
 
     top_dirs = []
-    root_files: Dict[str, Dict] = {}
+    root_files: Dict[str, LocalFileInfo] = {}
 
     for entry in top_entries:
         if entry.name.startswith("."):
@@ -350,8 +356,8 @@ def scan_local(local_dir: str, base_path: str = "",
             if entry.name in LOCAL_ARTIFACT_DIRS:
                 continue
             rel = normalize_sep(os.path.relpath(entry.path, local_dir))
-            root_files[rel] = {"path": entry.path, "is_dir": True,
-                               "mtime": int(entry.stat().st_mtime)}
+            root_files[rel] = LocalFileInfo(path=entry.path, is_dir=True,
+                                            mtime=int(entry.stat().st_mtime))
             top_dirs.append(entry.path)
         elif entry.is_file(follow_symlinks=False):
             if ".conflict." in entry.name:
@@ -362,11 +368,11 @@ def scan_local(local_dir: str, base_path: str = "",
         return root_files
 
     # 每个顶层子目录在独立线程中 os.walk
-    results = [root_files]
+    results: List[Dict[str, LocalFileInfo]] = [root_files]
     results_lock = threading.Lock()
 
     def _walk_subdir(subdir: str):
-        partial: Dict[str, Dict] = {}
+        partial: Dict[str, LocalFileInfo] = {}
         _scandir_recursive(subdir, local_dir, partial)
         with results_lock:
             results.append(partial)
@@ -384,7 +390,7 @@ def scan_local(local_dir: str, base_path: str = "",
                 except Exception as e:
                     logging.error(f"本地扫描异常: {e}")
 
-    files: Dict[str, Dict] = {}
+    files: Dict[str, LocalFileInfo] = {}
     for partial in results:
         files.update(partial)
 
@@ -396,7 +402,7 @@ def scan_local(local_dir: str, base_path: str = "",
 
 
 def _scandir_recursive(dirpath: str, local_dir: str,
-                       target: Dict[str, Dict]) -> None:
+                       target: Dict[str, LocalFileInfo]) -> None:
     """用 os.scandir 递归遍历目录，利用 DirEntry stat 缓存减少系统调用。"""
     try:
         entries = list(os.scandir(dirpath))
@@ -411,8 +417,8 @@ def _scandir_recursive(dirpath: str, local_dir: str,
                     continue
                 rel = normalize_sep(os.path.relpath(entry.path, local_dir))
                 st = entry.stat(follow_symlinks=False)
-                target[rel] = {"path": entry.path, "is_dir": True,
-                               "mtime": int(st.st_mtime)}
+                target[rel] = LocalFileInfo(path=entry.path, is_dir=True,
+                                            mtime=int(st.st_mtime))
                 _scandir_recursive(entry.path, local_dir, target)
             elif entry.is_file(follow_symlinks=False):
                 if ".conflict." in entry.name:
@@ -423,7 +429,7 @@ def _scandir_recursive(dirpath: str, local_dir: str,
 
 
 def _add_local_file_from_entry(entry: os.DirEntry, local_dir: str,
-                               target: Dict[str, Dict]) -> None:
+                               target: Dict[str, LocalFileInfo]) -> None:
     """将一个 DirEntry 文件加入扫描结果（利用缓存的 stat）。"""
     name = entry.name
     _, ext = os.path.splitext(name)
@@ -437,12 +443,12 @@ def _add_local_file_from_entry(entry: os.DirEntry, local_dir: str,
         st = entry.stat(follow_symlinks=False)
     except OSError:
         return
-    target[rel] = {"path": entry.path, "is_dir": False,
-                   "mtime": int(st.st_mtime), "size": st.st_size}
+    target[rel] = LocalFileInfo(path=entry.path, is_dir=False,
+                                mtime=int(st.st_mtime), size=st.st_size)
 
 
 def _add_local_file(path: str, name: str, local_dir: str,
-                    target: Dict[str, Dict]) -> None:
+                    target: Dict[str, LocalFileInfo]) -> None:
     """将一个本地文件加入扫描结果 dict。"""
     _, ext = os.path.splitext(name)
     mapped_name = map_cloud_name(name)
@@ -455,5 +461,5 @@ def _add_local_file(path: str, name: str, local_dir: str,
         st = os.stat(path)
     except OSError:
         return
-    target[rel] = {"path": path, "is_dir": False,
-                   "mtime": int(st.st_mtime), "size": st.st_size}
+    target[rel] = LocalFileInfo(path=path, is_dir=False,
+                                mtime=int(st.st_mtime), size=st.st_size)

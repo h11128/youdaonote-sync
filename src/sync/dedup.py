@@ -26,7 +26,10 @@ import xxhash
 
 from src.common import safe_long_path, normalize_sep
 from src.sync.metadata import SyncMetadata
-from src.sync.utils import compute_content_hash
+from src.sync.utils import (
+    CloudFileInfo, LocalFileInfo, FileMetaInfo, DedupStats,
+    ContentHash, compute_content_hash,
+)
 
 _EMPTY_HASH = xxhash.xxh3_128(b"").hexdigest()
 
@@ -70,8 +73,8 @@ def build_ref_index(root: str) -> Set[str]:
 def build_all_indexes(
     root: str,
     metadata: SyncMetadata = None,
-    hash_cache: Dict[str, str] = None,
-    local_files: Dict[str, Dict] = None,
+    hash_cache: Dict[str, ContentHash] = None,
+    local_files: Dict[str, LocalFileInfo] = None,
 ) -> Tuple[Dict[str, List[str]], Set[str]]:
     """构建 hash 索引和引用索引。
 
@@ -90,7 +93,7 @@ def _build_indexes(
     root: str,
     metadata: SyncMetadata = None,
     need_refs: bool = True,
-    hash_cache: Dict[str, str] = None,
+    hash_cache: Dict[str, ContentHash] = None,
 ) -> Tuple[Dict[str, List[str]], Set[str]]:
     """
     内部实现：一次文件系统遍历同时构建 hash 分组和资源引用集合。
@@ -119,7 +122,7 @@ def _build_indexes(
             if not h:
                 meta_info = all_meta.get(rel)
                 if meta_info and "content_hash" in meta_info:
-                    cached_mtime = meta_info.get("local_mtime", 0)
+                    cached_mtime = meta_info["local_mtime"]
                     try:
                         current_mtime = int(os.path.getmtime(full))
                     except OSError:
@@ -167,9 +170,9 @@ def _build_indexes(
 
 def _build_indexes_from_scan(
     root: str,
-    local_files: Dict[str, Dict],
+    local_files: Dict[str, LocalFileInfo],
     metadata: SyncMetadata = None,
-    hash_cache: Dict[str, str] = None,
+    hash_cache: Dict[str, ContentHash] = None,
 ) -> Tuple[Dict[str, List[str]], Set[str]]:
     """基于 scan_local 已有的文件列表构建索引，跳过 os.walk。
 
@@ -186,9 +189,9 @@ def _build_indexes_from_scan(
     all_meta = metadata.get_all_file_meta_for_dedup() if metadata else {}
 
     for rel, info in local_files.items():
-        if info.get("is_dir"):
+        if info["is_dir"]:
             continue
-        full = info.get("path") or os.path.join(root, rel)
+        full = info["path"]
         f = os.path.basename(rel)
         if f.startswith(".") or ".conflict." in f:
             continue
@@ -198,8 +201,8 @@ def _build_indexes_from_scan(
             h = hash_cache.get(full)
         meta_info = all_meta.get(rel)
         if not h and meta_info and "content_hash" in meta_info:
-            cached_mtime = meta_info.get("local_mtime", 0)
-            current_mtime = info.get("mtime", 0)
+            cached_mtime = meta_info["local_mtime"]
+            current_mtime = info["mtime"]
             if current_mtime == cached_mtime:
                 h = meta_info["content_hash"]
         if not h:
@@ -214,8 +217,8 @@ def _build_indexes_from_scan(
             hash_index[h].append(rel)
 
         if f.endswith(".md"):
-            cached_mtime = meta_info.get("local_mtime", 0) if meta_info else 0
-            current_mtime = info.get("mtime", 0)
+            cached_mtime = meta_info["local_mtime"] if meta_info else 0
+            current_mtime = info["mtime"]
 
             if current_mtime == cached_mtime and rel in cached_refs:
                 for ref in cached_refs[rel]:
@@ -263,7 +266,7 @@ def _is_asset(path: str) -> bool:
     return ext.lower() in _ASSET_EXTS
 
 
-def _cloud_score(path: str, metadata: SyncMetadata, root: str) -> tuple:
+def _cloud_score(path: str, metadata: SyncMetadata, root: str) -> Tuple[int, int, int]:
     """
     给云端文件打分，用于决定保留哪个。
     返回元组 (路径深度, 文件名干净度, 创建时间越早越好)，越大越优先保留。
@@ -285,7 +288,7 @@ def _cloud_score(path: str, metadata: SyncMetadata, root: str) -> tuple:
         ctime = info.get("create_time", 0) or 0
         # 如果没有 create_time，退而用 mtime（较早的也优先）
         if ctime == 0:
-            ctime = info.get("cloud_mtime", 0) or info.get("local_mtime", 0) or 0
+            ctime = info["cloud_mtime"] or info["local_mtime"] or 0
     if ctime == 0:
         try:
             ctime = int(os.path.getmtime(os.path.join(root, path)))
@@ -297,7 +300,7 @@ def _cloud_score(path: str, metadata: SyncMetadata, root: str) -> tuple:
 def _classify_duplicates(
     raw_dup_groups: Dict[str, List[str]],
     root: str,
-    stats: Dict,
+    stats: DedupStats,
 ) -> Dict[str, List[str]]:
     """碰撞防护：按文件大小再分组，大小不同说明 MD5 碰撞。"""
     dup_groups: Dict[str, List[str]] = {}
@@ -325,7 +328,7 @@ def _resolve_group(
     metadata: SyncMetadata,
     referenced: Set[str],
     root: str,
-    stats: Dict,
+    stats: DedupStats,
     score_func=None,
 ) -> List[Tuple[str, Optional[str], str, str]]:
     """
@@ -336,7 +339,7 @@ def _resolve_group(
     for p in paths:
         if metadata:
             info = metadata.get_file_info(p)
-            if info and info.get("file_id"):
+            if info and info["file_id"]:
                 cloud_paths.append(p)
                 continue
         local_paths.append(p)
@@ -369,7 +372,7 @@ def _resolve_group(
             return actions
         for r in remove_paths:
             info = metadata.get_file_info(r) if metadata else None
-            fid = info.get("file_id") if info else None
+            fid = info["file_id"] if info else None
             actions.append((r, fid, keep_paths[0],
                             f"保留 {keep_paths[0]}，删除云端副本"))
         stats["kept"] += len(keep_paths)
@@ -387,7 +390,7 @@ def _resolve_cloud_group(
     metadata: SyncMetadata,
     referenced: Set[str],
     root: str,
-    stats: Dict,
+    stats: DedupStats,
     score_func=None,
 ) -> Tuple[List[str], Optional[List[str]]]:
     """全云端重复组：决定保留哪些、删除哪些。返回 (keep, remove)。"""
@@ -414,9 +417,9 @@ def _execute_removals(
     actions: List[Tuple[str, Optional[str], str, str]],
     root: str,
     metadata: SyncMetadata,
-    api,
+    api: Optional["FileDeleter"],
     dry_run: bool,
-    stats: Dict,
+    stats: DedupStats,
 ) -> List[str]:
     """执行删除动作，返回已删除文件的绝对路径列表。"""
     deleted_paths: List[str] = []
@@ -459,9 +462,9 @@ def auto_dedup(
     api: "FileDeleter" = None,
     dry_run: bool = False,
     score_func=None,
-    hash_cache: Dict[str, str] = None,
-    local_files: Dict[str, Dict] = None,
-) -> Dict:
+    hash_cache: Dict[str, ContentHash] = None,
+    local_files: Dict[str, LocalFileInfo] = None,
+) -> DedupStats:
     """
     自动去重（编排层）。
 
@@ -473,10 +476,10 @@ def auto_dedup(
     :param hash_cache: sync 阶段积累的 abs_path → hash 缓存
     :param local_files: scan_local 的结果（可选），避免重复遍历文件系统
     """
-    stats = {
-        "deleted": 0, "cloud_deleted": 0, "kept": 0,
-        "skipped": 0, "groups": 0, "protected_refs": 0,
-    }
+    stats = DedupStats(
+        deleted=0, cloud_deleted=0, kept=0,
+        skipped=0, groups=0, protected_refs=0,
+    )
 
     hash_index, referenced = build_all_indexes(root, metadata,
                                                hash_cache=hash_cache,

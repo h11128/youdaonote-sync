@@ -13,6 +13,8 @@ import threading
 import logging
 from typing import Dict
 
+from src.common import DirId
+
 from src.gui.controller import GUIController
 
 
@@ -192,7 +194,7 @@ class YoudaoNoteGUI:
         self.path_var.set(self.ctrl.current_path)
         self._load_dir_async(dir_id)
 
-    def _load_dir_async(self, dir_id: str):
+    def _load_dir_async(self, dir_id: DirId):
         def _work():
             self._set_status("正在加载目录内容...")
             folders, files, err = self.ctrl.load_directory_contents(dir_id)

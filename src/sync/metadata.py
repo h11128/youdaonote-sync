@@ -13,9 +13,10 @@ import threading
 import time
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 from src.common import get_config_directory, normalize_sep
+from src.sync.utils import FileMetaInfo, VerifyIssueType, FileId, DirId, ContentHash, TreeHash, TreeHash
 
 
 _SCHEMA_SQL = """\
@@ -337,7 +338,7 @@ class SyncMetadata:
 
     # ========== 文件相关方法 ==========
 
-    def get_file_id(self, local_path: str) -> Optional[str]:
+    def get_file_id(self, local_path: str) -> Optional[FileId]:
         """
         获取本地文件对应的云端 ID
 
@@ -351,7 +352,7 @@ class SyncMetadata:
             ).fetchone()
             return row[0] if row and row[0] else None
 
-    def get_file_info(self, local_path: str) -> Optional[Dict[str, Any]]:
+    def get_file_info(self, local_path: str) -> Optional[FileMetaInfo]:
         """
         获取本地文件的完整元数据
 
@@ -369,16 +370,19 @@ class SyncMetadata:
             ).fetchone()
             if not row:
                 return None
-            return self._row_to_file_dict(row)
+            return self._row_to_file_meta(row)
 
     @staticmethod
-    def _row_to_file_dict(row) -> Dict[str, Any]:
-        """将 SQL 行转换为文件信息字典（只包含非 NULL 字段，保持旧 API 兼容）。"""
-        result: Dict[str, Any] = {
-            "file_id": row[0],
-            "cloud_mtime": row[1],
-            "local_mtime": row[2],
-        }
+    def _row_to_file_meta(row) -> FileMetaInfo:
+        """将 SQL 行转换为 FileMetaInfo。
+
+        可选字段只在有值时填入，保持 .get() 语义和 'key in info' 检查不变。
+        """
+        result = FileMetaInfo(
+            file_id=row[0],
+            cloud_mtime=row[1],
+            local_mtime=row[2],
+        )
         if row[3] is not None:
             result["parent_id"] = row[3]
         if row[4] is not None:
@@ -407,12 +411,12 @@ class SyncMetadata:
     def set_file_info(
         self,
         local_path: str,
-        file_id: str,
+        file_id: FileId,
         cloud_mtime: int,
         local_mtime: Optional[int] = None,
-        parent_id: Optional[str] = None,
+        parent_id: Optional[DirId] = None,
         domain: Optional[int] = None,
-        content_hash: Optional[str] = None,
+        content_hash: Optional[ContentHash] = None,
         create_time: Optional[int] = None,
         base_dir: Optional[str] = None,
     ) -> None:
@@ -473,6 +477,50 @@ class SyncMetadata:
                     parent_id,
                     domain,
                     content_hash,
+                    create_time if create_time and create_time > 0 else None,
+                ),
+            )
+
+    def cache_cloud_file_info(
+        self,
+        local_path: str,
+        file_id: FileId,
+        cloud_mtime: int,
+        parent_id: DirId = None,
+        domain: int = None,
+        create_time: int = None,
+    ) -> None:
+        """缓存云端扫描结果，只写入云端相关字段。
+
+        - 新记录：写入 file_id / cloud_mtime / local_mtime=0
+        - 已有记录：更新 file_id，但保留 cloud_mtime 和 local_mtime
+          （cloud_mtime 代表"上次同步时的云端时间"，用于变更检测）
+        """
+        if not local_path:
+            raise ValueError("local_path 不能为空")
+        with self._lock:
+            path = self._normalize_path(local_path)
+            upsert_sets = [
+                "file_id = excluded.file_id",
+            ]
+            if parent_id is not None:
+                upsert_sets.append("parent_id = excluded.parent_id")
+            if domain is not None:
+                upsert_sets.append("domain = excluded.domain")
+            if create_time is not None and create_time > 0:
+                upsert_sets.append("create_time = excluded.create_time")
+
+            self._conn.execute(
+                "INSERT INTO files "
+                "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, create_time) "
+                "VALUES (?, ?, ?, 0, ?, ?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET " + ", ".join(upsert_sets),
+                (
+                    path,
+                    file_id or "",
+                    cloud_mtime,
+                    parent_id,
+                    domain,
                     create_time if create_time and create_time > 0 else None,
                 ),
             )
@@ -557,7 +605,7 @@ class SyncMetadata:
         """删除文件的元数据记录（remove_file_info 的别名）。"""
         self.remove_file_info(local_path)
 
-    def get_all_files(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_files(self) -> Dict[str, FileMetaInfo]:
         """获取所有文件元数据（返回独立副本，外部可安全修改）。"""
         with self._lock:
             rows = self._conn.execute(
@@ -566,11 +614,11 @@ class SyncMetadata:
                 "original_domain FROM files"
             ).fetchall()
             return {
-                row[0]: self._row_to_file_dict(row[1:])
+                row[0]: self._row_to_file_meta(row[1:])
                 for row in rows
             }
 
-    def get_cloud_file_summaries(self) -> Dict[str, Dict[str, Any]]:
+    def get_cloud_file_summaries(self) -> Dict[str, FileMetaInfo]:
         """获取所有有 file_id 的文件的摘要信息（用于扫描缓存重建）。
 
         只返回 path, file_id, parent_id, cloud_mtime, create_time, domain，
@@ -581,15 +629,18 @@ class SyncMetadata:
                 "SELECT path, file_id, parent_id, cloud_mtime, create_time, domain "
                 "FROM files WHERE file_id != ''"
             ).fetchall()
-            result: Dict[str, Dict[str, Any]] = {}
+            result: Dict[str, FileMetaInfo] = {}
             for path, fid, pid, cmtime, ctime, domain in rows:
-                result[path] = {
-                    "file_id": fid,
-                    "parent_id": pid or "",
-                    "cloud_mtime": cmtime,
-                    "create_time": ctime or 0,
-                    "domain": domain,
-                }
+                info = FileMetaInfo(
+                    file_id=fid,
+                    cloud_mtime=cmtime,
+                    local_mtime=0,
+                    parent_id=pid or "",
+                    domain=domain,
+                )
+                if ctime and ctime > 0:
+                    info["create_time"] = ctime
+                result[path] = info
             return result
 
     def get_stale_cloud_paths(self, active_paths: set) -> List[str]:
@@ -602,7 +653,7 @@ class SyncMetadata:
 
     # ========== 目录相关方法 ==========
 
-    def get_dir_id(self, local_path: str) -> Optional[str]:
+    def get_dir_id(self, local_path: str) -> Optional[DirId]:
         """
         获取本地目录对应的云端 ID
 
@@ -616,7 +667,7 @@ class SyncMetadata:
             ).fetchone()
             return row[0] if row and row[0] else None
 
-    def set_dir_info(self, local_path: str, dir_id: str, parent_id: str = None) -> None:
+    def set_dir_info(self, local_path: str, dir_id: DirId, parent_id: DirId = None) -> None:
         """
         设置本地目录的元数据
 
@@ -641,21 +692,21 @@ class SyncMetadata:
             path = self._normalize_path(local_path)
             self._conn.execute("DELETE FROM directories WHERE path = ?", (path,))
 
-    def get_all_dirs(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_dirs(self) -> Dict[str, Dict[str, str]]:
         """获取所有目录元数据（返回独立副本，外部可安全修改）。"""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT path, dir_id, parent_id FROM directories"
             ).fetchall()
-            result = {}
+            result: Dict[str, Dict[str, str]] = {}
             for row in rows:
-                info: Dict[str, Any] = {"dir_id": row[1]}
+                info: Dict[str, str] = {"dir_id": row[1]}
                 if row[2]:
                     info["parent_id"] = row[2]
                 result[row[0]] = info
             return result
 
-    def get_all_file_meta_for_dedup(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_file_meta_for_dedup(self) -> Dict[str, FileMetaInfo]:
         """批量获取去重所需的文件元数据（content_hash, local_mtime, file_id）。
 
         比 get_all_files() 更轻量，只返回去重阶段需要的字段。
@@ -664,19 +715,21 @@ class SyncMetadata:
             rows = self._conn.execute(
                 "SELECT path, content_hash, local_mtime, file_id FROM files"
             ).fetchall()
-            result: Dict[str, Dict[str, Any]] = {}
+            result: Dict[str, FileMetaInfo] = {}
             for path, chash, lmtime, fid in rows:
-                info: Dict[str, Any] = {"local_mtime": lmtime or 0}
+                info = FileMetaInfo(
+                    file_id=fid or "",
+                    cloud_mtime=0,
+                    local_mtime=lmtime or 0,
+                )
                 if chash:
                     info["content_hash"] = chash
-                if fid:
-                    info["file_id"] = fid
                 result[path] = info
             return result
 
     # ========== 查询方法 ==========
 
-    def find_by_file_id(self, file_id: str) -> Optional[str]:
+    def find_by_file_id(self, file_id: FileId) -> Optional[str]:
         """
         根据云端文件 ID 查找本地路径（O(1) 索引查询）
 
@@ -691,7 +744,7 @@ class SyncMetadata:
             ).fetchone()
             return row[0] if row else None
 
-    def find_by_dir_id(self, dir_id: str) -> Optional[str]:
+    def find_by_dir_id(self, dir_id: DirId) -> Optional[str]:
         """
         根据云端目录 ID 查找本地路径（O(1) 索引查询）
 
@@ -709,12 +762,12 @@ class SyncMetadata:
     # ========== 内容 Hash 相关 ==========
 
     @staticmethod
-    def compute_content_hash(file_path: str) -> Optional[str]:
+    def compute_content_hash(file_path: str) -> Optional[ContentHash]:
         """deprecated: 计划在 v4.0 移除，请使用 src.sync.utils.compute_content_hash"""
         from src.sync.utils import compute_content_hash
         return compute_content_hash(file_path)
 
-    def update_content_hash(self, local_path: str, content_hash: str) -> None:
+    def update_content_hash(self, local_path: str, content_hash: ContentHash) -> None:
         """更新文件的 content_hash"""
         with self._lock:
             path = self._normalize_path(local_path)
@@ -723,7 +776,7 @@ class SyncMetadata:
                 (content_hash or "", path),
             )
 
-    def get_content_hash(self, local_path: str) -> Optional[str]:
+    def get_content_hash(self, local_path: str) -> Optional[ContentHash]:
         """获取文件的 content_hash"""
         with self._lock:
             path = self._normalize_path(local_path)
@@ -732,7 +785,7 @@ class SyncMetadata:
             ).fetchone()
             return row[0] if row and row[0] else None
 
-    def find_cloud_file_by_hash(self, content_hash: str, exclude_path: str = None) -> Optional[str]:
+    def find_cloud_file_by_hash(self, content_hash: ContentHash, exclude_path: str = None) -> Optional[str]:
         """
         查找是否已有相同 content_hash 的云端文件（有 file_id 的）。
 
@@ -772,7 +825,7 @@ class SyncMetadata:
 
     # ========== 云端 Hash 缓存 (Phase 2b) ==========
 
-    def set_cloud_content_hash(self, local_path: str, cloud_hash: str) -> None:
+    def set_cloud_content_hash(self, local_path: str, cloud_hash: ContentHash) -> None:
         """记录云端文件的 content_hash（上传/下载成功后调用）。"""
         with self._lock:
             path = self._normalize_path(local_path)
@@ -781,7 +834,7 @@ class SyncMetadata:
                 (cloud_hash, path),
             )
 
-    def get_cloud_content_hash(self, local_path: str) -> Optional[str]:
+    def get_cloud_content_hash(self, local_path: str) -> Optional[ContentHash]:
         """获取缓存的云端 content_hash。"""
         with self._lock:
             path = self._normalize_path(local_path)
@@ -794,7 +847,7 @@ class SyncMetadata:
 
     def log_sync_action(
         self, path: str, action: str, direction: str = None,
-        old_hash: str = None, new_hash: str = None,
+        old_hash: Optional[ContentHash] = None, new_hash: Optional[ContentHash] = None,
         cloud_id: str = None, detail: str = None,
         timestamp_override: int = None,
     ) -> None:
@@ -808,7 +861,7 @@ class SyncMetadata:
                  old_hash, new_hash, cloud_id, detail),
             )
 
-    def get_sync_log(self, limit: int = 100, path: str = None) -> List[Dict[str, Any]]:
+    def get_sync_log(self, limit: int = 100, path: Optional[str] = None) -> List[Dict[str, Any]]:
         """查询同步操作日志。"""
         with self._lock:
             if path:
@@ -866,7 +919,7 @@ class SyncMetadata:
 
     # ========== Base 版本存储 (Phase 3d) ==========
 
-    def save_base_content(self, rel_path: str, content: bytes, content_hash: str) -> None:
+    def save_base_content(self, rel_path: str, content: bytes, content_hash: ContentHash) -> None:
         """保存文件的 base 版本（用于 diff3 三路合并）。"""
         with self._lock:
             path = self._normalize_path(rel_path)
@@ -887,7 +940,7 @@ class SyncMetadata:
 
     # ========== Merkle Tree (Phase 4a) ==========
 
-    def get_tree_hash(self, dir_path: str) -> Optional[str]:
+    def get_tree_hash(self, dir_path: str) -> Optional[TreeHash]:
         """获取目录的 tree_hash。"""
         with self._lock:
             path = self._normalize_path(dir_path)
@@ -896,7 +949,7 @@ class SyncMetadata:
             ).fetchone()
             return row[0] if row and row[0] else None
 
-    def set_tree_hash(self, dir_path: str, tree_hash: str) -> None:
+    def set_tree_hash(self, dir_path: str, tree_hash: TreeHash) -> None:
         """更新目录的 tree_hash（目录行不存在时自动创建）。"""
         with self._lock:
             path = self._normalize_path(dir_path)
@@ -907,7 +960,7 @@ class SyncMetadata:
                 (path, tree_hash),
             )
 
-    def get_all_tree_hashes(self) -> Dict[str, str]:
+    def get_all_tree_hashes(self) -> Dict[str, TreeHash]:
         """获取所有目录的 tree_hash。"""
         with self._lock:
             rows = self._conn.execute(
@@ -1007,13 +1060,14 @@ class SyncMetadata:
 
     # ========== 完整性校验 (Phase 3b) ==========
 
-    def verify(self, local_dir: str, auto_fix: bool = False) -> List[tuple]:
+    def verify(self, local_dir: str, auto_fix: bool = False,
+               ) -> List[Tuple[str, VerifyIssueType, str]]:
         """校验元数据与本地文件的一致性。
 
         :return: [(path, issue_type, detail), ...]
         """
         from src.sync.utils import compute_content_hash
-        issues: List[tuple] = []
+        issues: List[Tuple[str, VerifyIssueType, str]] = []
 
         with self._lock:
             rows = self._conn.execute(
@@ -1024,12 +1078,13 @@ class SyncMetadata:
             full = os.path.join(local_dir, path)
             if not os.path.exists(full):
                 if file_id:
-                    issues.append((path, "orphan", "本地文件不存在但有 file_id"))
+                    issues.append((path, VerifyIssueType.ORPHAN,
+                                   "本地文件不存在但有 file_id"))
                 continue
             if meta_hash:
                 actual = compute_content_hash(full)
                 if actual and actual != meta_hash:
-                    issues.append((path, "hash_mismatch",
+                    issues.append((path, VerifyIssueType.HASH_MISMATCH,
                                    f"记录={meta_hash[:16]}.. 实际={actual[:16]}.."))
                     if auto_fix:
                         self.update_content_hash(path, actual)
@@ -1040,7 +1095,8 @@ class SyncMetadata:
         for (path,) in dir_rows:
             full = os.path.join(local_dir, path)
             if not os.path.exists(full):
-                issues.append((path, "orphan_dir", "本地目录不存在"))
+                issues.append((path, VerifyIssueType.ORPHAN_DIR,
+                               "本地目录不存在"))
                 if auto_fix:
                     self.remove_dir(path)
 

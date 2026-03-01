@@ -10,9 +10,17 @@ import logging
 import os
 import platform
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from src.common import get_script_directory, get_config_directory
+
+
+class CookieEntry(NamedTuple):
+    """cookies.json 中的单条记录"""
+    name: str
+    value: str
+    domain: str
+    path: str
 
 
 class CookieManager:
@@ -43,7 +51,7 @@ class CookieManager:
         return os.path.join(get_config_directory(), "cookies.json")
 
     @staticmethod
-    def load(cookies_path: str = None) -> Tuple[List, str]:
+    def load(cookies_path: str = None) -> Tuple[List[CookieEntry], str]:
         """
         加载 cookies
         :param cookies_path: cookies.json 文件路径
@@ -57,10 +65,17 @@ class CookieManager:
                 json_str = f.read().decode("utf-8")
 
             cookies_dict = json.loads(json_str)
-            cookies = cookies_dict.get("cookies", [])
+            raw = cookies_dict.get("cookies", [])
 
-            if not cookies:
+            if not raw:
                 return [], "cookies.json 中没有找到 cookies 数据"
+
+            cookies = [
+                CookieEntry(*c) for c in raw
+                if isinstance(c, list) and len(c) >= 4
+            ]
+            if not cookies:
+                return [], "cookies.json 中没有有效的 cookie 条目"
 
             return cookies, ""
 
@@ -146,18 +161,15 @@ class CookieManager:
         if error:
             return False, error
 
-        # 检查必需的 cookies
-        cookie_names = [c[0] for c in cookies if isinstance(c, list) and len(c) >= 2]
+        cookie_names = [c.name for c in cookies]
         missing = CookieManager._find_missing_cookies(cookie_names)
         
         if missing:
             return False, f"缺少必需的 cookies: {', '.join(missing)}"
 
-        # 检查是否有空值
         for cookie in cookies:
-            if isinstance(cookie, list) and len(cookie) >= 2:
-                if not cookie[1] or cookie[1] == "**":
-                    return False, f"Cookie {cookie[0]} 的值为空或未设置"
+            if not cookie.value or cookie.value == "**":
+                return False, f"Cookie {cookie.name} 的值为空或未设置"
 
         return True, ""
 
@@ -172,12 +184,9 @@ class CookieManager:
         
         for name in CookieManager.REQUIRED_COOKIES:
             value = cookie_dict.get(name, "")
-            cookies_data["cookies"].append([
-                name,
-                value,
-                ".note.youdao.com",
-                "/"
-            ])
+            cookies_data["cookies"].append(
+                CookieEntry(name, value, ".note.youdao.com", "/")
+            )
         
         return cookies_data
 
@@ -204,7 +213,7 @@ class CookieManager:
         return path if os.path.isfile(path) else None
 
     @staticmethod
-    def load_from_desktop() -> Tuple[List, str]:
+    def load_from_desktop() -> Tuple[List[CookieEntry], str]:
         """从有道云笔记桌面客户端读取 cookies。
 
         桌面客户端在 setting.json 的 ``cookies`` 字段保存了完整的
@@ -227,23 +236,21 @@ class CookieManager:
         if not raw_cookies:
             return [], "桌面客户端 setting.json 中没有 cookies"
 
-        result = []
+        result: List[CookieEntry] = []
         for c in raw_cookies:
             if not isinstance(c, dict):
                 continue
             name = c.get("name", "")
             value = c.get("value", "")
-            domain = c.get("domain", "")
+            domain = c.get("domain", "") or ".note.youdao.com"
             path = c.get("path", "/")
             if name and value:
-                if not domain:
-                    domain = ".note.youdao.com"
-                result.append([name, value, domain, path])
+                result.append(CookieEntry(name, value, domain, path))
 
         if not result:
             return [], "桌面客户端 cookies 为空"
 
-        cookie_names = [c[0] for c in result]
+        cookie_names = [c.name for c in result]
         missing = CookieManager._find_missing_cookies(cookie_names)
         if missing:
             return [], f"桌面客户端 cookies 缺少: {', '.join(missing)}"

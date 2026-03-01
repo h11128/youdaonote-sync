@@ -8,15 +8,22 @@ YoudaoNoteDownload 仅负责单文件下载，不再包含遍历逻辑。
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Tuple, TYPE_CHECKING
+from typing import List, NamedTuple, TYPE_CHECKING
 
-from src.common import get_script_directory, normalize_sep
+from src.common import get_script_directory, normalize_sep, FileId, DirId
 
 if TYPE_CHECKING:
     from src.protocols import DirBrowser
     from src.transfer.download import YoudaoNoteDownload
 
-_DownloadTask = Tuple[str, str, str, int, int]  # (file_id, name, local_dir, mtime, ctime)
+
+class DownloadTask(NamedTuple):
+    """单个文件下载任务"""
+    file_id: FileId
+    name: str
+    local_dir: str
+    modify_time: int
+    create_time: int
 
 DOWNLOAD_WORKERS = 8
 
@@ -74,9 +81,9 @@ class PullEngine:
             logging.error(f"全量导出失败: {e}")
             return False
 
-    def _collect_download_tasks(self, dir_id: str, local_dir: str) -> List[_DownloadTask]:
+    def _collect_download_tasks(self, dir_id: DirId, local_dir: str) -> List[DownloadTask]:
         """递归遍历云端目录树，收集所有文件下载任务（目录立即创建）。"""
-        tasks: List[_DownloadTask] = []
+        tasks: List[DownloadTask] = []
         dir_info = self.api.get_dir_info_by_id(dir_id)
         entries = dir_info.get('entries', [])
 
@@ -93,11 +100,11 @@ class PullEngine:
             else:
                 modify_time = file_entry.get('modifyTimeForSort', 0)
                 create_time = file_entry.get('createTimeForSort', 0)
-                tasks.append((entry_id, name, local_dir, modify_time, create_time))
+                tasks.append(DownloadTask(entry_id, name, local_dir, modify_time, create_time))
 
         return tasks
 
-    def _execute_downloads(self, tasks: List[_DownloadTask]) -> None:
+    def _execute_downloads(self, tasks: List[DownloadTask]) -> None:
         """并发下载所有文件。"""
         if not tasks:
             return
@@ -109,9 +116,9 @@ class PullEngine:
             futures = {
                 pool.submit(
                     self.downloader.download_file,
-                    fid, name, ldir, mtime, ctime,
-                ): (fid, name)
-                for fid, name, ldir, mtime, ctime in tasks
+                    t.file_id, t.name, t.local_dir, t.modify_time, t.create_time,
+                ): (t.file_id, t.name)
+                for t in tasks
             }
             for fut in as_completed(futures):
                 fid, name = futures[fut]

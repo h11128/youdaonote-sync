@@ -10,16 +10,19 @@ import logging
 import time
 from typing import Dict, Optional
 
-from src.common import NoteDomain
-from src.sync.utils import SyncAction, SyncItem, decide_action, compute_content_hash
+from src.common import NoteDomain, FileId, DirId, ContentHash
+from src.sync.utils import (
+    SyncAction, SyncItem, CloudFileInfo, LocalFileInfo, FileMetaInfo,
+    decide_action, compute_content_hash,
+)
 from src.sync.metadata import SyncMetadata
 
 
 def calibrate_metadata(
     metadata: SyncMetadata,
-    cloud_files: Dict,
-    local_files: Dict,
-    hash_cache: Optional[Dict[str, str]] = None,
+    cloud_files: Dict[str, CloudFileInfo],
+    local_files: Dict[str, LocalFileInfo],
+    hash_cache: Optional[Dict[str, ContentHash]] = None,
 ) -> int:
     """
     自动校准元数据：对于云端和本地都存在但元数据缺失的文件/目录，
@@ -37,9 +40,9 @@ def calibrate_metadata(
             cloud = cloud_files[rel]
             local = local_files.get(rel)
 
-            if cloud.get("is_dir"):
-                if not metadata.get_dir_id(rel) and cloud.get("id"):
-                    metadata.set_dir_info(rel, cloud["id"], cloud.get("parent_id"))
+            if cloud["is_dir"]:
+                if not metadata.get_dir_id(rel) and cloud["id"]:
+                    metadata.set_dir_info(rel, DirId(cloud["id"]), cloud["parent_id"])
                     calibrated += 1
                 continue
 
@@ -49,9 +52,9 @@ def calibrate_metadata(
 
             # 旧 JSON 元数据迁移后 cloud_mtime=0：补填当前云端时间戳
             if (meta is not None
-                    and meta.get("file_id")
-                    and meta.get("local_mtime", 0) > 0):
-                if meta.get("cloud_mtime", 0) == 0 and cloud.get("mtime", 0) > 0:
+                    and meta["file_id"]
+                    and meta["local_mtime"] > 0):
+                if meta["cloud_mtime"] == 0 and cloud["mtime"] > 0:
                     metadata.set_file_info(
                         local_path=rel,
                         file_id=meta["file_id"],
@@ -71,13 +74,13 @@ def calibrate_metadata(
                 hash_cache[local_path] = content_hash
             metadata.set_file_info(
                 local_path=rel,
-                file_id=cloud["id"],
+                file_id=FileId(cloud["id"]),
                 cloud_mtime=cloud["mtime"],
                 local_mtime=local["mtime"],
-                parent_id=cloud.get("parent_id"),
-                domain=cloud.get("domain", NoteDomain.MARKDOWN),
+                parent_id=cloud["parent_id"],
+                domain=cloud["domain"],
                 content_hash=content_hash,
-                create_time=cloud.get("ctime", 0),
+                create_time=cloud["ctime"],
             )
             metadata.mark_synced(rel, ts=int(time.time()))
             calibrated += 1
@@ -90,14 +93,14 @@ def calibrate_metadata(
 
 def build_item(
     rel: str,
-    cloud: Optional[Dict],
-    local: Optional[Dict],
+    cloud: Optional[CloudFileInfo],
+    local: Optional[LocalFileInfo],
     metadata: SyncMetadata,
     local_dir: str,
-    hash_cache: Optional[Dict[str, str]] = None,
+    hash_cache: Optional[Dict[str, ContentHash]] = None,
 ) -> SyncItem:
     """根据 cloud/local/metadata 三方信息构建一个 SyncItem。"""
-    is_dir = (cloud or {}).get("is_dir", False) or (local or {}).get("is_dir", False)
+    is_dir = (cloud["is_dir"] if cloud else False) or (local["is_dir"] if local else False)
     meta = metadata.get_file_info(rel)
 
     if is_dir:
@@ -120,7 +123,7 @@ def build_item(
 
         previously_synced = (
             meta is not None
-            and bool(meta.get("file_id"))
+            and bool(meta["file_id"])
             and meta.get("last_sync_at", 0) > 0
         )
 
@@ -129,8 +132,8 @@ def build_item(
             cloud_exists=cloud is not None,
             local_mtime=local["mtime"] if local else None,
             cloud_mtime=cloud["mtime"] if cloud else None,
-            meta_local_mtime=meta.get("local_mtime") if meta else None,
-            meta_cloud_mtime=meta.get("cloud_mtime") if meta else None,
+            meta_local_mtime=meta["local_mtime"] if meta else None,
+            meta_cloud_mtime=meta["cloud_mtime"] if meta else None,
             local_hash=local_hash,
             meta_hash=meta.get("content_hash") if meta else None,
             previously_synced=previously_synced,
@@ -142,10 +145,10 @@ def build_item(
         cloud_id=cloud["id"] if cloud else (meta["file_id"] if meta else None),
         cloud_parent_id=cloud["parent_id"] if cloud else (meta.get("parent_id") if meta else None),
         local_mtime=local["mtime"] if local else None,
-        cloud_mtime=cloud["mtime"] if cloud else (meta.get("cloud_mtime") if meta else None),
+        cloud_mtime=cloud["mtime"] if cloud else (meta["cloud_mtime"] if meta else None),
         is_dir=is_dir,
         action=action,
         cloud_name=cloud["name"] if cloud else None,
-        domain=NoteDomain(cloud.get("domain", NoteDomain.MARKDOWN)) if cloud else NoteDomain.MARKDOWN,
-        cloud_ctime=cloud.get("ctime", 0) if cloud else (meta.get("create_time") if meta else None),
+        domain=NoteDomain(cloud["domain"]) if cloud else NoteDomain.MARKDOWN,
+        cloud_ctime=cloud["ctime"] if cloud else (meta.get("create_time") if meta else None),
     )

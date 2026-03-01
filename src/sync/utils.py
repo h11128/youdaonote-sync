@@ -12,15 +12,25 @@ import time
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass
-from typing import Callable, List, Dict, Optional, Tuple, Type, TypeVar
+from typing import (
+    Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union,
+    TYPE_CHECKING,
+)
+
+if TYPE_CHECKING:
+    from typing import TypedDict
+else:
+    try:
+        from typing import TypedDict
+    except ImportError:
+        from typing_extensions import TypedDict
 
 import httpx
 import xxhash
 
-from src.common import NoteDomain
+from src.common import NoteDomain, FileId, DirId, ContentHash, TreeHash
 
 T = TypeVar("T")
-
 
 # ========== 枚举 ==========
 
@@ -39,6 +49,81 @@ class SyncAction(Enum):
     CONFLICT = "conflict"
 
 
+class VerifyIssueType(Enum):
+    """metadata.verify() 返回的问题类型"""
+    ORPHAN = "orphan"
+    HASH_MISMATCH = "hash_mismatch"
+    ORPHAN_DIR = "orphan_dir"
+
+
+# ========== TypedDict — 跨模块传递的数据结构 ==========
+
+class CloudFileInfo(TypedDict):
+    """云端文件/目录信息（scanner 输出格式）"""
+    id: Union[FileId, DirId]
+    parent_id: DirId
+    name: str
+    is_dir: bool
+    mtime: int
+    ctime: int
+    domain: int
+
+
+class _LocalFileInfoBase(TypedDict):
+    path: str
+    is_dir: bool
+    mtime: int
+
+
+class LocalFileInfo(_LocalFileInfoBase, total=False):
+    """本地文件/目录信息（scanner 输出格式）
+
+    目录只有 path/is_dir/mtime；文件额外有 size。
+    """
+    size: int
+
+
+class _FileMetaBase(TypedDict):
+    file_id: FileId
+    cloud_mtime: int
+    local_mtime: int
+
+
+class FileMetaInfo(_FileMetaBase, total=False):
+    """metadata.db 中的文件元数据记录"""
+    parent_id: DirId
+    domain: int
+    content_hash: ContentHash
+    create_time: int
+    last_sync_at: int
+    cloud_content_hash: ContentHash
+    original_domain: int
+
+
+class SyncStats(TypedDict):
+    """同步统计信息"""
+    downloaded: int
+    uploaded: int
+    skipped: int
+    conflicts: int
+    errors: int
+    dedup_deleted: int
+
+
+class _DedupStatsBase(TypedDict):
+    deleted: int
+    cloud_deleted: int
+    kept: int
+    skipped: int
+    groups: int
+    protected_refs: int
+
+
+class DedupStats(_DedupStatsBase, total=False):
+    """去重统计信息"""
+    deleted_paths: List[str]
+
+
 # ========== 数据类 ==========
 
 @dataclass(frozen=True)
@@ -46,8 +131,8 @@ class SyncItem:
     """同步项（不可变快照）"""
     relative_path: str
     local_path: Optional[str]
-    cloud_id: Optional[str]
-    cloud_parent_id: Optional[str]
+    cloud_id: Optional[Union[FileId, DirId]]
+    cloud_parent_id: Optional[DirId]
     local_mtime: Optional[int]
     cloud_mtime: Optional[int]
     is_dir: bool
@@ -67,9 +152,9 @@ def decide_action(
     meta_local_mtime: Optional[int],
     meta_cloud_mtime: Optional[int],
     *,
-    local_hash: Optional[str] = None,
-    cloud_hash: Optional[str] = None,
-    meta_hash: Optional[str] = None,
+    local_hash: Optional[ContentHash] = None,
+    cloud_hash: Optional[ContentHash] = None,
+    meta_hash: Optional[ContentHash] = None,
     previously_synced: bool = False,
 ) -> SyncAction:
     """
@@ -143,7 +228,7 @@ def decide_action(
 
 def filter_by_direction(
     items: List[SyncItem], direction: SyncDirection,
-) -> tuple:
+) -> Tuple[List[SyncItem], int]:
     """按同步方向过滤 items，同时统计跳过数。
 
     返回 (action_items, skip_count)，action_items 不包含 SKIP 项。
@@ -173,10 +258,10 @@ def filter_by_direction(
     return action, skipped
 
 
-def empty_stats() -> Dict:
+def empty_stats() -> SyncStats:
     """返回空的统计字典。"""
-    return {"downloaded": 0, "uploaded": 0, "skipped": 0,
-            "conflicts": 0, "errors": 0, "dedup_deleted": 0}
+    return SyncStats(downloaded=0, uploaded=0, skipped=0,
+                     conflicts=0, errors=0, dedup_deleted=0)
 
 
 def print_preview(item: SyncItem) -> None:
@@ -278,7 +363,7 @@ def retry_with_backoff(
 
 # ========== Hashing ==========
 
-def compute_hash_from_bytes(data: bytes, file_path: str) -> Optional[str]:
+def compute_hash_from_bytes(data: bytes, file_path: str) -> Optional[ContentHash]:
     """从原始字节计算 content hash（与 compute_content_hash 相同的规范化逻辑）。
 
     用于对云端下载的内容直接计算 hash，无需先写入磁盘。
@@ -288,9 +373,9 @@ def compute_hash_from_bytes(data: bytes, file_path: str) -> Optional[str]:
     if data is None:
         return None
     if not _is_text_file(file_path):
-        return xxhash.xxh3_128(data).hexdigest()
+        return ContentHash(xxhash.xxh3_128(data).hexdigest())
     normalized = _normalize_md_bytes(data, file_path)
-    return xxhash.xxh3_128(normalized).hexdigest()
+    return ContentHash(xxhash.xxh3_128(normalized).hexdigest())
 
 
 _CHUNKED_HASH_THRESHOLD = 1024 * 1024  # 1MB 以上用分块读取
@@ -386,7 +471,7 @@ def _normalize_md_bytes(data: bytes, file_path: str) -> bytes:
     return normalized
 
 
-def compute_content_hash(file_path: str) -> Optional[str]:
+def compute_content_hash(file_path: str) -> Optional[ContentHash]:
     """
     计算文件内容的 xxhash (xxh3_128) hash。
 
@@ -415,7 +500,7 @@ def compute_content_hash(file_path: str) -> Optional[str]:
 
 
 def _hash_binary_file(file_path: str, size: int,
-                      chunk_size: int = 256 * 1024) -> str:
+                      chunk_size: int = 256 * 1024) -> ContentHash:
     """二进制文件 hash：小文件全量读，大文件用 mmap 零拷贝。"""
     import mmap
     h = xxhash.xxh3_128()
@@ -425,18 +510,18 @@ def _hash_binary_file(file_path: str, size: int,
         elif size > 0:
             with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
                 h.update(mm)
-    return h.hexdigest()
+    return ContentHash(h.hexdigest())
 
 
-def _hash_small_text_file(file_path: str) -> str:
+def _hash_small_text_file(file_path: str) -> ContentHash:
     with open(file_path, "rb") as f:
         data = f.read()
     normalized = _normalize_md_bytes(data, file_path)
-    return xxhash.xxh3_128(normalized).hexdigest()
+    return ContentHash(xxhash.xxh3_128(normalized).hexdigest())
 
 
 def _hash_large_text_file(file_path: str,
-                          chunk_size: int = 8 * 1024 * 1024) -> str:
+                          chunk_size: int = 8 * 1024 * 1024) -> ContentHash:
     """大文本文件 hash：分块读取 + 流式 CRLF/BOM 规范化。
 
     不使用 mmap（CRLF 规范化需要内容感知，无法零拷贝）。
@@ -468,7 +553,7 @@ def _hash_large_text_file(file_path: str,
                 normalized = normalized.replace(b"\xef\xbb\xbf", b"", 1)
                 first_chunk = False
             h.update(normalized)
-    return h.hexdigest()
+    return ContentHash(h.hexdigest())
 
 
 def backup_file(file_path: str) -> Optional[str]:

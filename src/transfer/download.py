@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 from src.convert.note_convert import YoudaoNoteConvert
 from src.transfer.image import ImagePull
-from src.common import get_script_directory, safe_long_path, load_config, MARKDOWN_SUFFIX, normalize_sep
+from src.common import get_script_directory, safe_long_path, load_config, MARKDOWN_SUFFIX, normalize_sep, FileId, DirId
 
 # 尝试导入 Windows 特定模块
 try:
@@ -76,7 +76,7 @@ class YoudaoNoteDownload:
         self._regex_symbol = re.compile(r"[<]")
         self._del_regex_symbol = re.compile(r'[\\/":\|\*\?#>]')
 
-    def download_file(self, file_id: str, file_name: str, local_dir: str,
+    def download_file(self, file_id: FileId, file_name: str, local_dir: str,
                       modify_time: int = 0, create_time: int = 0,
                       convert_to_md: bool = True,
                       skip_action_check: bool = False) -> bool:
@@ -160,7 +160,7 @@ class YoudaoNoteDownload:
             return FileAction.UPDATE if os.path.exists(local_path) else FileAction.ADD
         return self._get_file_action(local_path, mtime_sec)
 
-    def _atomic_write(self, file_id: str, content: Optional[bytes],
+    def _atomic_write(self, file_id: FileId, content: Optional[bytes],
                       original_path: str, local_path: str,
                       file_type: FileType, suffix: str,
                       convert_to_md: bool) -> None:
@@ -210,7 +210,7 @@ class YoudaoNoteDownload:
             except Exception as e:
                 logging.warning(f"图片链接迁移失败: {e}")
 
-    def download_folder(self, folder_id: str, folder_name: str,
+    def download_folder(self, folder_id: DirId, folder_name: str,
                         local_dir: str) -> bool:
         """
         下载整个文件夹（递归）。
@@ -254,7 +254,7 @@ class YoudaoNoteDownload:
         (b'{"', FileType.JSON),
     ]
 
-    def _download_and_detect(self, file_id: str, youdao_file_suffix: str) -> Tuple[FileType, Optional[bytes]]:
+    def _download_and_detect(self, file_id: FileId, youdao_file_suffix: str) -> Tuple[FileType, Optional[bytes]]:
         """
         一次性下载文件内容并判断类型，避免重复下载。
         对于 .md 和其他已知类型，不需要提前下载内容来判断类型。
@@ -276,7 +276,7 @@ class YoudaoNoteDownload:
             content = response.content
         return self._detect_content_type(content), content
 
-    def _try_desktop_cache(self, file_id: str) -> Optional[bytes]:
+    def _try_desktop_cache(self, file_id: FileId) -> Optional[bytes]:
         """尝试从桌面客户端缓存读取文件内容。"""
         if not self._desktop_data_dir:
             return None
@@ -310,7 +310,7 @@ class YoudaoNoteDownload:
 
         return FileAction.UPDATE
 
-    def _save_and_convert(self, file_id: str, content: Optional[bytes],
+    def _save_and_convert(self, file_id: FileId, content: Optional[bytes],
                           original_file_path: str, local_file_path: str,
                           file_type: FileType, youdao_file_suffix: str,
                           convert_to_md: bool):

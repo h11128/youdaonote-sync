@@ -11,19 +11,19 @@ import shutil
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from src.sync.metadata import SyncMetadata
+from src.sync.utils import CloudFileInfo, LocalFileInfo, FileId, DirId, ContentHash, compute_content_hash
 
 
 @dataclass
 class PendingMove:
     """跨目录移动：保留 file_id 在云端直接 move，而非 upload+delete。"""
-    file_id: str
+    file_id: FileId
     old_cloud_path: str
     new_local_path: str
     domain: int = 1
-from src.sync.utils import compute_content_hash
 
 
 def normalize_filename(name: str) -> str:
@@ -45,9 +45,9 @@ def normalize_filename(name: str) -> str:
 def _detect_cloud_moves(
     only_local: set,
     only_cloud: set,
-    cloud_id_to_path: Dict[str, str],
-    cloud_files: Dict,
-    local_files: Dict,
+    cloud_id_to_path: Dict[Union[FileId, DirId], str],
+    cloud_files: Dict[str, CloudFileInfo],
+    local_files: Dict[str, LocalFileInfo],
     metadata: SyncMetadata,
     local_dir: str,
     dry_run: bool,
@@ -55,10 +55,10 @@ def _detect_cloud_moves(
     """场景 1 & 3：通过 file_id 匹配检测云端/本地移动。"""
     count = 0
     for local_rel in list(only_local):
-        if local_files[local_rel].get("is_dir"):
+        if local_files[local_rel]["is_dir"]:
             continue
         fmeta = metadata.get_file_info(local_rel)
-        if not fmeta or not fmeta.get("file_id"):
+        if not fmeta or not fmeta["file_id"]:
             continue
         fid = fmeta["file_id"]
 
@@ -82,10 +82,10 @@ def _detect_cloud_moves(
                 file_id=fid,
                 cloud_mtime=ci["mtime"],
                 local_mtime=local_files[cloud_new]["mtime"],
-                parent_id=ci.get("parent_id"),
-                domain=ci.get("domain", 1),
+                parent_id=ci["parent_id"],
+                domain=ci["domain"],
                 content_hash=fmeta.get("content_hash"),
-                create_time=ci.get("ctime", 0),
+                create_time=ci["ctime"],
             )
             if local_rel != cloud_new:
                 metadata.remove_file_info(local_rel)
@@ -96,20 +96,20 @@ def _detect_cloud_moves(
 def _detect_name_mismatches(
     only_local: set,
     only_cloud: set,
-    cloud_files: Dict,
-    local_files: Dict,
+    cloud_files: Dict[str, CloudFileInfo],
+    local_files: Dict[str, LocalFileInfo],
 ) -> int:
     """场景 2：文件名净化差异——同一目录下名字几乎一样。"""
     norm_index = {}
     for cp in only_cloud:
-        if cloud_files[cp].get("is_dir"):
+        if cloud_files[cp]["is_dir"]:
             continue
         d, b = os.path.dirname(cp), os.path.basename(cp)
         norm_index[(d, normalize_filename(b))] = cp
 
     count = 0
     for lr in list(only_local):
-        if local_files[lr].get("is_dir"):
+        if local_files[lr]["is_dir"]:
             continue
         d, b = os.path.dirname(lr), os.path.basename(lr)
         match = norm_index.get((d, normalize_filename(b)))
@@ -133,7 +133,7 @@ _GENERIC_NAMES = frozenset({
 
 def _move_local_file(
     local_dir: str, old_rel: str, new_rel: str,
-    local_files: Dict, only_local: set, only_cloud: set,
+    local_files: Dict[str, LocalFileInfo], only_local: set, only_cloud: set,
     dry_run: bool,
 ) -> bool:
     """执行本地文件移动，失败时完整回退。返回 True 表示成功。"""
@@ -180,13 +180,13 @@ def _common_ancestor_depth(path_a: str, path_b: str) -> int:
 def _detect_cross_dir_duplicates(
     only_local: set,
     only_cloud: set,
-    cloud_files: Dict,
-    local_files: Dict,
+    cloud_files: Dict[str, CloudFileInfo],
+    local_files: Dict[str, LocalFileInfo],
     metadata: SyncMetadata,
     local_dir: str,
     dry_run: bool,
-    hash_cache: Optional[Dict[str, str]] = None,
-) -> Tuple[int, List[Tuple[str, str, str]]]:
+    hash_cache: Optional[Dict[str, ContentHash]] = None,
+) -> Tuple[int, List[PendingMove]]:
     """跨目录重复检测：上传候选和下载候选中同名或同内容的文件。
 
     检测策略（按优先级）：
@@ -200,8 +200,8 @@ def _detect_cross_dir_duplicates(
     :return: (处理数, [(old_file_id, old_cloud_path, new_local_path), ...] 待删除列表)
     """
 
-    local_candidates = {p for p in only_local if not local_files[p].get("is_dir")}
-    cloud_candidates = {p for p in only_cloud if not cloud_files[p].get("is_dir")}
+    local_candidates = {p for p in only_local if not local_files[p]["is_dir"]}
+    cloud_candidates = {p for p in only_cloud if not cloud_files[p]["is_dir"]}
 
     if not local_candidates or not cloud_candidates:
         return 0, []
@@ -286,7 +286,7 @@ def _detect_cross_dir_duplicates(
                 if lp_hash and cp_hash and lp_hash != cp_hash:
                     # 内容不同 — 只有当云端文件有已知元数据（之前同步过）时才配对，
                     # 说明是"同一文件被移动 + 编辑"而不是两个碰巧同名的不同文件
-                    if not (cp_meta and cp_meta.get("file_id")):
+                    if not (cp_meta and cp_meta["file_id"]):
                         continue
                     reason_tag = f"filename+ancestor(depth={best_depth},content_changed)"
                 else:
@@ -303,16 +303,16 @@ def _detect_cross_dir_duplicates(
     pending_deletes: List[PendingMove] = []
 
     for local_path, cloud_path, reason in matched:
-        local_mtime = local_files[local_path].get("mtime", 0)
-        cloud_mtime = cloud_files[cloud_path].get("mtime", 0)
+        local_mtime = local_files[local_path]["mtime"]
+        cloud_mtime = cloud_files[cloud_path]["mtime"]
         local_wins = local_mtime >= cloud_mtime
 
         if local_wins:
             # 本地路径更新 → engine 会先尝试 API move，失败再 fallback 到 upload+delete
             logging.info(f"跨目录移动(本地新): {cloud_path} → {local_path} ({reason})")
             ci = cloud_files[cloud_path]
-            old_fid = ci.get("id", "")
-            domain = ci.get("domain", 1)
+            old_fid = FileId(ci["id"])
+            domain = ci["domain"]
             if old_fid:
                 pending_deletes.append(PendingMove(old_fid, cloud_path, local_path, domain))
             cloud_files.pop(cloud_path)
@@ -334,13 +334,13 @@ def _detect_cross_dir_duplicates(
                 ci = cloud_files[cloud_path]
                 metadata.set_file_info(
                     local_path=cloud_path,
-                    file_id=ci.get("id", ""),
-                    cloud_mtime=ci.get("mtime", 0),
-                    local_mtime=local_info.get("mtime", 0),
-                    parent_id=ci.get("parent_id"),
-                    domain=ci.get("domain", 1),
+                    file_id=FileId(ci["id"]),
+                    cloud_mtime=ci["mtime"],
+                    local_mtime=local_info["mtime"],
+                    parent_id=ci["parent_id"],
+                    domain=ci["domain"],
                     content_hash=local_hash_map.get(local_path),
-                    create_time=ci.get("ctime", 0),
+                    create_time=ci["ctime"],
                 )
 
         count += 1
@@ -349,10 +349,10 @@ def _detect_cross_dir_duplicates(
 
 
 def discard_orphan_duplicates(
-    cloud_files: Dict,
-    local_files: Dict,
+    cloud_files: Dict[str, CloudFileInfo],
+    local_files: Dict[str, LocalFileInfo],
     local_dir: str,
-    hash_cache: Optional[Dict[str, str]] = None,
+    hash_cache: Optional[Dict[str, ContentHash]] = None,
 ) -> int:
     """清理孤儿本地副本：only_local 中与 both 集合内容相同的文件不需要上传。
 
@@ -369,10 +369,10 @@ def discard_orphan_duplicates(
     both_paths = set(local_files.keys()) & set(cloud_files.keys())
 
     local_candidates = [p for p in only_local_paths
-                        if not local_files[p].get("is_dir")]
+                        if not local_files[p]["is_dir"]]
     both_files = {p for p in both_paths
-                  if not local_files[p].get("is_dir")
-                  and not cloud_files[p].get("is_dir")}
+                  if not local_files[p]["is_dir"]
+                  and not cloud_files[p]["is_dir"]}
 
     if not local_candidates or not both_files:
         return 0
@@ -416,12 +416,12 @@ def discard_orphan_duplicates(
 
 
 def reconcile_moves(
-    cloud_files: Dict,
-    local_files: Dict,
+    cloud_files: Dict[str, CloudFileInfo],
+    local_files: Dict[str, LocalFileInfo],
     metadata: SyncMetadata,
     local_dir: str,
     dry_run: bool = False,
-    hash_cache: Optional[Dict[str, str]] = None,
+    hash_cache: Optional[Dict[str, ContentHash]] = None,
 ) -> List[PendingMove]:
     """检测并处理文件移动/重命名（编排层）。
 
@@ -438,7 +438,7 @@ def reconcile_moves(
     cloud_id_to_path = {
         ci["id"]: cp
         for cp, ci in cloud_files.items()
-        if not ci.get("is_dir") and ci.get("id")
+        if not ci["is_dir"] and ci["id"]
     }
 
     only_local = set(local_files.keys()) - set(cloud_files.keys())

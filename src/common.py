@@ -3,11 +3,20 @@ import platform
 import sys
 import uuid
 from enum import IntEnum
+from typing import NewType
 
 
 # ========== 常量 ==========
 
 MARKDOWN_SUFFIX = ".md"
+
+
+# ========== NewType — 语义化 ID，零运行时开销 ==========
+
+FileId = NewType("FileId", str)
+DirId = NewType("DirId", str)
+ContentHash = NewType("ContentHash", str)
+TreeHash = NewType("TreeHash", str)
 
 
 # ========== 枚举 ==========
@@ -25,9 +34,9 @@ def normalize_sep(path: str) -> str:
     return path.replace("\\", "/")
 
 
-def generate_file_id() -> str:
+def generate_file_id() -> FileId:
     """生成新的有道云文件 ID。"""
-    return "WEB" + uuid.uuid4().hex
+    return FileId("WEB" + uuid.uuid4().hex)
 
 
 def get_script_directory():

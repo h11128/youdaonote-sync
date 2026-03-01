@@ -34,6 +34,7 @@ import unittest
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.sync.metadata import SyncMetadata
+from src.sync.utils import VerifyIssueType
 
 
 # ========== Unit: xxhash =========================================
@@ -513,7 +514,7 @@ class VerifyTest(unittest.TestCase):
         self.meta.set_file_info("gone.md", "f1", 100)
         issues = self.meta.verify(self.local_dir)
         self.assertEqual(len(issues), 1)
-        self.assertEqual(issues[0][1], "orphan")
+        self.assertEqual(issues[0][1], VerifyIssueType.ORPHAN)
 
     def test_detects_hash_mismatch(self):
         p = os.path.join(self.local_dir, "test.md")
@@ -522,7 +523,7 @@ class VerifyTest(unittest.TestCase):
         self.meta.set_file_info("test.md", "f1", 100,
                                 content_hash="wrong_hash")
         issues = self.meta.verify(self.local_dir)
-        hash_issues = [i for i in issues if i[1] == "hash_mismatch"]
+        hash_issues = [i for i in issues if i[1] == VerifyIssueType.HASH_MISMATCH]
         self.assertEqual(len(hash_issues), 1)
 
     def test_auto_fix_hash(self):
@@ -617,7 +618,8 @@ class CalibrateMetadataBatchTest(unittest.TestCase):
                 f.write(f"content {i}")
             cloud_files[name] = {
                 "id": f"cloud_{i}", "mtime": 1000 + i,
-                "parent_id": "root", "domain": 1, "ctime": 900 + i
+                "parent_id": "root", "domain": 1, "ctime": 900 + i,
+                "is_dir": False, "name": name,
             }
             local_files[name] = {
                 "path": p, "mtime": 1000 + i, "is_dir": False
@@ -648,6 +650,7 @@ class CalibrateMetadataBatchTest(unittest.TestCase):
         actual_mtime = int(os.path.getmtime(p))
         cloud_files = {
             "diary.md": {"id": "F1", "mtime": 1000, "parent_id": "R",
+                         "name": "diary.md", "is_dir": False,
                          "domain": 1, "ctime": 900},
         }
         local_files = {
@@ -678,6 +681,7 @@ class CalibrateMetadataBatchTest(unittest.TestCase):
 
         cloud_files = {
             "ok.md": {"id": "F2", "mtime": 1000, "parent_id": "R",
+                      "name": "ok.md", "is_dir": False,
                       "domain": 1, "ctime": 900},
         }
         local_files = {
@@ -707,6 +711,7 @@ class CalibrateMetadataBatchTest(unittest.TestCase):
 
         cloud_files = {
             "synced.md": {"id": "F3", "mtime": 1000, "parent_id": "R",
+                          "name": "synced.md", "is_dir": False,
                           "domain": 1, "ctime": 900},
         }
         local_files = {
@@ -864,7 +869,8 @@ class DryRunE2ETest(unittest.TestCase):
         from src.sync.utils import SyncAction
 
         cloud = {"id": "c1", "mtime": 1000, "parent_id": "root",
-                 "domain": 1, "name": "cloud.md"}
+                 "name": "cloud.md", "is_dir": False,
+                 "domain": 1, "ctime": 900}
         item = build_item("cloud.md", cloud, None, self.meta, self.local_dir)
         self.assertEqual(item.action, SyncAction.DOWNLOAD)
 
@@ -880,7 +886,8 @@ class DryRunE2ETest(unittest.TestCase):
 
         cloud_files = {
             "synced.md": {"id": "c1", "mtime": mtime, "parent_id": "root",
-                          "domain": 1, "ctime": mtime, "name": "synced.md"}
+                          "name": "synced.md", "is_dir": False,
+                          "domain": 1, "ctime": mtime}
         }
         local_files = {
             "synced.md": {"path": p, "mtime": mtime, "is_dir": False}
@@ -908,7 +915,8 @@ class DryRunE2ETest(unittest.TestCase):
 
         # mtime 相同且都比 meta 新 → 无法分出胜负 → CONFLICT
         cloud = {"id": "c1", "mtime": 600, "parent_id": "root",
-                 "domain": 1, "name": "conflict.md"}
+                 "name": "conflict.md", "is_dir": False,
+                 "domain": 1, "ctime": 500}
         local = {"path": p, "mtime": 600, "is_dir": False}
 
         item = build_item("conflict.md", cloud, local, self.meta,
@@ -927,11 +935,14 @@ class DryRunE2ETest(unittest.TestCase):
 
         cloud_files = {
             "a.md": {"id": "ca", "mtime": 100, "parent_id": "root",
-                     "domain": 1, "ctime": 50, "name": "a.md"},
+                     "name": "a.md", "is_dir": False,
+                     "domain": 1, "ctime": 50},
             "b.md": {"id": "cb", "mtime": 100, "parent_id": "root",
-                     "domain": 1, "ctime": 50, "name": "b.md"},
+                     "name": "b.md", "is_dir": False,
+                     "domain": 1, "ctime": 50},
             "d.md": {"id": "cd", "mtime": 100, "parent_id": "root",
-                     "domain": 1, "ctime": 50, "name": "d.md"},
+                     "name": "d.md", "is_dir": False,
+                     "domain": 1, "ctime": 50},
         }
         local_files = {}
         for name in ("a.md", "b.md", "c.md"):
@@ -1453,6 +1464,7 @@ class CalibrateNullHashTest(unittest.TestCase):
 
             cloud_files = {
                 "missing.md": {"id": "c1", "mtime": 100, "parent_id": "p1",
+                               "name": "missing.md", "is_dir": False,
                                "domain": 1, "ctime": 50}
             }
             local_files = {
@@ -1659,7 +1671,8 @@ class MovesGhostEntryTest(unittest.TestCase):
             "old/file.md": {"path": os.path.join(local_dir, "old/file.md"), "mtime": 100, "is_dir": False}
         }
         cloud_files = {
-            "new/file.md": {"id": "fid1", "mtime": 200, "is_dir": False, "parent_id": "p1", "domain": 1, "ctime": 50}
+            "new/file.md": {"id": "fid1", "mtime": 200, "is_dir": False, "parent_id": "p1", "domain": 1, "ctime": 50,
+                           "name": "new/file.md"}
         }
 
         only_local = {"old/file.md"}
@@ -1997,9 +2010,9 @@ class MerkleTreeEdgeCaseTest(unittest.TestCase):
         result = build_tree({}, {})
         self.assertIn("", result)
 
-    def test_missing_path_in_info(self):
+    def test_minimal_local_file_info(self):
         from src.sync.merkle import build_tree
-        local_files = {"test.md": {"is_dir": False}}
+        local_files = {"test.md": {"is_dir": False, "path": "/tmp/test.md", "mtime": 0}}
         result = build_tree(local_files, {})
         self.assertIn("", result)
 
@@ -2098,7 +2111,8 @@ class ReconcileMovesIntegrationTest(unittest.TestCase):
 
         cloud_files = {
             "new/a.md": {"id": "WEB1", "mtime": 200, "is_dir": False,
-                         "parent_id": "P2", "domain": 1, "ctime": 0},
+                         "parent_id": "P2", "domain": 1, "ctime": 0,
+                         "name": "new/a.md"},
         }
         local_files = {
             "old/a.md": {"mtime": 100, "is_dir": False,
@@ -2122,7 +2136,8 @@ class ReconcileMovesIntegrationTest(unittest.TestCase):
 
         cloud_files = {
             "new/b.md": {"id": "WEB2", "mtime": 200, "is_dir": False,
-                         "parent_id": "P3", "domain": 1, "ctime": 0},
+                         "parent_id": "P3", "domain": 1, "ctime": 0,
+                         "name": "new/b.md"},
         }
         local_files = {
             "old/b.md": {"mtime": 100, "is_dir": False,
@@ -2138,7 +2153,8 @@ class ReconcileMovesIntegrationTest(unittest.TestCase):
     def test_no_moves_returns_empty(self):
         from src.sync.moves import reconcile_moves
 
-        cloud_files = {"a.md": {"id": "WEB1", "mtime": 100, "is_dir": False}}
+        cloud_files = {"a.md": {"id": "WEB1", "mtime": 100, "is_dir": False, "parent_id": "", "name": "a.md",
+                                "ctime": 0, "domain": 1}}
         local_files = {"a.md": {"mtime": 100, "is_dir": False, "path": "x"}}
 
         pending = reconcile_moves(cloud_files, local_files, self.meta,
@@ -2230,7 +2246,7 @@ class MoveLocalFileHelperTest(unittest.TestCase):
 
     def test_successful_move(self):
         from src.sync.moves import _move_local_file
-        local_files = {"new/a.md": {"path": os.path.join(self.tmpdir, "old/a.md")}}
+        local_files = {"new/a.md": {"path": os.path.join(self.tmpdir, "old/a.md"), "is_dir": False, "mtime": 0}}
         only_local = set()
         only_cloud = set()
 
@@ -2244,7 +2260,7 @@ class MoveLocalFileHelperTest(unittest.TestCase):
 
     def test_missing_source_reverts(self):
         from src.sync.moves import _move_local_file
-        local_files = {"new/a.md": {"path": "nonexistent"}}
+        local_files = {"new/a.md": {"path": "nonexistent", "is_dir": False, "mtime": 0}}
         only_local = set()
         only_cloud = set()
 
@@ -2260,7 +2276,7 @@ class MoveLocalFileHelperTest(unittest.TestCase):
 
     def test_dry_run_no_disk_change(self):
         from src.sync.moves import _move_local_file
-        local_files = {"new/a.md": {"path": os.path.join(self.tmpdir, "old/a.md")}}
+        local_files = {"new/a.md": {"path": os.path.join(self.tmpdir, "old/a.md"), "is_dir": False, "mtime": 0}}
         only_local = set()
         only_cloud = set()
 
@@ -2316,10 +2332,11 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
         """same filename + same hash in both → orphan removed from local_files"""
         from src.sync.moves import discard_orphan_duplicates
 
-        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "parent_id": "", "name": "new/note.md",
+                                       "is_dir": False, "ctime": 0, "domain": 1}}
         local_files = {
-            "old/note.md": {"path": self.file_a, "mtime": 50},
-            "new/note.md": {"path": self.file_b, "mtime": 100},
+            "old/note.md": {"path": self.file_a, "mtime": 50, "is_dir": False},
+            "new/note.md": {"path": self.file_b, "mtime": 100, "is_dir": False},
         }
 
         count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
@@ -2335,10 +2352,11 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
         with open(self.file_a, "w") as f:
             f.write("different content here")
 
-        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "parent_id": "", "name": "new/note.md",
+                                       "is_dir": False, "ctime": 0, "domain": 1}}
         local_files = {
-            "old/note.md": {"path": self.file_a, "mtime": 50},
-            "new/note.md": {"path": self.file_b, "mtime": 100},
+            "old/note.md": {"path": self.file_a, "mtime": 50, "is_dir": False},
+            "new/note.md": {"path": self.file_b, "mtime": 100, "is_dir": False},
         }
 
         count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
@@ -2353,10 +2371,11 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
         renamed = os.path.join(self.tmpdir, "old", "other.md")
         os.rename(self.file_a, renamed)
 
-        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "parent_id": "", "name": "new/note.md",
+                                       "is_dir": False, "ctime": 0, "domain": 1}}
         local_files = {
-            "old/other.md": {"path": renamed, "mtime": 50},
-            "new/note.md": {"path": self.file_b, "mtime": 100},
+            "old/other.md": {"path": renamed, "mtime": 50, "is_dir": False},
+            "new/note.md": {"path": self.file_b, "mtime": 100, "is_dir": False},
         }
 
         count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
@@ -2368,10 +2387,11 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
         """is_dir entries should not be considered"""
         from src.sync.moves import discard_orphan_duplicates
 
-        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "is_dir": True}}
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "is_dir": True, "parent_id": "",
+                                       "name": "new/note.md", "ctime": 0, "domain": 1}}
         local_files = {
             "old/note.md": {"path": self.file_a, "mtime": 50, "is_dir": True},
-            "new/note.md": {"path": self.file_b, "mtime": 100},
+            "new/note.md": {"path": self.file_b, "mtime": 100, "is_dir": False},
         }
 
         count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
@@ -2382,8 +2402,9 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
         """no only_local files → returns 0"""
         from src.sync.moves import discard_orphan_duplicates
 
-        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
-        local_files = {"new/note.md": {"path": self.file_b, "mtime": 100}}
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "parent_id": "", "name": "new/note.md",
+                                       "is_dir": False, "ctime": 0, "domain": 1}}
+        local_files = {"new/note.md": {"path": self.file_b, "mtime": 100, "is_dir": False}}
 
         count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
 
@@ -2401,14 +2422,16 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
             f.write("readme text")
 
         cloud_files = {
-            "new/note.md": {"id": "WEB1", "mtime": 100},
-            "new/readme.md": {"id": "WEB2", "mtime": 200},
+            "new/note.md": {"id": "WEB1", "mtime": 100, "parent_id": "", "name": "new/note.md",
+                           "is_dir": False, "ctime": 0, "domain": 1},
+            "new/readme.md": {"id": "WEB2", "mtime": 200, "parent_id": "", "name": "new/readme.md",
+                             "is_dir": False, "ctime": 0, "domain": 1},
         }
         local_files = {
-            "old/note.md": {"path": self.file_a, "mtime": 50},
-            "old/readme.md": {"path": file_c, "mtime": 60},
-            "new/note.md": {"path": self.file_b, "mtime": 100},
-            "new/readme.md": {"path": file_d, "mtime": 200},
+            "old/note.md": {"path": self.file_a, "mtime": 50, "is_dir": False},
+            "old/readme.md": {"path": file_c, "mtime": 60, "is_dir": False},
+            "new/note.md": {"path": self.file_b, "mtime": 100, "is_dir": False},
+            "new/readme.md": {"path": file_d, "mtime": 200, "is_dir": False},
         }
 
         count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
@@ -2421,10 +2444,11 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
         """hash_cache should be populated for computed hashes"""
         from src.sync.moves import discard_orphan_duplicates
 
-        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "parent_id": "", "name": "new/note.md",
+                                       "is_dir": False, "ctime": 0, "domain": 1}}
         local_files = {
-            "old/note.md": {"path": self.file_a, "mtime": 50},
-            "new/note.md": {"path": self.file_b, "mtime": 100},
+            "old/note.md": {"path": self.file_a, "mtime": 50, "is_dir": False},
+            "new/note.md": {"path": self.file_b, "mtime": 100, "is_dir": False},
         }
         cache = {}
 
@@ -2445,10 +2469,11 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
         with open(self.file_b, "w", encoding="utf-8") as f:
             f.write("# Title\n\n---\n\n1. Item one\n- Item two\n")
 
-        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "parent_id": "", "name": "new/note.md",
+                                       "is_dir": False, "ctime": 0, "domain": 1}}
         local_files = {
-            "old/note.md": {"path": self.file_a, "mtime": 50},
-            "new/note.md": {"path": self.file_b, "mtime": 100},
+            "old/note.md": {"path": self.file_a, "mtime": 50, "is_dir": False},
+            "new/note.md": {"path": self.file_b, "mtime": 100, "is_dir": False},
         }
 
         count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
@@ -2465,10 +2490,11 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
         with open(self.file_b, "w", encoding="utf-8") as f:
             f.write("# Title\n\nNew paragraph with completely new text.\n")
 
-        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100}}
+        cloud_files = {"new/note.md": {"id": "WEB1", "mtime": 100, "parent_id": "", "name": "new/note.md",
+                                       "is_dir": False, "ctime": 0, "domain": 1}}
         local_files = {
-            "old/note.md": {"path": self.file_a, "mtime": 50},
-            "new/note.md": {"path": self.file_b, "mtime": 100},
+            "old/note.md": {"path": self.file_a, "mtime": 50, "is_dir": False},
+            "new/note.md": {"path": self.file_b, "mtime": 100, "is_dir": False},
         }
 
         count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)
@@ -2487,10 +2513,11 @@ class DiscardOrphanDuplicatesTest(unittest.TestCase):
         with open(py_b, "w") as f:
             f.write("x = 1\ny = 2\n")
 
-        cloud_files = {"new/script.py": {"id": "WEB1", "mtime": 100}}
+        cloud_files = {"new/script.py": {"id": "WEB1", "mtime": 100, "parent_id": "", "name": "new/script.py",
+                                         "is_dir": False, "ctime": 0, "domain": 1}}
         local_files = {
-            "old/script.py": {"path": py_a, "mtime": 50},
-            "new/script.py": {"path": py_b, "mtime": 100},
+            "old/script.py": {"path": py_a, "mtime": 50, "is_dir": False},
+            "new/script.py": {"path": py_b, "mtime": 100, "is_dir": False},
         }
 
         count = discard_orphan_duplicates(cloud_files, local_files, self.tmpdir)

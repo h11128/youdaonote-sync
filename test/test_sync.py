@@ -20,7 +20,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.sync.metadata import SyncMetadata
 from src.convert.md_to_note import markdown_to_note_json
-from src.sync.utils import decide_action, SyncAction, filter_by_direction, SyncDirection, SyncItem
+from src.sync.utils import decide_action, SyncAction, filter_by_direction, SyncDirection, SyncItem, VerifyIssueType
 from src.sync.dedup import _cloud_score
 from src.sync.scanner import map_cloud_name
 from src.sync.moves import normalize_filename
@@ -273,6 +273,40 @@ class SyncMetadataTest(unittest.TestCase):
         # Then
         self.assertIsNone(self.meta.find_cloud_file_by_hash("old"))
         self.assertEqual(self.meta.find_cloud_file_by_hash("new"), "a.md")
+
+
+    # ---- cache_cloud_file_info 测试 ----
+
+    def test_cache_cloud_creates_new_record(self):
+        """cache_cloud_file_info 新记录：写入 file_id/cloud_mtime，local_mtime=0"""
+        self.meta.cache_cloud_file_info("cloud.md", "WEB1", cloud_mtime=5000,
+                                        parent_id="P1", domain=1)
+
+        info = self.meta.get_file_info("cloud.md")
+        self.assertIsNotNone(info)
+        self.assertEqual(info["file_id"], "WEB1")
+        self.assertEqual(info["cloud_mtime"], 5000)
+        self.assertEqual(info["local_mtime"], 0)
+
+    def test_cache_cloud_preserves_existing_mtime(self):
+        """cache_cloud_file_info 已有记录：只更新 file_id，保留 cloud_mtime 和 local_mtime"""
+        # Given: 已同步的文件（有 cloud_mtime 和 local_mtime）
+        self.meta.set_file_info("synced.md", "OLD_ID", cloud_mtime=1000,
+                                local_mtime=2000)
+
+        # When: 扫描缓存更新 file_id
+        self.meta.cache_cloud_file_info("synced.md", "NEW_ID", cloud_mtime=9999)
+
+        # Then: file_id 更新，但 mtime 保留原值
+        info = self.meta.get_file_info("synced.md")
+        self.assertEqual(info["file_id"], "NEW_ID")
+        self.assertEqual(info["cloud_mtime"], 1000)
+        self.assertEqual(info["local_mtime"], 2000)
+
+    def test_cache_cloud_empty_path_raises(self):
+        """cache_cloud_file_info 空路径抛 ValueError"""
+        with self.assertRaises(ValueError):
+            self.meta.cache_cloud_file_info("", "WEB1", cloud_mtime=100)
 
 
 # ========== markdown_to_note_json 测试 ==========
@@ -1765,11 +1799,12 @@ class DetectCloudMovesTest(unittest.TestCase):
         only_local = {"old/a.md"}
         only_cloud = {"new/a.md"}
         cloud_files = {
-            "new/a.md": {"id": "WEB1", "mtime": 2000, "parent_id": "P2",
-                         "domain": 1, "ctime": 0},
+            "new/a.md": {"id": "WEB1", "parent_id": "P2", "name": "a.md",
+                         "is_dir": False, "mtime": 2000, "ctime": 0, "domain": 1},
         }
         local_files = {
-            "old/a.md": {"mtime": 1000, "is_dir": False},
+            "old/a.md": {"path": os.path.join(self.tmpdir, "old", "a.md"),
+                         "mtime": 1000, "is_dir": False},
         }
         cloud_id_to_path = {"WEB1": "new/a.md"}
 
@@ -1807,8 +1842,8 @@ class DetectCloudMovesTest(unittest.TestCase):
         only_local = {"old/a.md"}
         only_cloud = {"new/a.md"}
         cloud_files = {
-            "new/a.md": {"id": "WEB1", "mtime": 2000, "parent_id": "P2",
-                         "domain": 1, "ctime": 0},
+            "new/a.md": {"id": "WEB1", "parent_id": "P2", "name": "a.md",
+                         "is_dir": False, "mtime": 2000, "ctime": 0, "domain": 1},
         }
         local_files = {
             "old/a.md": {"mtime": 1000, "is_dir": False, "path": src_file},
@@ -1847,8 +1882,8 @@ class DetectCloudMovesTest(unittest.TestCase):
         only_local = {"old/a.md"}
         only_cloud = {"new/a.md"}
         cloud_files = {
-            "new/a.md": {"id": "WEB1", "mtime": 2000, "parent_id": "P2",
-                         "domain": 1, "ctime": 0},
+            "new/a.md": {"id": "WEB1", "parent_id": "P2", "name": "a.md",
+                         "is_dir": False, "mtime": 2000, "ctime": 0, "domain": 1},
         }
         local_files = {
             "old/a.md": {"mtime": 1000, "is_dir": False, "path": src_file},
@@ -2408,7 +2443,7 @@ class MetadataVerifyTest(unittest.TestCase):
         self.meta.set_file_info("missing.md", "WEB1", cloud_mtime=100)
         self.meta.save()
         issues = self.meta.verify(self.local_dir)
-        self.assertTrue(any(t == "orphan" for _, t, _ in issues))
+        self.assertTrue(any(t == VerifyIssueType.ORPHAN for _, t, _ in issues))
 
     def test_verify_detects_hash_mismatch(self):
         from src.sync.utils import compute_content_hash
@@ -2420,7 +2455,7 @@ class MetadataVerifyTest(unittest.TestCase):
                                 content_hash="fake_hash_that_wont_match")
         self.meta.save()
         issues = self.meta.verify(self.local_dir)
-        self.assertTrue(any(t == "hash_mismatch" for _, t, _ in issues))
+        self.assertTrue(any(t == VerifyIssueType.HASH_MISMATCH for _, t, _ in issues))
 
     def test_verify_auto_fix(self):
         from src.sync.utils import compute_content_hash
@@ -2514,8 +2549,8 @@ class CrossDirMoveDirectionTest(unittest.TestCase):
         only_local = {"new_dir/doc.md"}
         only_cloud = {"old_dir/doc.md"}
         cloud_files = {
-            "old_dir/doc.md": {"id": "CLOUD1", "parent_id": "P1",
-                               "mtime": 1000, "is_dir": False}
+            "old_dir/doc.md": {"id": "CLOUD1", "parent_id": "P1", "name": "doc.md",
+                               "is_dir": False, "mtime": 1000, "ctime": 0, "domain": 1}
         }
         local_files = {
             "new_dir/doc.md": {"path": local_path, "mtime": 2000, "is_dir": False}
@@ -2551,9 +2586,8 @@ class CrossDirMoveDirectionTest(unittest.TestCase):
         only_local = {"old_dir/doc.md"}
         only_cloud = {"new_dir/doc.md"}
         cloud_files = {
-            "new_dir/doc.md": {"id": "CLOUD1", "parent_id": "P1",
-                               "mtime": 3000, "ctime": 100,
-                               "domain": 1, "is_dir": False}
+            "new_dir/doc.md": {"id": "CLOUD1", "parent_id": "P1", "name": "doc.md",
+                               "is_dir": False, "mtime": 3000, "ctime": 100, "domain": 1}
         }
         local_files = {
             "old_dir/doc.md": {"path": local_path, "mtime": 1000, "is_dir": False}
@@ -2586,8 +2620,8 @@ class CrossDirMoveDirectionTest(unittest.TestCase):
         only_local = {"a/f.md"}
         only_cloud = {"b/f.md"}
         cloud_files = {
-            "b/f.md": {"id": "C1", "parent_id": "P", "mtime": 500,
-                        "is_dir": False, "domain": 1}
+            "b/f.md": {"id": "C1", "parent_id": "P", "name": "f.md",
+                        "is_dir": False, "mtime": 500, "ctime": 0, "domain": 1}
         }
         local_files = {
             "a/f.md": {"path": local_path, "mtime": 1000, "is_dir": False}
@@ -2731,6 +2765,63 @@ class ScanCacheTest(unittest.TestCase):
         self.assertIsNotNone(self.meta.get_state("last_scan_time"))
         self.assertEqual(self.meta.get_file_id("a.md"), "F1")
         self.assertEqual(self.meta.get_dir_id("dir1"), "D1")
+
+    def test_save_scan_version_preserves_synced_mtime(self):
+        """_save_scan_version 不覆盖已同步文件的 cloud_mtime/local_mtime"""
+        # Given: 文件已同步，有 cloud_mtime=1000 和 local_mtime=2000
+        self.meta.set_file_info("synced.md", "F1", cloud_mtime=1000,
+                                local_mtime=2000)
+
+        # When: 全量扫描写入缓存（云端 mtime 可能已变为 3000）
+        cloud_files = {
+            "synced.md": {"id": "F1", "parent_id": "R", "name": "synced.md",
+                          "is_dir": False, "mtime": 3000, "ctime": 0, "domain": 1},
+        }
+        self.manager._save_scan_version(cloud_files, 100)
+
+        # Then: cloud_mtime 和 local_mtime 保持不变（由 cache_cloud_file_info 保证）
+        info = self.meta.get_file_info("synced.md")
+        self.assertEqual(info["cloud_mtime"], 1000)
+        self.assertEqual(info["local_mtime"], 2000)
+
+    def test_cleanup_stale_paths(self):
+        """_cleanup_stale_paths 清理云端已不存在的文件记录"""
+        # Given: metadata 中有 3 个文件
+        self.meta.set_file_info("alive.md", "F1", cloud_mtime=100)
+        self.meta.set_file_info("dead.md", "F2", cloud_mtime=200)
+        self.meta.set_file_info("local_only.md", "", cloud_mtime=0)
+
+        # When: 云端扫描只包含 alive.md
+        cloud_files = {
+            "alive.md": {"id": "F1", "parent_id": "R", "name": "alive.md",
+                         "is_dir": False, "mtime": 100, "ctime": 0, "domain": 1},
+        }
+        self.manager._cleanup_stale_paths(cloud_files)
+
+        # Then: dead.md 的 file_id 被清空，alive.md 和 local_only.md 不受影响
+        self.assertIsNone(self.meta.get_file_id("dead.md"))
+        self.assertEqual(self.meta.get_file_id("alive.md"), "F1")
+
+    def test_apply_incremental_preserves_synced_mtime(self):
+        """_apply_incremental_changes 不覆盖已同步文件的 cloud_mtime/local_mtime"""
+        # Given: 文件已同步
+        self.meta.set_file_info("note.md", "F1", cloud_mtime=1000,
+                                local_mtime=2000)
+        cloud_files = {
+            "note.md": {"id": "F1", "parent_id": "R", "name": "note.md",
+                        "is_dir": False, "mtime": 1000, "ctime": 0, "domain": 1},
+        }
+
+        # When: 增量更新带来新的 cloud mtime
+        changed = [_fake_entry("F1", "note.md", version=600, mtime=5000)]
+        self.manager._apply_incremental_changes(cloud_files, changed)
+
+        # Then: cloud_files 记录了新 mtime（供 decide_action 比较用）
+        self.assertEqual(cloud_files["note.md"]["mtime"], 5000)
+        # 但 metadata 中保留原始 mtime（代表"上次同步时"的值）
+        info = self.meta.get_file_info("note.md")
+        self.assertEqual(info["cloud_mtime"], 1000)
+        self.assertEqual(info["local_mtime"], 2000)
 
     def test_try_cached_no_version_returns_none(self):
         """没有 cached version 时返回 None"""
