@@ -1,6 +1,7 @@
 # Type-Driven Design Audit
 
-Date: 2026-02-28
+> Date: 2026-02-28
+> **状态：分析报告，建议 F1+F2+F9 为优先实施项。当前尚未开始重构（属于未来优化计划）。**
 
 ## Executive Summary
 
@@ -322,8 +323,10 @@ class LocalFileInfo(TypedDict):
 
 1. **SyncItem dataclass** — the decision layer works on a proper typed object, not raw dicts. This was a great design choice.
 2. **Protocol-based DI** — 9 protocols provide clean interface segregation.
-3. **Enum usage** — SyncAction, SyncDirection, FileType, FileAction cover the key domain concepts.
+3. **Enum usage** — SyncAction, SyncDirection, FileType, FileAction, NoteDomain cover the key domain concepts.
 4. **Frozen dataclass for SyncItem** — immutability prevents accidental mutation.
+5. **NewType for IDs** — `FileId`, `DirId`, `ContentHash`, `TreeHash` in `common.py` (F3 partially done).
+6. **MergeResult, ChangedBlock** — additional typed structures for merge and rolling hash.
 
 ### Cost-Benefit Matrix
 

@@ -1,6 +1,8 @@
 # 同步引擎加固计划
 
 > 基于与 Git 模型的对比分析，针对数据安全、正确性、网络健壮性三个维度的 5 项改进。
+>
+> **实施状态：全部 6 个 Feature 已完成（2026-02-28）**
 
 ## 背景
 
@@ -14,7 +16,7 @@
 | 并发控制 | index.lock | 无 | PID lock file |
 | 网络韧性 | transport retries 仅连接层 | 同上 | 应用层 retry + backoff |
 
-## Feature 1: 写入原子化
+## Feature 1: 写入原子化 — ✅ 已完成
 
 **现状**: download.py 已有 `_atomic_write`（temp → `os.replace`）；SQLite WAL 保护元数据事务。
 
@@ -23,7 +25,7 @@
 
 **改动量**: ~5 行
 
-## Feature 2: 文件锁
+## Feature 2: 文件锁 — ✅ 已完成
 
 **目标**: 防止多个同步进程同时运行导致数据竞争。
 
@@ -38,11 +40,11 @@
 - `sync()` 入口: 尝试获取锁 → 失败则检查 PID 是否存活 → 存活则退出，不存活则接管
 - `sync()` 结束/异常: 释放锁
 
-**改动文件**: `engine.py`（加 `_acquire_lock` / `_release_lock`）
+**改动文件**: `engine.py` — `_SyncLock` 类（PID lock file）
 
 **改动量**: ~40 行
 
-## Feature 3: Delete Tracking
+## Feature 3: Delete Tracking — ✅ 已完成
 
 **目标**: 区分"用户主动删除"和"从未同步过"，防止删除后文件被重新下载/上传。
 
@@ -72,7 +74,7 @@ ALTER TABLE files ADD COLUMN last_sync_at INTEGER DEFAULT 0;
 
 **改动量**: ~60 行
 
-## Feature 4: Retry + Backoff
+## Feature 4: Retry + Backoff — ✅ 已完成
 
 **现状**: `httpx.HTTPTransport(retries=3)` 只处理连接层重试（TCP 连接失败、DNS 失败等），不处理 HTTP 5xx、超时等应用层错误。
 
@@ -95,11 +97,11 @@ def retry_with_backoff(fn, max_retries=3, base_delay=1.0, retryable=(httpx.Timeo
 
 **应用位置**: `engine.py` 的 `_do_download` 和 `_do_upload`
 
-**改动文件**: `utils.py`（retry 函数）、`engine.py`（包装调用）
+**改动文件**: `sync/utils.py` — `retry_with_backoff()`；`engine.py` — `_do_download`/`_do_upload` 中包装调用
 
 **改动量**: ~40 行
 
-## Feature 5: Content Hash 参与决策
+## Feature 5: Content Hash 参与决策 — ✅ 已完成
 
 **目标**: mtime 变了但内容没变时跳过同步，消除 mtime 不可靠带来的误操作。
 
@@ -130,15 +132,14 @@ def retry_with_backoff(fn, max_retries=3, base_delay=1.0, retryable=(httpx.Timeo
 
 ## 实施顺序
 
-按风险从低到高、依赖关系排列:
+按风险从低到高、依赖关系排列（全部已完成）:
 
-1. **Feature 1** (原子化) → 最小改动，独立
-2. **Feature 2** (文件锁) → 独立，无依赖
-3. **Feature 4** (Retry) → 独立，无依赖
-4. **Feature 5** (Hash 决策) → 改 decide_action 签名，需更新所有调用方
-5. **Feature 3** (Delete tracking) → 改 schema + decide_action，需 Feature 5 先就位
-
-每完成一个 feature 运行测试验证无回归。
+1. ✅ **Feature 1** (原子化) → 最小改动，独立
+2. ✅ **Feature 2** (文件锁) → 独立，无依赖
+3. ✅ **Feature 4** (Retry) → 独立，无依赖
+4. ✅ **Feature 5** (Hash 决策) → 改 decide_action 签名，需更新所有调用方
+5. ✅ **Feature 3** (Delete tracking) → 改 schema + decide_action，需 Feature 5 先就位
+6. ✅ **Feature 6** (云端 Hash 精炼) → 依赖 Feature 5
 
 ## 测试计划
 
@@ -153,7 +154,7 @@ def retry_with_backoff(fn, max_retries=3, base_delay=1.0, retryable=(httpx.Timeo
 | 5 | mtime 变 + hash 同 → SKIP；mtime 变 + hash 异 → 正常同步 |
 | 6 | 三方 hash 收敛 → SKIP；cloud_hash == meta_hash → UPLOAD；bytes hash 与文件 hash 一致性 |
 
-## Feature 6: 云端 Content Hash 精炼（追加）
+## Feature 6: 云端 Content Hash 精炼（追加） — ✅ 已完成
 
 **问题**: Feature 5 只对本地文件算 hash，云端变化仍依赖 mtime 判断。当双方 mtime 都变了但判为 CONFLICT 时，无法知道云端内容是否真正改变。
 

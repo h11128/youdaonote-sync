@@ -1,7 +1,8 @@
 # 同步引擎算法审查报告
 
 > 生成时间：2026-02-21
-> 审查范围：`src/sync/` 全部 7 个模块（engine, scanner, decision, moves, dedup, metadata, utils）
+> 审查范围：`src/sync/` 全部模块（engine, scanner, decision, moves, dedup, metadata, utils, merkle, bloom, merge, rolling_hash, desktop_data）
+> 当前 `src/sync/` 共 14 个 .py 文件（含 `__init__.py`）
 
 ---
 

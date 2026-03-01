@@ -34,7 +34,7 @@ from src.sync.utils import (
     CloudFileInfo, LocalFileInfo, SyncStats, DedupStats,
     FileId, DirId, ContentHash, UploadResult,
     filter_by_direction, empty_stats,
-    print_preview, print_dryrun_summary, backup_file,
+    print_preview, print_dryrun_summary, diagnose_dryrun, backup_file,
     compute_content_hash, compute_hash_from_bytes,
     retry_with_backoff, decide_action,
 )
@@ -332,6 +332,7 @@ class SyncManager:
             for item in items:
                 print_preview(item)
             print_dryrun_summary(all_items)
+            diagnose_dryrun(all_items, self.metadata.get_file_info)
         else:
             if self._pending_moves:
                 moved = self._execute_cloud_moves()

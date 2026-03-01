@@ -2,29 +2,31 @@
 
 > 分析日期：2026-02-21
 > 基于代码快照：Python 实现 ~6900 行源码 + ~2200 行测试
+>
+> **注意：分析时的部分数据已过时（如行数、依赖等），但核心结论不变。以下已标注过时的部分。**
 
 ---
 
 ## 一、项目现状概览
 
-| 指标 | 数据 |
-|------|------|
-| 语言 | Python 3.13 |
-| 源码规模 | 6917 行（34 个 .py 文件） |
-| 测试规模 | 2241 行，143 个测试用例 |
-| 核心依赖 | requests, markdownify, Brotli, playwright |
-| 并发模型 | threading（ThreadPoolExecutor, Lock, RLock） |
-| I/O 类型 | HTTP API 调用 + 本地文件系统读写 |
-| 部署方式 | CLI 工具 + GUI（tkinter）+ 守护进程（watchdog） |
+| 指标 | 数据（分析时） | 当前 |
+|------|------|------|
+| 语言 | Python 3.13 | Python ≥3.8 |
+| 源码规模 | 6917 行（34 个 .py 文件） | ~8000+ 行（35 个 .py 文件） |
+| 测试规模 | 2241 行，143 个测试用例 | 7 个测试文件，200+ 测试 |
+| 核心依赖 | requests, markdownify, Brotli, playwright | httpx, markdownify, Brotli, xxhash |
+| 并发模型 | threading（ThreadPoolExecutor, Lock, RLock） | threading + asyncio（混合） |
+| I/O 类型 | HTTP API 调用 + 本地文件系统读写 | 同左 |
+| 部署方式 | CLI 工具 + GUI（tkinter）+ 守护进程（watchdog） | 同左 |
 
-### 性能瓶颈（优化前）
+### 性能瓶颈（优化前 → 优化后）
 
-| 瓶颈 | 类型 | 现状（Python 优化后） |
-|-------|------|----------------------|
-| HTTP 请求串行锁 | I/O bound | 已移除，真正并发 |
-| 文件系统遍历 | I/O bound | 已消除重复遍历 |
-| JSON 元数据序列化 | CPU bound | 批次从 50 增大到 200 |
-| 内容 hash 计算 | CPU bound | 二进制文件跳过标准化 |
+| 瓶颈 | 类型 | 优化后现状 |
+|-------|------|------------|
+| HTTP 请求串行锁 | I/O bound | ✅ 已移除，httpx 原生线程安全 |
+| 文件系统遍历 | I/O bound | ✅ 已消除重复遍历，多线程 scan_local |
+| JSON 元数据序列化 | CPU bound | ✅ 已迁移到 SQLite，O(1) 单条更新 |
+| 内容 hash 计算 | CPU bound | ✅ 二进制文件跳过标准化，MD5→xxHash，分块读取 |
 
 ---
 
@@ -310,11 +312,9 @@ conn.execute("INSERT OR REPLACE INTO files (path, file_id, hash, ...) VALUES (?,
 
 推荐优化路径（按优先级）：
 
-1. **启用 strict 类型检查**（方案 D）→ 以最低成本获得类似 Rust 的类型安全
-2. **async 化**（方案 B）→ 最大性能收益
-3. **SQLite 元数据**（方案 C）→ 消除序列化瓶颈
-4. **PyO3 热点函数**（方案 A）→ 锦上添花
+1. ✅ **启用 strict 类型检查**（方案 D）→ pyright strict 模式已启用
+2. ✅ **async 化**（方案 B）→ 云端扫描已 async，httpx 替代 requests
+3. ✅ **SQLite 元数据**（方案 C）→ JSON 已完全迁移到 SQLite
+4. ⏸ **PyO3 热点函数**（方案 A）→ xxHash 已替代 MD5，纯 C 扩展，性能收益已实现
 
-这些加起来的工作量 < 1 周，而 Rust 重写需要 1-2 个月，最终安全性和性能效果接近。
-
-**如果未来项目特征变化**（比如变成面向大量用户的分发产品、或并发模型变得极其复杂），可以重新评估 Rust 重写的必要性。
+上述 1~3 全部已完成。核心结论不变：继续使用 Python，通过工程手段获得接近 Rust 的安全性和性能。

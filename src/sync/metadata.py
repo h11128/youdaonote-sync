@@ -5,7 +5,6 @@
 使用 SQLite 后端持久化，单条写入 O(1)，查询通过 SQL 索引加速。
 """
 
-import json
 import os
 import logging
 import sqlite3
@@ -17,81 +16,13 @@ from typing import Optional, Dict, Any, List, Tuple
 
 from src.common import get_config_directory, normalize_sep
 from src.sync.utils import FileMetaInfo, VerifyIssueType, FileId, DirId, ContentHash, TreeHash, TreeHash
-
-
-_SCHEMA_SQL = """\
-CREATE TABLE IF NOT EXISTS files (
-    path TEXT PRIMARY KEY,
-    file_id TEXT NOT NULL DEFAULT '',
-    cloud_mtime INTEGER NOT NULL DEFAULT 0,
-    local_mtime INTEGER NOT NULL DEFAULT 0,
-    parent_id TEXT,
-    domain INTEGER,
-    content_hash TEXT,
-    create_time INTEGER,
-    last_sync_at INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS directories (
-    path TEXT PRIMARY KEY,
-    dir_id TEXT NOT NULL DEFAULT '',
-    parent_id TEXT NOT NULL DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_file_id ON files(file_id) WHERE file_id != '';
-CREATE INDEX IF NOT EXISTS idx_content_hash ON files(content_hash) WHERE content_hash IS NOT NULL AND content_hash != '';
-CREATE INDEX IF NOT EXISTS idx_dir_id ON directories(dir_id) WHERE dir_id != '';
-"""
-
-_MIGRATION_SQL = [
-    "ALTER TABLE files ADD COLUMN last_sync_at INTEGER NOT NULL DEFAULT 0",
-    # Phase 1b: cloud hash cache
-    "ALTER TABLE files ADD COLUMN cloud_content_hash TEXT",
-    # Phase 4a: Merkle tree
-    "ALTER TABLE directories ADD COLUMN tree_hash TEXT",
-    # Phase 1b: sync_log table
-    """CREATE TABLE IF NOT EXISTS sync_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp INTEGER NOT NULL,
-        path TEXT NOT NULL,
-        action TEXT NOT NULL,
-        direction TEXT,
-        old_hash TEXT,
-        new_hash TEXT,
-        cloud_id TEXT,
-        detail TEXT
-    )""",
-    "CREATE INDEX IF NOT EXISTS idx_sync_log_ts ON sync_log(timestamp)",
-    "CREATE INDEX IF NOT EXISTS idx_sync_log_path ON sync_log(path)",
-    # Phase 1b: file refs cache
-    """CREATE TABLE IF NOT EXISTS file_refs (
-        source_path TEXT NOT NULL,
-        ref_path TEXT NOT NULL,
-        PRIMARY KEY (source_path, ref_path)
-    )""",
-    # Phase 3d: base version storage for diff3
-    """CREATE TABLE IF NOT EXISTS file_base (
-        path TEXT PRIMARY KEY,
-        content BLOB NOT NULL,
-        hash TEXT NOT NULL,
-        saved_at INTEGER NOT NULL
-    )""",
-    # Phase 1a: invalidate MD5 hashes after switching to xxhash
-    "UPDATE files SET content_hash = NULL WHERE content_hash IS NOT NULL",
-    # scan-cache: key-value store for global sync state
-    """CREATE TABLE IF NOT EXISTS sync_state (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-    )""",
-    # Phase 3: original cloud domain (0=XML, 1=MD) for format preservation
-    "ALTER TABLE files ADD COLUMN original_domain INTEGER",
-]
+from src.sync.metadata_migrations import run_all_migrations
 
 
 class SyncMetadata:
     """管理本地文件与云端 ID 的映射关系（线程安全，SQLite 后端）"""
 
-    def __init__(self, metadata_path: str = None):
+    def __init__(self, metadata_path: Optional[str] = None):
         """
         初始化元数据管理器
 
@@ -112,139 +43,25 @@ class SyncMetadata:
         db_dir = os.path.dirname(self._db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
-        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        self._conn_impl: Optional[sqlite3.Connection] = sqlite3.connect(
+            self._db_path, check_same_thread=False)
         try:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
-            self._conn.executescript(_SCHEMA_SQL)
-            self._conn.commit()
-            self._run_migrations()
-            self._migrate_json_if_needed()
-            self._normalize_stored_paths()
+            run_all_migrations(self._conn, self._json_path,
+                               self.get_state, self.set_state)
         except Exception:
-            self._conn.close()
-            self._conn = None
+            self._conn_impl.close()
+            self._conn_impl = None
             raise
 
-    def _run_migrations(self) -> None:
-        """运行增量 schema 迁移（幂等，已有列/表时自动跳过）。"""
-        self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS _migrations "
-            "(idx INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
-        applied = {r[0] for r in self._conn.execute(
-            "SELECT idx FROM _migrations").fetchall()}
-
-        _EXPECTED_ERRORS = ("duplicate column", "already exists")
-
-        for i, sql in enumerate(_MIGRATION_SQL):
-            if i in applied:
-                continue
-            try:
-                self._conn.execute(sql)
-            except sqlite3.OperationalError as e:
-                err_msg = str(e).lower()
-                if not any(phrase in err_msg for phrase in _EXPECTED_ERRORS):
-                    logging.error(f"迁移 #{i} 失败(非预期错误): {e}")
-                    raise
-            self._conn.execute(
-                "INSERT OR IGNORE INTO _migrations (idx, applied_at) VALUES (?, ?)",
-                (i, int(time.time())))
-        self._conn.commit()
-
-    def _migrate_json_if_needed(self) -> None:
-        """检测旧 JSON 文件并自动导入到 SQLite。"""
-        if not os.path.exists(self._json_path):
-            return
-        row = self._conn.execute("SELECT COUNT(*) FROM files").fetchone()
-        if row and row[0] > 0:
-            return
-
-        try:
-            with open(self._json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            logging.warning(f"迁移 JSON 元数据失败: {e}")
-            return
-
-        files = data.get("files", {})
-        dirs = data.get("directories", {})
-
-        for path, info in files.items():
-            self._conn.execute(
-                "INSERT OR IGNORE INTO files "
-                "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, content_hash, create_time) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    path,
-                    info.get("file_id", ""),
-                    info.get("cloud_mtime", 0),
-                    info.get("local_mtime", 0),
-                    info.get("parent_id", ""),
-                    info.get("domain", 0),
-                    info.get("content_hash", ""),
-                    info.get("create_time", 0),
-                ),
-            )
-
-        for path, info in dirs.items():
-            self._conn.execute(
-                "INSERT OR IGNORE INTO directories (path, dir_id, parent_id) VALUES (?, ?, ?)",
-                (path, info.get("dir_id", ""), info.get("parent_id", "")),
-            )
-
-        self._conn.commit()
-
-        backup = self._json_path + ".bak"
-        try:
-            os.replace(self._json_path, backup)
-            logging.info(f"JSON 元数据已迁移到 SQLite，旧文件: {backup}")
-        except OSError:
-            pass
-
-    _NORM_PATHS_FLAG = "paths_normalized_v1"
-
-    def _normalize_stored_paths(self) -> None:
-        """One-time migration: strip trailing whitespace from path stems.
-
-        map_cloud_name() now strips trailing spaces before the extension,
-        so metadata paths must match.  Also invalidates the cloud scan cache
-        to force a re-scan with the corrected path logic.
-        """
-        if self.get_state(self._NORM_PATHS_FLAG):
-            return
-
-        renamed = 0
-        for table in ("files", "directories"):
-            rows = self._conn.execute(
-                f"SELECT path FROM {table}"
-            ).fetchall()
-            for (old_path,) in rows:
-                parts = old_path.rsplit("/", 1)
-                basename = parts[-1] if len(parts) > 1 else parts[0]
-                prefix = parts[0] + "/" if len(parts) > 1 else ""
-                stem, ext = os.path.splitext(basename)
-                new_stem = stem.rstrip()
-                if new_stem == stem:
-                    continue
-                new_path = prefix + new_stem + ext
-                existing = self._conn.execute(
-                    f"SELECT 1 FROM {table} WHERE path = ?", (new_path,)
-                ).fetchone()
-                if existing:
-                    self._conn.execute(
-                        f"DELETE FROM {table} WHERE path = ?", (old_path,))
-                else:
-                    self._conn.execute(
-                        f"UPDATE {table} SET path = ? WHERE path = ?",
-                        (new_path, old_path))
-                renamed += 1
-
-        self.set_state(self._NORM_PATHS_FLAG, "1")
-        if renamed > 0:
-            self.set_state("last_cloud_version", "0")
-            logging.info(
-                f"路径规范化迁移: 修正了 {renamed} 条路径，已失效扫描缓存")
-        self._conn.commit()
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """Type-narrowing accessor; raises if already closed."""
+        conn = self._conn_impl
+        if conn is None:
+            raise RuntimeError("SyncMetadata is already closed")
+        return conn
 
     def load(self) -> None:
         """兼容接口。SQLite 模式下数据始终在 DB 中，无需显式加载。"""
@@ -310,13 +127,13 @@ class SyncMetadata:
     def close(self) -> None:
         """关闭数据库连接。"""
         with self._lock:
-            if self._conn:
+            if self._conn_impl:
                 try:
-                    self._conn.commit()
+                    self._conn_impl.commit()
                 except sqlite3.Error:
                     pass
-                self._conn.close()
-                self._conn = None
+                self._conn_impl.close()
+                self._conn_impl = None
 
     def __enter__(self):
         return self
@@ -327,7 +144,7 @@ class SyncMetadata:
 
     @staticmethod
     @lru_cache(maxsize=8192)
-    def _normalize_path(local_path: str, base_dir: str = None) -> str:
+    def _normalize_path(local_path: str, base_dir: Optional[str] = None) -> str:
         """规范化路径（带 LRU 缓存，避免重复字符串操作）。"""
         path = normalize_sep(local_path)
         if base_dir:
@@ -399,7 +216,7 @@ class SyncMetadata:
             result["original_domain"] = row[9]
         return result
 
-    def mark_synced(self, local_path: str, ts: int = None) -> None:
+    def mark_synced(self, local_path: str, ts: Optional[int] = None) -> None:
         """标记文件已成功同步（更新 last_sync_at）。"""
         with self._lock:
             path = self._normalize_path(local_path)
@@ -590,9 +407,9 @@ class SyncMetadata:
         local_path: str,
         file_id: FileId,
         cloud_mtime: int,
-        parent_id: DirId = None,
-        domain: int = None,
-        create_time: int = None,
+        parent_id: Optional[DirId] = None,
+        domain: Optional[int] = None,
+        create_time: Optional[int] = None,
     ) -> None:
         """缓存云端扫描结果，只写入云端相关字段。
 
@@ -710,10 +527,10 @@ class SyncMetadata:
             result: Dict[str, FileMetaInfo] = {}
             for path, fid, pid, cmtime, ctime, domain in rows:
                 info = FileMetaInfo(
-                    file_id=fid,
+                    file_id=FileId(fid),
                     cloud_mtime=cmtime,
                     local_mtime=0,
-                    parent_id=pid or "",
+                    parent_id=DirId(pid or ""),
                     domain=domain,
                 )
                 if ctime and ctime > 0:
@@ -745,7 +562,7 @@ class SyncMetadata:
             ).fetchone()
             return row[0] if row and row[0] else None
 
-    def set_dir_info(self, local_path: str, dir_id: DirId, parent_id: DirId = None) -> None:
+    def set_dir_info(self, local_path: str, dir_id: DirId, parent_id: Optional[DirId] = None) -> None:
         """
         设置本地目录的元数据
 
@@ -796,7 +613,7 @@ class SyncMetadata:
             result: Dict[str, FileMetaInfo] = {}
             for path, chash, lmtime, fid in rows:
                 info = FileMetaInfo(
-                    file_id=fid or "",
+                    file_id=FileId(fid or ""),
                     cloud_mtime=0,
                     local_mtime=lmtime or 0,
                 )
@@ -863,7 +680,7 @@ class SyncMetadata:
             ).fetchone()
             return row[0] if row and row[0] else None
 
-    def find_cloud_file_by_hash(self, content_hash: ContentHash, exclude_path: str = None) -> Optional[str]:
+    def find_cloud_file_by_hash(self, content_hash: ContentHash, exclude_path: Optional[str] = None) -> Optional[str]:
         """
         查找是否已有相同 content_hash 的云端文件（有 file_id 的）。
 
@@ -924,10 +741,10 @@ class SyncMetadata:
     # ========== 操作日志 (Phase 2d) ==========
 
     def log_sync_action(
-        self, path: str, action: str, direction: str = None,
+        self, path: str, action: str, direction: Optional[str] = None,
         old_hash: Optional[ContentHash] = None, new_hash: Optional[ContentHash] = None,
-        cloud_id: str = None, detail: str = None,
-        timestamp_override: int = None,
+        cloud_id: Optional[str] = None, detail: Optional[str] = None,
+        timestamp_override: Optional[int] = None,
     ) -> None:
         """记录一条同步操作日志。"""
         ts = timestamp_override if timestamp_override is not None else int(time.time())

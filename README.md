@@ -4,13 +4,34 @@
 
 ## 功能
 
+### 核心同步
+
 - 📥 全量导出笔记（支持增量更新）
 - 🔄 双向同步（本地 ↔ 云端）
-- 👀 自动同步模式（持续监听文件变化）
-- 📝 自动转换 XML/JSON 格式为 Markdown
-- 🖼️ 下载图片到本地或上传到图床
+- 👀 自动同步模式（持续监听文件变化 + 定时轮询云端）
+- 📝 自动转换 XML/JSON 格式为 Markdown，支持 Markdown 反向转换为有道 JSON 格式上传
+- 🖼️ 下载图片到本地或上传到图床（SM.MS）
 - 🔍 智能去重（自动清理云端重复文件）
 - 📦 Git 自动提交（同步后自动 commit）
+- 📁 选择性同步（include/exclude 规则，只同步指定目录）
+
+### 同步引擎
+
+- 🔒 Content Hash 决策：mtime 变化但内容未变时自动跳过，避免无效同步
+- 🔀 三方 Hash 精炼：云端内容 hash 对比，CONFLICT 降级为单向操作
+- 🏷️ 删除追踪：区分"用户删除"和"从未同步"，防止误重建
+- 🔄 移动/重命名检测：file_id、content hash、文件名三级匹配
+- 🌳 Merkle Tree 目录级快速变更检测
+- 🌸 Bloom Filter 快速集合查询
+- 📊 三路合并（diff3 算法，自动合并非重叠修改）
+- 🗄️ 扫描缓存（SQLite 缓存 + listRecent 增量更新，无变化时 API 调用减少 99%）
+- 📋 操作日志（类 Git reflog，每次同步记录可审计可回溯）
+- 🧹 元数据垃圾回收 + 完整性校验
+- 🔁 应用层重试 + 指数退避（网络错误自动恢复）
+- 🔐 进程锁（PID lock file 防止多实例同时运行）
+
+### 客户端
+
 - 🖥️ GUI 图形界面
 - ⌨️ CLI 命令行工具
 - 🔎 搜索笔记功能
@@ -88,11 +109,13 @@ python -m src sync --no-dedup
 ```
 
 同步规则：
-- 只有本地有的文件 → 上传到云端
-- 只有云端有的文件 → 下载到本地
-- 两边都有且有修改 → 较新的版本覆盖较旧的
-- 支持 Markdown 和普通笔记格式
+- 只有本地有的文件 → 上传到云端（如果元数据显示曾同步过则视为云端删除，跳过上传）
+- 只有云端有的文件 → 下载到本地（如果元数据显示曾同步过则视为本地删除，跳过下载）
+- 两边都有且 mtime 变了 → 先比较 content hash，内容相同则跳过；内容不同时较新覆盖较旧
+- 双方都改了不同内容 → 三方 hash 精炼，如果只有一端实际改了则单向同步，否则按 mtime 决定
+- 支持 Markdown 和普通笔记格式（.note XML/JSON → Markdown 自动转换）
 - 自动检测并清理云端重复文件
+- 支持文件移动/重命名检测（避免删除+重建）
 
 ### 4. 其他命令
 
@@ -116,54 +139,55 @@ python -m src download 关键词
 ## 项目结构
 
 ```
-├── src/                    # 核心包
-│   ├── __main__.py         # CLI 入口（argparse + 命令分发）
-│   ├── cli.py              # CLI 命令处理（pull/list/search/download/sync/gui）
-│   ├── login.py            # 登录命令处理
-│   ├── auth.py             # 浏览器认证（Playwright 登录、Cookie 刷新）
-│   ├── api.py              # 有道云笔记 API 封装
-│   ├── cookies.py          # Cookie 管理
-│   ├── protocols.py        # Protocol 接口定义（ISP/DIP）
-│   ├── common.py           # 公共工具函数
-│   ├── log.py              # 日志配置
-│   ├── watcher.py          # 自动同步守护进程（文件监听 + 轮询）
-│   ├── gui/                # GUI 模块
-│   │   ├── app.py          # GUI 界面
-│   │   └── controller.py   # GUI 业务逻辑
-│   ├── sync/               # 同步引擎
-│   │   ├── engine.py       # 同步主流程
-│   │   ├── scanner.py      # 文件扫描（本地 + 云端）
-│   │   ├── decision.py     # 同步决策（冲突解决）
-│   │   ├── moves.py        # 移动/重命名检测
-│   │   ├── dedup.py        # 云端去重逻辑
-│   │   ├── metadata.py     # 同步元数据管理（SQLite）
-│   │   ├── merkle.py       # Merkle Tree 快速变更检测
-│   │   ├── bloom.py        # Bloom Filter 快速查找
-│   │   ├── rolling_hash.py # 滚动哈希（内容相似度检测）
-│   │   ├── git_helper.py   # Git 自动提交
-│   │   ├── merge.py        # 冲突合并
-│   │   ├── desktop_data.py # 桌面客户端数据解析
-│   │   └── utils.py        # 同步工具函数（枚举、数据类、哈希）
-│   ├── transfer/           # 传输模块
-│   │   ├── download.py     # 下载引擎（单文件下载 + 类型检测）
-│   │   ├── pull.py         # 全量拉取引擎（递归遍历云端目录）
-│   │   ├── upload.py       # 上传引擎
-│   │   ├── search.py       # 搜索引擎
-│   │   ├── image.py        # 图片下载/链接迁移
-│   │   └── image_upload.py # 图片上传到外部图床（SM.MS）
-│   └── convert/            # 格式转换
-│       ├── note_convert.py # 云端格式 → Markdown（统一入口）
-│       ├── xml_convert.py  # XML 格式解析
-│       ├── json_convert.py # JSON 格式解析
-│       └── md_to_note.py   # Markdown → 有道 JSON
-├── config/                 # 配置文件
-│   ├── cookies.json        # 登录凭证（自动生成）
-│   ├── config.json         # 导出配置
-│   └── sync_metadata.db    # 同步元数据（SQLite，自动生成）
-├── tools/                  # 辅助工具
-│   ├── cli/                # 命令行辅助工具
-│   └── debug/              # 调试诊断工具
-└── test/                   # 测试用例
+├── src/                      # 核心包（35 个 .py 文件）
+│   ├── __main__.py           # CLI 入口（argparse + 命令分发）
+│   ├── cli.py                # CLI 命令处理（pull/list/search/download/sync/gui）
+│   ├── login.py              # 登录命令处理
+│   ├── auth.py               # 浏览器认证（Playwright 登录、Cookie 刷新）
+│   ├── api.py                # 有道云笔记 API 封装（httpx）
+│   ├── cookies.py            # Cookie 管理
+│   ├── protocols.py          # Protocol 接口定义（9 个角色接口，ISP/DIP）
+│   ├── common.py             # 公共常量、NewType（FileId/DirId）、工具函数
+│   ├── log.py                # 日志配置
+│   ├── watcher.py            # 自动同步守护进程（文件监听 + 轮询）
+│   ├── gui/                  # GUI 模块
+│   │   ├── app.py            # GUI 界面（tkinter）
+│   │   └── controller.py     # GUI 业务逻辑
+│   ├── sync/                 # 同步引擎
+│   │   ├── engine.py         # 同步主流程 + 扫描缓存 + 进程锁
+│   │   ├── scanner.py        # 文件扫描（本地多线程 + 云端异步 + 选择性过滤）
+│   │   ├── decision.py       # 同步决策（校准 + SyncItem 构建）
+│   │   ├── moves.py          # 移动/重命名检测（file_id + hash + 文件名三级）
+│   │   ├── dedup.py          # 云端去重（内容 hash 分组 + 评分保留）
+│   │   ├── metadata.py       # 同步元数据（SQLite：files/directories/sync_log/sync_state）
+│   │   ├── merkle.py         # Merkle Tree 目录级快速变更检测
+│   │   ├── bloom.py          # Bloom Filter 概率集合查询
+│   │   ├── rolling_hash.py   # 滚动哈希（内容相似度检测）
+│   │   ├── merge.py          # 三路合并（diff3 算法）
+│   │   ├── git_helper.py     # Git 自动提交
+│   │   ├── desktop_data.py   # 有道桌面客户端数据解析（冷启动加速）
+│   │   └── utils.py          # 同步工具函数（枚举、数据类、哈希、重试）
+│   ├── transfer/             # 传输模块
+│   │   ├── download.py       # 下载引擎（单文件下载 + 类型检测 + 原子写入）
+│   │   ├── pull.py           # 全量拉取引擎（递归遍历云端目录）
+│   │   ├── upload.py         # 上传引擎（Markdown + 二进制 + 目录创建）
+│   │   ├── search.py         # 搜索引擎
+│   │   ├── image.py          # 图片下载 + Markdown URL 改写
+│   │   └── image_upload.py   # 图片上传到外部图床（SM.MS）
+│   └── convert/              # 格式转换
+│       ├── note_convert.py   # 云端格式 → Markdown（统一入口 + 纯函数）
+│       ├── xml_convert.py    # XML 格式解析
+│       ├── json_convert.py   # JSON 格式解析
+│       └── md_to_note.py     # Markdown → 有道 JSON（上传 domain=0 笔记）
+├── config/                   # 配置文件
+│   ├── cookies.json          # 登录凭证（自动生成）
+│   ├── config.json           # 导出配置
+│   └── sync_metadata.db      # 同步元数据（SQLite，自动生成）
+├── docs/                     # 设计文档与审查报告
+├── tools/                    # 辅助工具
+│   ├── cli/                  # 命令行辅助（Cookie 提取、API 抓包）
+│   └── debug/                # 调试诊断（元数据检查、dry-run 报告）
+└── test/                     # 测试用例（7 个测试文件 + fixtures）
 ```
 
 ## 配置文件
@@ -273,17 +297,44 @@ pytest test/
 
 # 格式化代码
 black src/
+
+# 类型检查
+pyright src/
+```
+
+## 架构概览
+
+同步引擎的核心流程：
+
+```
+sync()
+  ├── _acquire_lock()           # PID 进程锁
+  ├── _get_cloud_files()        # 扫描缓存 → listRecent 增量 → 全量 HTTP fallback
+  ├── scan_local()              # 多线程本地扫描（+ 选择性过滤）
+  ├── calibrate_metadata()      # 校准元数据基线（content hash）
+  ├── reconcile_moves()         # 三级移动检测（file_id → hash → 文件名）
+  ├── build_item() × N          # 构建 SyncItem（decide_action 决策）
+  ├── _refine_conflicts()       # 三方 hash 精炼 CONFLICT
+  ├── _execute_all()            # 分离线程池（下载 10 + 上传 5）
+  │   ├── _do_download()        # 原子写入 + 格式转换 + 重试
+  │   └── _do_upload()          # Markdown/二进制上传 + 重试
+  ├── auto_dedup()              # 内容去重（复用 hash_cache）
+  ├── auto_git()                # Git 自动提交
+  └── _release_lock()
 ```
 
 ## 依赖说明
 
 | 依赖 | 用途 | 安装方式 |
 |------|------|----------|
-| httpx | HTTP 客户端 | 核心依赖 |
-| markdownify | HTML → Markdown | 核心依赖 |
-| playwright | 自动登录 | `[login]` 或 `[full]` |
-| watchdog | 文件监听 | `[watch]` 或 `[full]` |
-| win32-setctime | Windows 文件时间 | `[windows]` 或 `[full]` |
+| httpx | HTTP 客户端（线程安全，支持异步） | 核心依赖 |
+| markdownify | HTML → Markdown 转换 | 核心依赖 |
+| Brotli | Brotli 解压（部分 API 响应） | 核心依赖 |
+| xxhash | 高速哈希（内容 hash、Bloom Filter、Merkle Tree） | 核心依赖 |
+| playwright | 自动登录（浏览器扫码） | `[login]` 或 `[full]` |
+| watchdog | 文件监听（watch 模式） | `[watch]` 或 `[full]` |
+| win32-setctime | Windows 文件时间设置 | `[windows]` 或 `[full]` |
+| browser-cookie3 | 从浏览器提取 Cookie | `[browser]` 或 `[full]` |
 
 ## License
 

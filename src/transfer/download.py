@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 from src.convert.note_convert import YoudaoNoteConvert
 from src.transfer.image import ImagePull
 from src.common import get_script_directory, safe_long_path, load_config, MARKDOWN_SUFFIX, normalize_sep, FileId, DirId
+from src.sync.utils import sanitize_filename
 
 # 尝试导入 Windows 特定模块
 try:
@@ -71,10 +72,6 @@ class YoudaoNoteDownload:
         self._desktop_data_dir = desktop_data_dir
         self._image_puller = image_puller
         self.last_raw_content: Optional[bytes] = None
-
-        # 文件名中需要替换的特殊字符
-        self._regex_symbol = re.compile(r"[<]")
-        self._del_regex_symbol = re.compile(r'[\\/":\|\*\?#>]')
 
     def download_file(self, file_id: FileId, file_name: str, local_dir: str,
                       modify_time: int = 0, create_time: int = 0,
@@ -231,19 +228,12 @@ class YoudaoNoteDownload:
             return False
 
     def _optimize_file_name(self, name: str) -> str:
+        """优化文件名，移除特殊字符。
+
+        委托给 ``sanitize_filename``，保证与 scanner 的
+        ``map_cloud_name`` 行为完全一致。
         """
-        优化文件名，移除特殊字符
-        :param name: 原文件名
-        :return: 优化后的文件名
-        """
-        # 去除换行符
-        name = name.replace("\n", "")
-        # 去除首尾空格
-        name = name.strip()
-        # 替换特殊字符
-        name = self._regex_symbol.sub("_", name)
-        name = self._del_regex_symbol.sub("", name)
-        return name
+        return sanitize_filename(name)
 
     # 需要下载内容才能判断类型的后缀
     _NEED_DOWNLOAD_EXTS = frozenset({".note", ".clip", ""})

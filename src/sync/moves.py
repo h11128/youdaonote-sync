@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
 from src.sync.metadata import SyncMetadata
-from src.sync.utils import CloudFileInfo, LocalFileInfo, FileId, DirId, ContentHash, compute_content_hash
+from src.sync.utils import CloudFileInfo, LocalFileInfo, FileId, DirId, ContentHash, compute_content_hash, sanitize_filename
 
 
 @dataclass
@@ -29,17 +29,9 @@ class PendingMove:
 def normalize_filename(name: str) -> str:
     """将文件名净化为本地存储时的规范形式（与下载时一致）。
 
-    有道云文件名可能含 Windows 不允许的字符或多余空白，
-    下载时会被清理，导致云端名字和本地名字不匹配。
+    委托给 ``sanitize_filename``，保证与 scanner / downloader 行为统一。
     """
-    for ch in ('\\', '/', ':', '*', '?', '"', '<', '>', '|'):
-        name = name.replace(ch, '')
-    name = name.replace('\n', '').replace('\r', '')
-    name = name.lstrip('\u3000')  # 全角空格
-    name = re.sub(r' {2,}', ' ', name)  # 去特殊字符后可能留下连续空格
-    stem, ext = os.path.splitext(name)
-    name = stem.strip() + ext.strip()
-    return name
+    return sanitize_filename(name)
 
 
 def _detect_cloud_moves(

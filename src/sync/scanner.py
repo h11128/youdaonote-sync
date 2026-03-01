@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 import httpx
 
 from src.common import normalize_sep, FileId, DirId
-from src.sync.utils import CloudFileInfo, LocalFileInfo
+from src.sync.utils import CloudFileInfo, LocalFileInfo, sanitize_filename
 
 if TYPE_CHECKING:
     from src.protocols import DirBrowser
@@ -32,15 +32,16 @@ DEFAULT_SCAN_WORKERS = 8
 def map_cloud_name(name: str) -> str:
     """将云端文件名映射为本地文件名。
 
-    .note/.clip/无扩展名 → 加 .md 后缀（下载后会转成 markdown）。
-    其他扩展名保持不变。
-    stem 部分去除尾部空格，与下载时 _optimize_file_name() 的 strip() 一致。
+    两步转换：
+    1. 字符净化 — 与 download.py ``_optimize_file_name`` 一致，
+       去除 Windows 禁止字符 / 全角空格 / 换行等。
+    2. 扩展名映射 — ``.note`` / ``.clip`` / 无扩展名 → ``.md``。
     """
+    name = sanitize_filename(name)
     stem, ext = os.path.splitext(name)
-    stem = stem.rstrip()
     if ext in (".note", ".clip") or ext == "":
         return stem + ".md"
-    return stem + ext
+    return name
 
 
 def scan_cloud(api: "DirBrowser", dir_id: DirId, base: str = "",

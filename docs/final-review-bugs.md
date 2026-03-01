@@ -1,5 +1,7 @@
 # Final Review — Bug Report
 
+> **状态：唯一发现的 bug（utils.py CRLF carry_cr）已修复**
+
 ## 1. metadata.py
 
 ### UPSERT logic (lines 285–313)
@@ -40,7 +42,7 @@
 
 ---
 
-## 4. utils.py — **BUG FOUND**
+## 4. utils.py — **BUG FOUND → ✅ FIXED**
 
 ### `_hash_large_text_file` carry_cr logic (lines 279–283)
 
@@ -83,5 +85,5 @@
 | 1 | metadata  | No   | UPSERT, NULL handling, and `close()` all correct.                       |
 | 2 | moves     | No   | Error recovery restores state correctly.                                |
 | 3 | scanner   | No   | `visited` access is properly synchronized.                              |
-| 4 | utils     | Yes  | CRLF split across chunks: both bytes dropped; should hash `\n`.         |
+| 4 | utils     | Yes → **Fixed**  | CRLF split across chunks: both bytes dropped; should hash `\n`. Fix applied: `h.update(b"\n")` before skipping `\n` byte. |
 | 5 | engine    | No   | `_hash_cache` TOCTOU causes redundant work only, not wrong results.    |

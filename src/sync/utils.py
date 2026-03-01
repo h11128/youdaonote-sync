@@ -1,7 +1,8 @@
 """
-同步工具：枚举、数据类、纯函数
+同步工具：纯函数（决策、hash、文件名净化、重试、备份）
 
-不依赖任何 src 内部模块，可被所有 sync_* 模块安全导入。
+类型定义（枚举、TypedDict、dataclass）已移至 types.py。
+本模块全量 re-export，已有 import 无需修改。
 """
 
 import os
@@ -10,149 +11,50 @@ import shutil
 import logging
 import time
 from datetime import datetime
-from enum import Enum
-from dataclasses import dataclass
 from typing import (
     Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union,
-    TYPE_CHECKING,
 )
-
-if TYPE_CHECKING:
-    from typing import TypedDict
-else:
-    try:
-        from typing import TypedDict
-    except ImportError:
-        from typing_extensions import TypedDict
 
 import httpx
 import xxhash
 
 from src.common import NoteDomain, FileId, DirId, ContentHash, TreeHash
 
+# re-export all types for backward compatibility
+from src.sync.types import (                                         # noqa: F401
+    SyncDirection, SyncAction, VerifyIssueType,
+    CloudFileInfo, LocalFileInfo, FileMetaInfo,
+    UploadResult, SyncStats, DedupStats, SyncItem,
+)
+
 T = TypeVar("T")
 
-# ========== 枚举 ==========
-
-class SyncDirection(Enum):
-    """同步方向"""
-    PULL = "pull"
-    PUSH = "push"
-    BOTH = "both"
-
-
-class SyncAction(Enum):
-    """同步操作"""
-    DOWNLOAD = "download"
-    UPLOAD = "upload"
-    SKIP = "skip"
-    CONFLICT = "conflict"
-
-
-class VerifyIssueType(Enum):
-    """metadata.verify() 返回的问题类型"""
-    ORPHAN = "orphan"
-    HASH_MISMATCH = "hash_mismatch"
-    ORPHAN_DIR = "orphan_dir"
-
-
-# ========== TypedDict — 跨模块传递的数据结构 ==========
-
-class CloudFileInfo(TypedDict):
-    """云端文件/目录信息（scanner 输出格式）"""
-    id: Union[FileId, DirId]
-    parent_id: DirId
-    name: str
-    is_dir: bool
-    mtime: int
-    ctime: int
-    domain: int
-
-
-class _LocalFileInfoBase(TypedDict):
-    path: str
-    is_dir: bool
-    mtime: int
-
-
-class LocalFileInfo(_LocalFileInfoBase, total=False):
-    """本地文件/目录信息（scanner 输出格式）
-
-    目录只有 path/is_dir/mtime；文件额外有 size。
-    """
-    size: int
-
-
-class _FileMetaBase(TypedDict):
-    file_id: FileId
-    cloud_mtime: int
-    local_mtime: int
-
-
-class FileMetaInfo(_FileMetaBase, total=False):
-    """metadata.db 中的文件元数据记录"""
-    parent_id: DirId
-    domain: int
-    content_hash: ContentHash
-    create_time: int
-    last_sync_at: int
-    cloud_content_hash: ContentHash
-    original_domain: int
-
-
-@dataclass(frozen=True)
-class UploadResult:
-    """Returned by upload methods so that the caller can record metadata."""
-    file_id: FileId
-    cloud_mtime: int
-    local_mtime: int
-    parent_id: DirId
-    domain: int
-
-
-class SyncStats(TypedDict):
-    """同步统计信息"""
-    downloaded: int
-    uploaded: int
-    skipped: int
-    conflicts: int
-    errors: int
-    dedup_deleted: int
-
-
-class _DedupStatsBase(TypedDict):
-    deleted: int
-    cloud_deleted: int
-    kept: int
-    skipped: int
-    groups: int
-    protected_refs: int
-
-
-class DedupStats(_DedupStatsBase, total=False):
-    """去重统计信息"""
-    deleted_paths: List[str]
-
-
-# ========== 数据类 ==========
-
-@dataclass(frozen=True)
-class SyncItem:
-    """同步项（不可变快照）"""
-    relative_path: str
-    local_path: Optional[str]
-    cloud_id: Optional[Union[FileId, DirId]]
-    cloud_parent_id: Optional[DirId]
-    local_mtime: Optional[int]
-    cloud_mtime: Optional[int]
-    is_dir: bool
-    action: SyncAction
-    cloud_name: Optional[str] = None
-    domain: NoteDomain = NoteDomain.MARKDOWN
-    cloud_ctime: Optional[int] = None  # 云端创建时间
-
-
 # ========== 纯函数 ==========
+
+_FILENAME_REPLACE_RE = re.compile(r'[<]')
+_FILENAME_DELETE_RE = re.compile(r'[\\/":|*?#>\n\r]')
+
+
+def sanitize_filename(name: str) -> str:
+    """将云端文件名净化为本地存储时的规范形式。
+
+    与 download.py ``_optimize_file_name`` 完全一致的字符处理，
+    保证 scanner 生成的路径键 == downloader 实际存储的文件名。
+
+    规则：
+    - ``<`` → ``_``（替换）
+    - ``\\ / " : | * ? # >`` 及 ``\\n \\r`` → 删除
+    - 首尾空白（含 ``\\u3000`` 全角空格）→ strip
+    - 连续空格 → 折叠为单个
+    - stem 尾部空白 → strip
+    """
+    name = _FILENAME_REPLACE_RE.sub('_', name)
+    name = _FILENAME_DELETE_RE.sub('', name)
+    name = name.strip()
+    name = re.sub(r' {2,}', ' ', name)
+    stem, ext = os.path.splitext(name)
+    return stem.rstrip() + ext
+
 
 def decide_action(
     local_exists: bool,
@@ -335,6 +237,58 @@ def print_dryrun_summary(items: List[SyncItem]) -> None:
         print(f"  冲突文件:")
         for i in conflicts:
             print(f"    {i.relative_path}")
+
+
+def diagnose_dryrun(items: List[SyncItem],
+                    get_meta: "Callable[[str], Optional[FileMetaInfo]]") -> None:
+    """分析 dry-run 结果中的可疑 UPLOAD，打印诊断警告。
+
+    检测模式：
+    - metadata 有 file_id 但为空 → 文件名匹配层可能丢失关联
+    - metadata 有 last_sync_at > 0 → 曾同步过，但云端"消失"了
+    - metadata 有 create_time > 0 → 曾关联过云端文件
+    """
+    warnings = []
+    for item in items:
+        if item.action != SyncAction.UPLOAD or item.is_dir:
+            continue
+        meta = get_meta(item.relative_path)
+        if meta is None:
+            continue
+        reasons = []
+        if not meta["file_id"] and meta["cloud_mtime"] > 0:
+            reasons.append("metadata 有记录但 file_id 为空")
+        if meta.get("last_sync_at", 0) > 0:
+            reasons.append(f"曾在 {_ts(meta['last_sync_at'])} 同步过")
+        if meta.get("create_time", 0) > 0 and not meta["file_id"]:
+            reasons.append("有 create_time 但无 file_id")
+        if reasons:
+            warnings.append((item.relative_path, reasons))
+
+    if not warnings:
+        return
+
+    print()
+    print("=" * 60)
+    print(f"  ⚠ 可疑 UPLOAD 诊断（{len(warnings)} 个文件）")
+    print("=" * 60)
+    print("  以下文件标记为上传，但 metadata 显示它们曾与云端关联。")
+    print("  可能原因：文件名规范化不一致、云端重命名、或 metadata 残留。")
+    print()
+    for path, reasons in warnings:
+        print(f"  {path}")
+        for r in reasons:
+            print(f"    → {r}")
+    print()
+
+
+def _ts(epoch: int) -> str:
+    """Epoch timestamp → 可读日期，用于诊断输出。"""
+    from datetime import datetime as _dt
+    try:
+        return _dt.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M")
+    except (OSError, ValueError):
+        return str(epoch)
 
 
 # ========== Retry ==========

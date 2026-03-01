@@ -1,5 +1,8 @@
 # 有道云笔记私有 API 分析
 
+> 分析日期：2026-02-14
+> 当前状态：项目已基于此分析完成完整的双向同步实现，HTTP 客户端从 requests 迁移到 httpx
+
 通过 Playwright 抓包分析得出的有道云笔记私有 API 接口文档。
 
 ## 认证方式
@@ -157,28 +160,31 @@ keyfrom=web
 3. **不需要 OAuth**：Cookie + cstk 即可认证
 4. **fileId 生成规则**：`WEB` + 32位小写hex（如 `WEB1802560508b3cc057ffce159594cc0e6`）
 
-## 实现建议
+## 实现状态
 
-1. **优先支持 Markdown 同步**：格式简单，直接传内容
-2. **普通笔记只支持下载**：上传需要解析复杂的 JSON 结构
-3. **双向同步策略**：
-   - 本地 → 云端：只支持 .md 文件
-   - 云端 → 本地：支持所有格式（已实现）
+> 以下建议在项目迭代过程中已全部实现。
+
+| 建议 | 状态 | 说明 |
+|------|------|------|
+| Markdown 同步 | ✅ 已实现 | `transfer/upload.py` — bodyString 直接传纯文本 |
+| 普通笔记上传 | ✅ 已实现 | `convert/md_to_note.py` — Markdown → 有道 JSON 格式转换 |
+| 双向同步 | ✅ 已实现 | `sync/engine.py` — 完整的双向同步引擎 |
+| 二进制文件上传 | ✅ 已实现 | `api.py` — `push_binary_file()` multipart 上传 |
 
 ## 示例代码
 
 ```python
-import requests
+import httpx
 import time
 import uuid
 
-def create_markdown_note(session, cstk, parent_id, name, content):
+def create_markdown_note(client: httpx.Client, cstk, parent_id, name, content):
     """创建 Markdown 笔记"""
     file_id = 'WEB' + uuid.uuid4().hex
     now = int(time.time())
-    
+
     url = f"https://note.youdao.com/yws/api/personal/sync?method=push&cstk={cstk}"
-    
+
     data = {
         'fileId': file_id,
         'parentId': parent_id,
@@ -194,7 +200,7 @@ def create_markdown_note(session, cstk, parent_id, name, content):
         'transactionTime': now,
         'cstk': cstk,
     }
-    
-    response = session.post(url, data=data)
+
+    response = client.post(url, data=data)
     return response.json()
 ```

@@ -2,6 +2,8 @@
 
 > 版本: v2.0 | 日期: 2026-02-22  
 > v1→v2 变更: 发现 `sync_metadata.db` 已缓存完整目录树但未被 scanner 复用，重新设计架构
+>
+> **实施状态：Phase 1~4 全部完成（2026-02-28）**
 
 ## 1. 背景与动机
 
@@ -328,52 +330,52 @@ def _verify_roundtrip(original_xml: bytes) -> bool:
 
 ## 6. 实现计划
 
-### Phase 1：扫描缓存复用（核心收益，零新模块）
+### Phase 1：扫描缓存复用（核心收益，零新模块） — ✅ 已完成
 
 **工作量**: ~2-3 小时  
 **收益**: 无变化时扫描从 163 次 HTTP → 1 次 HTTP
 
-| 步骤 | 文件 | 内容 |
-|------|------|------|
-| 1 | `src/sync/metadata.py` | 新增 `sync_state` 表 + `get_state/set_state` 方法 |
-| 2 | `src/api.py` | 新增 `list_recent(limit=30)` 方法（包装现有 `listRecent` API） |
-| 3 | `src/sync/engine.py` | `_async_collect_items` 增加缓存分支：读缓存 → listRecent 校验 → 增量/全量扫描 |
-| 4 | `src/sync/engine.py` | `_load_cloud_files_from_cache()` + `_apply_incremental_changes()` |
-| 5 | `test/test_sync.py` | 缓存命中、增量更新、全量 fallback 三种路径的测试 |
+| 步骤 | 文件 | 内容 | 状态 |
+|------|------|------|------|
+| 1 | `src/sync/metadata.py` | 新增 `sync_state` 表 + `get_state/set_state` 方法 | ✅ |
+| 2 | `src/api.py` | 新增 `list_recent(limit=30)` 方法 | ✅ |
+| 3 | `src/sync/engine.py` | `_async_collect_items` 增加缓存分支 | ✅ |
+| 4 | `src/sync/engine.py` | `_load_cloud_files_from_cache()` + `_apply_incremental_changes()` | ✅ |
+| 5 | `test/test_sync.py` | 缓存命中、增量更新、全量 fallback 三种路径的测试 | ✅ |
 
-### Phase 2：桌面客户端数据集成（可选加速）
+### Phase 2：桌面客户端数据集成（可选加速） — ✅ 已完成
 
 **工作量**: ~2-3 小时  
 **收益**: 冷启动加速 + domain=0 文件本地读取
 
-| 步骤 | 文件 | 内容 |
-|------|------|------|
-| 1 | `src/sync/desktop_data.py` (新建) | `find_desktop_db()`, `seed_metadata_from_desktop()`, `read_desktop_file()` |
-| 2 | `src/sync/engine.py` | 首次运行时调用 `seed_metadata_from_desktop()` |
-| 3 | `src/transfer/download.py` | `_download_and_detect` 增加桌面缓存优先路径 |
-| 4 | `test/test_desktop_data.py` (新建) | 路径重建、文件读取测试 |
+| 步骤 | 文件 | 内容 | 状态 |
+|------|------|------|------|
+| 1 | `src/sync/desktop_data.py` | `find_desktop_db()`, `seed_metadata_from_desktop()`, `read_desktop_file()` | ✅ |
+| 2 | `src/sync/engine.py` | 首次运行时调用 `seed_metadata_from_desktop()` | ✅ |
+| 3 | `src/transfer/download.py` | `_download_and_detect` 增加桌面缓存优先路径 | ✅ |
+| 4 | `test/` | 路径重建、文件读取测试 | ✅ |
 
-### Phase 3：云端格式保持 — original_domain 记录
+### Phase 3：云端格式保持 — original_domain 记录 — ✅ 已完成
 
 **工作量**: ~1 小时  
 **收益**: 为 Phase 4 (MD→XML) 做准备；即使不做 Phase 4，也能在上传时警告用户
 
-| 步骤 | 文件 | 内容 |
-|------|------|------|
-| 1 | `src/sync/metadata.py` | files 表新增 `original_domain` 字段 |
-| 2 | `src/sync/engine.py` | 下载 domain=0 文件时记录 `original_domain=0` + 保存原始 XML 到 `file_base` |
-| 3 | `src/sync/engine.py` | 上传时检测 `original_domain=0` → 暂时跳过或警告（等 Phase 4 实现后改为转换） |
+| 步骤 | 文件 | 内容 | 状态 |
+|------|------|------|------|
+| 1 | `src/sync/metadata.py` | files 表新增 `original_domain` 字段 | ✅ |
+| 2 | `src/sync/engine.py` | 下载 domain=0 文件时记录 `original_domain=0` + 保存原始内容到 `file_base` | ✅ |
+| 3 | `src/sync/engine.py` | 上传时检测 `original_domain=0` → Markdown 反向转换为有道 JSON | ✅ |
 
-### Phase 4：MD → XML 反向转换（按需实现）
+### Phase 4：MD → 有道 JSON 反向转换 — ✅ 已完成
 
 **工作量**: ~4-6 小时  
-**前提**: 确认有足够的 domain=0 编辑上传需求
+**说明**: 实际实现为 Markdown → 有道 JSON 格式（而非 XML），因为新版有道云笔记使用 JSON 格式
 
-| 步骤 | 文件 | 内容 |
-|------|------|------|
-| 1 | `src/convert/md_to_xml.py` (新建) | `markdown_to_xml_bytes()` |
-| 2 | `src/transfer/upload.py` | `original_domain=0` → MD→XML 转换 → domain=0 上传 |
-| 3 | `test/test_md_to_xml.py` (新建) | 各元素测试 + 往返一致性 |
+| 步骤 | 文件 | 内容 | 状态 |
+|------|------|------|------|
+| 1 | `src/convert/md_to_note.py` | `markdown_to_note_json()` — Markdown 解析为有道 JSON 格式 | ✅ |
+| 2 | `src/transfer/upload.py` | `original_domain=0` → MD→JSON 转换 → domain=0 上传 | ✅ |
+| 3 | `test/` | 各元素测试 + 往返一致性 | ✅ |
 
 ### Phase 5：离线模式 + 资源文件（远期）
 

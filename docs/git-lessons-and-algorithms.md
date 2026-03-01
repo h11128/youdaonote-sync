@@ -1,6 +1,8 @@
 # 向 Git 学习：同步引擎可借鉴的设计与算法
 
 > 分析 Git 内部机制中哪些设计理念和算法可以应用到有道云笔记同步场景，并评估每项的实用性和实现成本。
+>
+> **实施状态：Section 二中 6 项全部完成，Section 三~五中 Bloom Filter、Merkle Tree 已实现（2026-03-01）**
 
 ## 一、已借鉴并实现的
 
@@ -14,13 +16,13 @@
 
 ## 二、值得借鉴但尚未实现的
 
-### 2.1 操作日志（对标 Git reflog）
+### 2.1 操作日志（对标 Git reflog） — ✅ 已实现
 
 **Git 做法**: reflog 记录每次 HEAD 和分支指针的变动，即使 reset --hard 也能恢复。
 
-**我们的场景**: 每次同步的操作记录（哪些文件下载了、上传了、跳过了、冲突了）目前只在 stdout/log 中，同步结束就丢了。用户无法回答"上次同步发生了什么"。
+**我们的场景**: ~~每次同步的操作记录目前只在 stdout/log 中，同步结束就丢了。~~ 已通过 `sync_log` 表持久化记录。
 
-**建议实现**:
+**实现**:
 ```sql
 CREATE TABLE sync_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,35 +41,29 @@ CREATE INDEX idx_sync_log_path ON sync_log(path);
 
 **价值**: 可审计、可回溯、可以支持"撤销上次同步"。
 
-**成本**: 低。在 `_record_file_change` 中额外写一行 SQL。
+**实现位置**: `metadata.py` — `sync_log` 表 + `_record_file_change` 中写入 + `get_sync_log()` 查询。
 
 ---
 
-### 2.2 完整性校验（对标 git fsck）
+### 2.2 完整性校验（对标 git fsck） — ✅ 已实现
 
 **Git 做法**: `git fsck` 遍历所有对象，验证 hash 是否与内容一致、引用是否有效。
 
-**我们的场景**: 元数据可能因 crash、手动编辑、bug 而与实际文件状态不一致。目前没有检测手段。
-
-**建议实现**: 一个 `metadata.verify()` 方法：
+**实现**: `metadata.verify(local_dir, auto_fix=False)` 方法：
 - 遍历 files 表：检查 `content_hash` 是否与本地文件实际 hash 一致
 - 遍历 files 表：检查 `file_id` 是否在云端仍然存在
 - 遍历 directories 表：检查 `dir_id` 是否有效
 - 发现不一致时：报告 + 可选自动修复
 
-**价值**: 诊断"为什么同步不对"的利器，也是数据安全的最后防线。
-
-**成本**: 中。需要批量 API 调用验证云端 ID。可以做成 CLI 子命令，不影响正常同步路径。
+**实现位置**: `metadata.py` — `verify()` 方法。
 
 ---
 
-### 2.3 行级三路合并（对标 git merge-file）
+### 2.3 行级三路合并（对标 git merge-file） — ✅ 已实现
 
 **Git 做法**: 对文本文件，找到三方共同祖先版本（base），分别 diff base↔ours 和 base↔theirs，自动合并非重叠区域，只有同一行被两边同时修改才标记 `<<<<<<<` 冲突。
 
-**我们的场景**: 目前双方都改了同一个 .md 文件 → 直接备份 + 覆盖，丢失一方修改。
-
-**建议实现**: 只对 .md 文本文件做行级合并：
+**实现**: `sync/merge.py` — `MergeResult` dataclass + diff3 算法：
 - base = `meta_hash` 对应的内容（上次同步时的版本，需要额外存储）
 - ours = 本地文件内容
 - theirs = 云端文件内容
@@ -75,49 +71,30 @@ CREATE INDEX idx_sync_log_path ON sync_log(path);
 
 **价值**: 大幅减少需要手动处理的冲突。
 
-**成本**: 高。需要存储 base 版本内容，且 diff3 实现有复杂度（见下方算法部分）。
+**实现位置**: `sync/merge.py` — base 版本通过 `file_base` 表存储（`metadata.py`）。
 
 ---
 
-### 2.4 垃圾回收（对标 git gc）
+### 2.4 垃圾回收（对标 git gc） — ✅ 已实现
 
 **Git 做法**: 定期清理不可达对象、压缩 packfile。
 
-**我们的场景**: metadata 中可能积累孤儿条目：
-- 文件已从本地和云端都删除，但 files 表中记录还在
-- 目录改名后旧的 directories 记录残留
-
-**建议实现**: `metadata.gc()` 方法：
+**实现**: `metadata.gc(local_dir, max_log_age_days=90)` 方法：
 - 扫描 files 表，如果 `last_sync_at` 远早于当前时间（如 >30 天）且本地和云端都不存在 → 删除记录
 - 扫描 directories 表，如果对应目录在本地和云端都不存在 → 删除记录
 - 清理 sync_log 中超过 90 天的旧记录
 
-**价值**: 防止元数据膨胀，保持查询效率。
-
-**成本**: 低。
+**实现位置**: `metadata.py` — `gc()` 方法。
 
 ---
 
-### 2.5 选择性同步（对标 git sparse-checkout）
+### 2.5 选择性同步（对标 git sparse-checkout） — ✅ 已实现
 
 **Git 做法**: 只检出仓库的部分目录，其余文件不下载到工作区。
 
-**我们的场景**: 目前是全量同步，用户无法排除某些目录（比如已归档的旧笔记）。
+**实现**: `SyncManager` 接受 `sync_include` / `sync_exclude` 参数，`scanner.py` 中有 `matches_selective()` 和 `compile_selective_filter()` 函数在扫描阶段过滤文件。
 
-**建议实现**: 配置文件中支持 include/exclude 规则：
-```yaml
-sync:
-  include:
-    - "工作/"
-    - "学习/"
-  exclude:
-    - "归档/"
-    - "*.tmp"
-```
-
-**价值**: 减少同步量，加速同步，避免不需要的文件占用本地空间。
-
-**成本**: 低。在 scan_local 和 scan_cloud 时过滤即可。
+**实现位置**: `sync/engine.py` — `sync_include`/`sync_exclude` 参数；`sync/scanner.py` — `matches_selective()` + `compile_selective_filter()`。
 
 ---
 
@@ -286,28 +263,28 @@ ALTER TABLE directories ADD COLUMN tree_hash TEXT;
 
 按"价值 / 成本"比排序：
 
-| 排名 | 项目 | 价值 | 成本 | 建议 |
+| 排名 | 项目 | 价值 | 成本 | 状态 |
 |------|------|------|------|------|
-| 1 | 操作日志（reflog） | 高 | 低 | **立即做** — 同步审计和问题排查的基础 |
-| 2 | 选择性同步（sparse-checkout） | 高 | 低 | **立即做** — 用户体验直接提升 |
-| 3 | 垃圾回收（gc） | 中 | 低 | **短期做** — 防止元数据膨胀 |
-| 4 | 完整性校验（fsck） | 中 | 中 | **短期做** — 诊断工具 |
-| 5 | Merkle tree 增量比较 | 高 | 中 | **中期做** — 大型库加速的关键 |
-| 6 | 行级三路合并（diff3） | 高 | 中 | **中期做** — 利用已有 Git 历史做 base |
-| 7 | Bloom filter 目录跳过 | 中 | 中 | **可选** — Merkle tree 已覆盖大部分场景 |
-| 8 | Rolling hash 块传输 | 低 | 高 | **不做** — API 不支持，收益有限 |
+| 1 | 操作日志（reflog） | 高 | 低 | ✅ 已实现 — `sync_log` 表 |
+| 2 | 选择性同步（sparse-checkout） | 高 | 低 | ✅ 已实现 — `sync_include`/`sync_exclude` |
+| 3 | 垃圾回收（gc） | 中 | 低 | ✅ 已实现 — `metadata.gc()` |
+| 4 | 完整性校验（fsck） | 中 | 中 | ✅ 已实现 — `metadata.verify()` |
+| 5 | Merkle tree 增量比较 | 高 | 中 | ✅ 已实现 — `sync/merkle.py` |
+| 6 | 行级三路合并（diff3） | 高 | 中 | ✅ 已实现 — `sync/merge.py` |
+| 7 | Bloom filter 目录跳过 | 中 | 中 | ✅ 已实现 — `sync/bloom.py` |
+| 8 | Rolling hash 块传输 | 低 | 高 | ⏸ 暂不实现 — API 不支持（`rolling_hash.py` 已就绪） |
 
 ## 五、算法复杂度汇总
 
-| 算法 | 时间复杂度 | 空间复杂度 | 当前是否使用 | 建议引入 |
-|------|-----------|-----------|-------------|---------|
-| MD5 全文 hash | O(n) | O(1) | ✅ | — |
-| mtime 比较 | O(1) | O(1) | ✅ | — |
-| Myers diff | O(ND) | O(D²) | ❌ | 是（三路合并） |
-| diff3 三路合并 | O(ND) | O(N) | ❌ | 是 |
-| Rabin rolling hash | O(n) | O(块数) | ❌ | 否（API 限制） |
-| Bloom filter | O(k) 查询 | O(m) bits | ❌ | 可选 |
-| Merkle tree 比较 | O(k·logN) | O(N) 节点 | ❌ | 是（增量同步） |
+| 算法 | 时间复杂度 | 空间复杂度 | 是否使用 | 实现位置 |
+|------|-----------|-----------|---------|---------|
+| xxHash 全文 hash | O(n) | O(1) | ✅ | `sync/utils.py` |
+| mtime 比较 | O(1) | O(1) | ✅ | `sync/utils.py` — `decide_action` |
+| Myers diff | O(ND) | O(D²) | ✅ | `sync/merge.py` (via difflib) |
+| diff3 三路合并 | O(ND) | O(N) | ✅ | `sync/merge.py` |
+| Rabin rolling hash | O(n) | O(块数) | ⏸ 就绪 | `sync/rolling_hash.py` |
+| Bloom filter | O(k) 查询 | O(m) bits | ✅ | `sync/bloom.py` |
+| Merkle tree 比较 | O(k·logN) | O(N) 节点 | ✅ | `sync/merkle.py` |
 
 其中 n=文件大小, N=文件总数, D=编辑距离, k=变化文件数, m=filter 大小。
 
