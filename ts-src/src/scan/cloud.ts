@@ -1,0 +1,122 @@
+import type { DirId, FileId } from '../types/common.js';
+import type { NoteDomain } from '../types/common.js';
+import type { CloudFile } from '../types/scan.js';
+import { mapCloudName } from './name.js';
+
+/**
+ * Interface for the directory listing API.
+ * Matches the subset of YoudaoNoteApi needed for cloud scanning.
+ */
+export interface DirBrowser {
+  getDirInfoById(dirId: DirId): Promise<{
+    entries?: Array<{
+      fileEntry: {
+        id: string;
+        name: string;
+        dir?: boolean;
+        modifyTimeForSort?: number;
+        createTimeForSort?: number;
+        domain?: number;
+      };
+    }>;
+  }>;
+}
+
+/**
+ * BFS scan of cloud directory tree.
+ *
+ * Returns Map<relativePath, CloudFile> where relativePath uses
+ * mapCloudName for filename mapping (.note → .md, character sanitization).
+ *
+ * Uses concurrent fetching with a configurable worker count.
+ */
+export async function scanCloud(
+  api: DirBrowser,
+  rootDirId: DirId,
+  base = '',
+  maxConcurrent = 8,
+): Promise<Map<string, CloudFile>> {
+  if (!rootDirId) throw new Error("rootDirId must not be empty");
+
+  const files = new Map<string, CloudFile>();
+  const visited = new Set<string>([rootDirId]);
+
+  type QueueItem = { dirId: DirId; basePath: string };
+  let queue: QueueItem[] = [{ dirId: rootDirId, basePath: base }];
+
+  while (queue.length > 0) {
+    const batch = queue.splice(0, maxConcurrent);
+    const results = await Promise.allSettled(
+      batch.map((item) => fetchDir(api, item.dirId, item.basePath)),
+    );
+
+    const nextQueue: QueueItem[] = [];
+    for (const result of results) {
+      if (result.status === 'rejected') continue;
+      const { entries, subdirs } = result.value;
+
+      for (const [rel, cloud] of entries) {
+        files.set(rel, cloud);
+      }
+      for (const sub of subdirs) {
+        if (!visited.has(sub.dirId)) {
+          visited.add(sub.dirId);
+          nextQueue.push(sub);
+        }
+      }
+    }
+    queue.push(...nextQueue);
+  }
+
+  return files;
+}
+
+async function fetchDir(
+  api: DirBrowser,
+  dirId: DirId,
+  basePath: string,
+): Promise<{
+  entries: Array<[string, CloudFile]>;
+  subdirs: Array<{ dirId: DirId; basePath: string }>;
+}> {
+  const entries: Array<[string, CloudFile]> = [];
+  const subdirs: Array<{ dirId: DirId; basePath: string }> = [];
+
+  let data: Awaited<ReturnType<DirBrowser['getDirInfoById']>>;
+  try {
+    data = await api.getDirInfoById(dirId);
+  } catch {
+    return { entries, subdirs };
+  }
+
+  for (const entry of data.entries ?? []) {
+    const fe = entry.fileEntry;
+    const name = fe.name;
+    if (name.startsWith('.')) continue;
+
+    const rel = basePath ? `${basePath}/${name}` : name;
+    const isDir = fe.dir ?? false;
+    const eid = fe.id;
+
+    const cloudFile: CloudFile = {
+      id: (isDir ? eid : eid) as FileId,
+      parentId: dirId,
+      name,
+      isDir,
+      mtime: fe.modifyTimeForSort ?? 0,
+      ctime: fe.createTimeForSort ?? 0,
+      domain: (fe.domain ?? 1) as NoteDomain,
+    };
+
+    if (isDir) {
+      entries.push([rel, cloudFile]);
+      subdirs.push({ dirId: eid as DirId, basePath: rel });
+    } else {
+      const localName = mapCloudName(name);
+      const localRel = basePath ? `${basePath}/${localName}` : localName;
+      entries.push([localRel, cloudFile]);
+    }
+  }
+
+  return { entries, subdirs };
+}

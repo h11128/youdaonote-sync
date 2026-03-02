@@ -34,6 +34,9 @@ youdaonote-export/
 # 但包目录下的用户运行时产物需要忽略
 src/**/*.pyc
 
+# Node.js
+node_modules/
+
 # 构建产物
 build/
 dist/

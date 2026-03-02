@@ -1,0 +1,26 @@
+{
+  "name": "youdaonote-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "commander": "^12.0.0",
+    "fast-xml-parser": "^4.0.0",
+    "xxhash-wasm": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0",
+    "@fast-check/vitest": "^0.1.0",
+    "@types/better-sqlite3": "^7.0.0",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0"
+  }
+}
