@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { test, fc } from '@fast-check/vitest';
-import { classify, matchesRule } from './classify.js';
+import { classify, classifyAll, matchesRule } from './classify.js';
 import { extractConditions } from './conditions.js';
 import type { ClassifyInput, Conditions } from './conditions.js';
 import { RULES } from './rules.js';
@@ -269,5 +269,22 @@ describe('matchesRule', () => {
       localMtimeChanged: true,
     };
     expect(matchesRule(cond, { localExists: false })).toBe(false);
+  });
+});
+
+describe('classify preconditions', () => {
+  it('classify throws when input is null', () => {
+    expect(() => classify(null as unknown as ClassifyInput)).toThrow(/classify input must not be null/);
+  });
+
+  it('classifyAll throws when any map is null', () => {
+    const cloud = new Map();
+    const local = new Map();
+    const meta = new Map();
+    const hashes = new Map();
+    expect(() => classifyAll(null as unknown as typeof cloud, local, meta, hashes)).toThrow(/must not be null/);
+    expect(() => classifyAll(cloud, null as unknown as typeof local, meta, hashes)).toThrow(/must not be null/);
+    expect(() => classifyAll(cloud, local, null as unknown as typeof meta, hashes)).toThrow(/must not be null/);
+    expect(() => classifyAll(cloud, local, meta, null as unknown as typeof hashes)).toThrow(/must not be null/);
   });
 });

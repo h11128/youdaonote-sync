@@ -23,6 +23,11 @@ afterEach(() => {
 });
 
 describe('verify', () => {
+  it('throws when localDir is empty', () => {
+    expect(() => verify(meta, '')).toThrow(/localDir must be a non-empty string/);
+    expect(() => verify(meta, null as unknown as string)).toThrow(/localDir must be/);
+  });
+
   it('detects orphan file records', () => {
     meta.setFileInfo('missing.md', {
       fileId: 'f1' as FileId, cloudMtime: 100, localMtime: 100,
@@ -54,6 +59,10 @@ describe('verify', () => {
 });
 
 describe('gc', () => {
+  it('throws when localDir is empty', () => {
+    expect(() => gc(meta, '')).toThrow(/localDir must be a non-empty string/);
+  });
+
   it('cleans up orphan file records', () => {
     const oldTs = Math.floor(Date.now() / 1000) - 40 * 86400;
     meta.setFileInfo('old.md', {
@@ -82,6 +91,10 @@ describe('gc', () => {
 });
 
 describe('heal', () => {
+  it('throws when localDir is empty', () => {
+    expect(() => heal(meta, '')).toThrow(/localDir must be a non-empty string/);
+  });
+
   it('detects orphan records (no file_id, no local file)', () => {
     meta.setFileInfo('phantom.md', {
       fileId: '' as FileId, cloudMtime: 0, localMtime: 100,
