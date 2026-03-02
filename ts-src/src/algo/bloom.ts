@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 
+const MAX_BITS = 2 ** 31 - 1;
+
 function optimalM(n: number, p: number): number {
-  return Math.max(1, Math.floor(-n * Math.log(p) / (Math.log(2) ** 2)));
+  return Math.min(MAX_BITS, Math.max(1, Math.floor(-n * Math.log(p) / (Math.log(2) ** 2))));
 }
 
 function optimalK(m: number, n: number): number {
@@ -25,8 +27,9 @@ export class BloomFilter {
   private bits: Uint8Array;
 
   constructor(expectedItems: number, fpRate = 0.01) {
+    if (expectedItems < 1) throw new Error(`expectedItems must be >= 1, got ${expectedItems}`);
     if (fpRate <= 0 || fpRate >= 1) throw new Error(`fpRate must be in (0, 1), got ${fpRate}`);
-    const n = Math.max(1, expectedItems);
+    const n = expectedItems;
     this.m = optimalM(n, fpRate);
     this.k = Math.min(optimalK(this.m, n), this.m);
     this.bits = new Uint8Array(Math.ceil(this.m / 8));
@@ -36,9 +39,9 @@ export class BloomFilter {
     const h1 = hash64(item, 0);
     const h2 = hash64(item, 0x9e37);
     const result: number[] = [];
+    const bigM = BigInt(this.m);
     for (let i = 0; i < this.k; i++) {
-      const pos = Number((h1 + BigInt(i) * h2) % BigInt(this.m));
-      result.push(pos < 0 ? pos + this.m : pos);
+      result.push(Number((h1 + BigInt(i) * h2) % bigM));
     }
     return result;
   }

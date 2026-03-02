@@ -36,10 +36,10 @@ export function buildTree(
     list.push({ name, isDir: info.isDir, rel, absPath: info.path });
   }
 
-  // Bottom-up: deepest dirs first
-  const sortedDirs = [...dirs].sort(
-    (a, b) => (b ? b.split('/').length : 0) - (a ? a.split('/').length : 0),
-  );
+  // Bottom-up: deepest dirs first (pre-compute depth to avoid repeated split)
+  const dirDepths = new Map<string, number>();
+  for (const d of dirs) dirDepths.set(d, d ? d.split('/').length : 0);
+  const sortedDirs = [...dirs].sort((a, b) => dirDepths.get(b)! - dirDepths.get(a)!);
 
   const result = new Map<string, TreeHash>();
   for (const d of sortedDirs) {

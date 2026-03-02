@@ -39,4 +39,9 @@ describe('BloomFilter', () => {
     expect(() => new BloomFilter(10, 0)).toThrow();
     expect(() => new BloomFilter(10, 1)).toThrow();
   });
+
+  it('rejects non-positive expectedItems', () => {
+    expect(() => new BloomFilter(0)).toThrow();
+    expect(() => new BloomFilter(-1)).toThrow();
+  });
 });

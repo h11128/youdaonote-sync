@@ -49,7 +49,6 @@ export function verify(
           type: VerifyIssueType.HASH_MISMATCH,
           detail: `recorded=${record.contentHash.slice(0, 16)}.. actual=${actual.slice(0, 16)}..`,
         });
-        if (autoFix) meta.updateContentHash(path, actual);
       }
     }
   }
@@ -59,11 +58,22 @@ export function verify(
     const full = join(localDir, path);
     if (!existsSync(full)) {
       issues.push({ path, type: VerifyIssueType.ORPHAN_DIR, detail: 'local directory missing' });
-      if (autoFix) meta.removeDir(path);
     }
   }
 
-  if (autoFix && issues.length > 0) meta.save();
+  if (autoFix && issues.length > 0) {
+    meta.batch(() => {
+      for (const issue of issues) {
+        if (issue.type === VerifyIssueType.HASH_MISMATCH) {
+          const actual = computeContentHashFromFile(join(localDir, issue.path));
+          if (actual) meta.updateContentHash(issue.path, actual);
+        } else if (issue.type === VerifyIssueType.ORPHAN_DIR) {
+          meta.removeDir(issue.path);
+        }
+      }
+    });
+  }
+
   return issues;
 }
 

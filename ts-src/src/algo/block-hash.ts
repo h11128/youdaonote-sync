@@ -86,7 +86,7 @@ export function encodeDelta(oldPath: string, newPath: string, blockSize = DEFAUL
       const header = Buffer.alloc(5);
       header.writeUInt8(1, 0);
       header.writeUInt32LE(nb.length, 1);
-      parts.push(header, Buffer.from(newBlock));
+      parts.push(header, newBlock);
     }
   }
 

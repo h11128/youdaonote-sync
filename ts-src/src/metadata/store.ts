@@ -4,8 +4,7 @@ import { dirname } from 'node:path';
 import type { ContentHash, DirId, FileId, NoteDomain } from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
 import { runAllMigrations } from './migrations.js';
-import { sanitizeFilename } from '../scan/name.js';
-import { normalizeSep } from '../scan/name.js';
+import { sanitizeFilename, normalizeSep } from '../scan/name.js';
 
 const FILE_META_COLS =
   "file_id, cloud_mtime, local_mtime, parent_id, domain, " +

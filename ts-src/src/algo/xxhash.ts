@@ -1,4 +1,4 @@
-import type { XXHashAPI } from 'xxhash-wasm';
+import type { XXHashAPI, XXHash } from 'xxhash-wasm';
 
 let api: XXHashAPI | null = null;
 let initPromise: Promise<void> | null = null;
@@ -46,7 +46,7 @@ export function xxh32ToString(data: string, seed = 0): string {
 }
 
 /** Streaming xxHash64 hasher. */
-export function createXxh64(seed = 0n) {
+export function createXxh64(seed = 0n): XXHash<bigint> {
   return ensureInit().create64(seed);
 }
 

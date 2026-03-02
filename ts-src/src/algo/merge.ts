@@ -156,6 +156,11 @@ function bsRight(arr: number[], val: number): number {
   return lo;
 }
 
+function splitLines(text: string): string[] {
+  if (!text) return [];
+  return text.split(/\n/).map((l, i, a) => i < a.length - 1 ? l + '\n' : l);
+}
+
 /**
  * Three-way merge for text content.
  *
@@ -166,9 +171,9 @@ export function threeWayMerge(base: string, ours: string, theirs: string): Merge
   if (base == null || ours == null || theirs == null) {
     throw new TypeError('base, ours, and theirs must be strings, not null/undefined');
   }
-  const baseLines = base ? base.split(/\n/).map((l, i, a) => i < a.length - 1 ? l + '\n' : l) : [];
-  const oursLines = ours ? ours.split(/\n/).map((l, i, a) => i < a.length - 1 ? l + '\n' : l) : [];
-  const theirsLines = theirs ? theirs.split(/\n/).map((l, i, a) => i < a.length - 1 ? l + '\n' : l) : [];
+  const baseLines = splitLines(base);
+  const oursLines = splitLines(ours);
+  const theirsLines = splitLines(theirs);
 
   const mbOurs = getMatchingBlocks(baseLines, oursLines);
   const mbTheirs = getMatchingBlocks(baseLines, theirsLines);
