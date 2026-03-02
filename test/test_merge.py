@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch, MagicMock
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.sync.metadata import SyncMetadata
+from src.sync.metadata_aux import save_base_content, get_base_content
 from src.sync.utils import (
     decide_action, SyncAction, filter_by_direction, SyncDirection,
     SyncItem, VerifyIssueType, sanitize_filename,
@@ -159,10 +160,10 @@ class Diff3E2ETest(unittest.TestCase):
         try:
             from src.sync.metadata import SyncMetadata
             meta = SyncMetadata(os.path.join(tmpdir, "meta.json"))
-            meta.save_base_content("test.md",
-                                   result.merged_text.encode("utf-8"),
-                                   "merged_hash")
-            retrieved = meta.get_base_content("test.md")
+            save_base_content(meta, "test.md",
+                             result.merged_text.encode("utf-8"),
+                             "merged_hash")
+            retrieved = get_base_content(meta, "test.md")
             self.assertEqual(retrieved.decode("utf-8"),
                              result.merged_text)
             meta.close()

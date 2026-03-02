@@ -16,6 +16,12 @@ from unittest.mock import Mock, patch, MagicMock
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.sync.metadata import SyncMetadata
+from src.sync.metadata_health import gc, verify, heal
+from src.sync.metadata_aux import (
+    log_sync_action, get_sync_log, get_file_refs, set_file_refs,
+    get_all_cached_refs, save_base_content, get_base_content,
+    get_tree_hash, set_tree_hash, get_all_tree_hashes,
+)
 from src.sync.utils import (
     decide_action, SyncAction, filter_by_direction, SyncDirection,
     SyncItem, VerifyIssueType, sanitize_filename,
@@ -536,7 +542,7 @@ class MetadataGCTest(unittest.TestCase):
         self.meta.mark_synced("gone.md", ts=int(time.time()) - 40 * 86400)
         self.meta.save()
 
-        stats = self.meta.gc(self.local_dir)
+        stats = gc(self.meta, self.local_dir)
         self.assertEqual(stats["files"], 1)
         self.assertIsNone(self.meta.get_file_info("gone.md"))
 
@@ -550,35 +556,35 @@ class MetadataGCTest(unittest.TestCase):
         self.meta.mark_synced("exist.md", ts=int(time.time()) - 40 * 86400)
         self.meta.save()
 
-        stats = self.meta.gc(self.local_dir)
+        stats = gc(self.meta, self.local_dir)
         self.assertEqual(stats["files"], 0)
         self.assertIsNotNone(self.meta.get_file_info("exist.md"))
 
     def test_gc_removes_orphan_dirs(self):
         self.meta.set_dir_info("old_dir", "DIR1", "ROOT")
         self.meta.save()
-        stats = self.meta.gc(self.local_dir)
+        stats = gc(self.meta, self.local_dir)
         self.assertEqual(stats["dirs"], 1)
 
     def test_gc_cleans_old_sync_log(self):
         """超过 max_log_age_days 的日志被清理"""
         import time
         old_ts = int(time.time()) - 100 * 86400
-        self.meta.log_sync_action("a.md", "downloaded", timestamp_override=old_ts)
-        self.meta.log_sync_action("b.md", "uploaded")
+        log_sync_action(self.meta, "a.md", "downloaded", timestamp_override=old_ts)
+        log_sync_action(self.meta, "b.md", "uploaded")
         self.meta.save()
 
-        stats = self.meta.gc(self.local_dir, max_log_age_days=90)
+        stats = gc(self.meta, self.local_dir, max_log_age_days=90)
         self.assertEqual(stats["logs"], 1)
-        remaining = self.meta.get_sync_log()
+        remaining = get_sync_log(self.meta)
         self.assertEqual(len(remaining), 1)
         self.assertEqual(remaining[0]["path"], "b.md")
 
     def test_gc_removes_orphan_base(self):
         """file_base 中文件不存在 → 被清理"""
-        self.meta.save_base_content("phantom.md", b"old", "hash1")
+        save_base_content(self.meta, "phantom.md", b"old", "hash1")
         self.meta.save()
-        stats = self.meta.gc(self.local_dir)
+        stats = gc(self.meta, self.local_dir)
         self.assertEqual(stats["bases"], 1)
 
 
@@ -601,7 +607,7 @@ class MetadataVerifyTest(unittest.TestCase):
     def test_verify_detects_orphan(self):
         self.meta.set_file_info("missing.md", "WEB1", cloud_mtime=100)
         self.meta.save()
-        issues = self.meta.verify(self.local_dir)
+        issues = verify(self.meta, self.local_dir)
         self.assertTrue(any(t == VerifyIssueType.ORPHAN for _, t, _ in issues))
 
     def test_verify_detects_hash_mismatch(self):
@@ -613,7 +619,7 @@ class MetadataVerifyTest(unittest.TestCase):
         self.meta.set_file_info("changed.md", "WEB2", cloud_mtime=100,
                                 content_hash="fake_hash_that_wont_match")
         self.meta.save()
-        issues = self.meta.verify(self.local_dir)
+        issues = verify(self.meta, self.local_dir)
         self.assertTrue(any(t == VerifyIssueType.HASH_MISMATCH for _, t, _ in issues))
 
     def test_verify_auto_fix(self):
@@ -624,7 +630,7 @@ class MetadataVerifyTest(unittest.TestCase):
         self.meta.set_file_info("fix.md", "WEB3", cloud_mtime=100,
                                 content_hash="wrong")
         self.meta.save()
-        issues = self.meta.verify(self.local_dir, auto_fix=True)
+        issues = verify(self.meta, self.local_dir, auto_fix=True)
         self.assertTrue(len(issues) > 0)
         info = self.meta.get_file_info("fix.md")
         actual = compute_content_hash(path)
@@ -639,7 +645,7 @@ class MetadataVerifyTest(unittest.TestCase):
         self.meta.set_file_info("ok.md", "WEB4", cloud_mtime=100,
                                 content_hash=h)
         self.meta.save()
-        issues = self.meta.verify(self.local_dir)
+        issues = verify(self.meta, self.local_dir)
         self.assertEqual(len(issues), 0)
 
 
@@ -739,7 +745,7 @@ class RecordSyncTest(unittest.TestCase):
             action="uploaded",
             direction="push",
         )
-        logs = self.meta.get_sync_log(limit=10, path="e.md")
+        logs = get_sync_log(self.meta, limit=10, path="e.md")
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0]["path"], "e.md")
         self.assertEqual(logs[0]["action"], "uploaded")
@@ -775,14 +781,14 @@ class MetadataHealTest(unittest.TestCase):
     def test_detects_orphan_without_file_id(self):
         self.meta.set_file_info("ghost.md", "", cloud_mtime=0, local_mtime=100)
         self.meta.save()
-        stats = self.meta.heal(self.local_dir, auto_fix=False)
+        stats = heal(self.meta, self.local_dir, auto_fix=False)
         self.assertEqual(stats["orphan"], 1)
         self.assertIsNotNone(self.meta.get_file_info("ghost.md"))
 
     def test_fixes_orphan_when_auto_fix(self):
         self.meta.set_file_info("ghost.md", "", cloud_mtime=0, local_mtime=100)
         self.meta.save()
-        self.meta.heal(self.local_dir, auto_fix=True)
+        heal(self.meta, self.local_dir, auto_fix=True)
         self.assertIsNone(self.meta.get_file_info("ghost.md"))
 
     def test_detects_mtime_drift(self):
@@ -798,7 +804,7 @@ class MetadataHealTest(unittest.TestCase):
                                 content_hash=real_hash)
         self.meta.save()
 
-        stats = self.meta.heal(self.local_dir, auto_fix=False)
+        stats = heal(self.meta, self.local_dir, auto_fix=False)
         self.assertEqual(stats["mtime_drift"], 1)
 
     def test_fixes_mtime_drift(self):
@@ -814,7 +820,7 @@ class MetadataHealTest(unittest.TestCase):
                                 content_hash=real_hash)
         self.meta.save()
 
-        self.meta.heal(self.local_dir, auto_fix=True)
+        heal(self.meta, self.local_dir, auto_fix=True)
         info = self.meta.get_file_info("drift2.md")
         self.assertEqual(info["local_mtime"], real_mtime)
 
@@ -826,7 +832,7 @@ class MetadataHealTest(unittest.TestCase):
                                 local_mtime=int(os.path.getmtime(fpath)))
         self.meta.save()
 
-        stats = self.meta.heal(self.local_dir, auto_fix=True)
+        stats = heal(self.meta, self.local_dir, auto_fix=True)
         self.assertEqual(stats["hash_backfill"], 1)
         info = self.meta.get_file_info("nohash.md")
         self.assertIsNotNone(info.get("content_hash"))
@@ -839,7 +845,7 @@ class MetadataHealTest(unittest.TestCase):
                                 local_mtime=100)
         self.meta.save()
 
-        stats = self.meta.heal(self.local_dir, auto_fix=False)
+        stats = heal(self.meta, self.local_dir, auto_fix=False)
         self.assertEqual(stats["zero_cloud"], 1)
 
     def test_clean_metadata_reports_nothing(self):
@@ -854,7 +860,7 @@ class MetadataHealTest(unittest.TestCase):
                                 content_hash=real_hash)
         self.meta.save()
 
-        stats = self.meta.heal(self.local_dir, auto_fix=False)
+        stats = heal(self.meta, self.local_dir, auto_fix=False)
         self.assertEqual(sum(stats.values()), 0)
 
 
@@ -1418,21 +1424,21 @@ class MetadataSchemaExtensionTest(unittest.TestCase):
 
     # -- sync_log --
     def test_log_sync_action_roundtrip(self):
-        self.meta.log_sync_action("a.md", "downloaded", direction="pull",
+        log_sync_action(self.meta, "a.md", "downloaded", direction="pull",
                                   old_hash="aaa", new_hash="bbb",
                                   cloud_id="c1", detail="ok")
         self.meta.save()
-        logs = self.meta.get_sync_log(limit=10)
+        logs = get_sync_log(self.meta, limit=10)
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0]["path"], "a.md")
         self.assertEqual(logs[0]["action"], "downloaded")
         self.assertEqual(logs[0]["cloud_id"], "c1")
 
     def test_get_sync_log_filter_by_path(self):
-        self.meta.log_sync_action("a.md", "downloaded")
-        self.meta.log_sync_action("b.md", "uploaded")
+        log_sync_action(self.meta, "a.md", "downloaded")
+        log_sync_action(self.meta, "b.md", "uploaded")
         self.meta.save()
-        logs = self.meta.get_sync_log(path="b.md")
+        logs = get_sync_log(self.meta, path="b.md")
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0]["path"], "b.md")
 
@@ -1451,48 +1457,48 @@ class MetadataSchemaExtensionTest(unittest.TestCase):
 
     # -- file_refs --
     def test_file_refs_roundtrip(self):
-        self.meta.set_file_refs("doc.md", ["img/a.png", "img/b.jpg"])
-        refs = self.meta.get_file_refs("doc.md")
+        set_file_refs(self.meta, "doc.md", ["img/a.png", "img/b.jpg"])
+        refs = get_file_refs(self.meta, "doc.md")
         self.assertEqual(sorted(refs), ["img/a.png", "img/b.jpg"])
 
     def test_file_refs_replace(self):
-        self.meta.set_file_refs("doc.md", ["old.png"])
-        self.meta.set_file_refs("doc.md", ["new.png"])
-        self.assertEqual(self.meta.get_file_refs("doc.md"), ["new.png"])
+        set_file_refs(self.meta, "doc.md", ["old.png"])
+        set_file_refs(self.meta, "doc.md", ["new.png"])
+        self.assertEqual(get_file_refs(self.meta, "doc.md"), ["new.png"])
 
     def test_get_all_cached_refs(self):
-        self.meta.set_file_refs("a.md", ["x.png"])
-        self.meta.set_file_refs("b.md", ["y.png", "z.png"])
-        all_refs = self.meta.get_all_cached_refs()
+        set_file_refs(self.meta, "a.md", ["x.png"])
+        set_file_refs(self.meta, "b.md", ["y.png", "z.png"])
+        all_refs = get_all_cached_refs(self.meta)
         self.assertIn("a.md", all_refs)
         self.assertEqual(len(all_refs["b.md"]), 2)
 
     # -- file_base --
     def test_base_content_roundtrip(self):
         content = b"original content here"
-        self.meta.save_base_content("a.md", content, "hash1")
-        self.assertEqual(self.meta.get_base_content("a.md"), content)
+        save_base_content(self.meta, "a.md", content, "hash1")
+        self.assertEqual(get_base_content(self.meta, "a.md"), content)
 
     def test_base_content_overwrite(self):
-        self.meta.save_base_content("a.md", b"v1", "h1")
-        self.meta.save_base_content("a.md", b"v2", "h2")
-        self.assertEqual(self.meta.get_base_content("a.md"), b"v2")
+        save_base_content(self.meta, "a.md", b"v1", "h1")
+        save_base_content(self.meta, "a.md", b"v2", "h2")
+        self.assertEqual(get_base_content(self.meta, "a.md"), b"v2")
 
     def test_base_content_missing(self):
-        self.assertIsNone(self.meta.get_base_content("nonexistent.md"))
+        self.assertIsNone(get_base_content(self.meta, "nonexistent.md"))
 
     # -- tree_hash --
     def test_tree_hash_roundtrip(self):
         self.meta.set_dir_info("notes", "d1")
-        self.meta.set_tree_hash("notes", "tree_abc")
-        self.assertEqual(self.meta.get_tree_hash("notes"), "tree_abc")
+        set_tree_hash(self.meta, "notes", "tree_abc")
+        self.assertEqual(get_tree_hash(self.meta, "notes"), "tree_abc")
 
     def test_get_all_tree_hashes(self):
         self.meta.set_dir_info("a", "d1")
         self.meta.set_dir_info("b", "d2")
-        self.meta.set_tree_hash("a", "h1")
-        self.meta.set_tree_hash("b", "h2")
-        hashes = self.meta.get_all_tree_hashes()
+        set_tree_hash(self.meta, "a", "h1")
+        set_tree_hash(self.meta, "b", "h2")
+        hashes = get_all_tree_hashes(self.meta)
         self.assertEqual(hashes, {"a": "h1", "b": "h2"})
 
     # -- migration tracking --
@@ -1527,7 +1533,7 @@ class GarbageCollectionTest(unittest.TestCase):
         self.meta.set_file_info("gone.md", "f1", 100)
         self.meta.mark_synced("gone.md", ts=old_ts)
         self.meta.save()
-        stats = self.meta.gc(self.local_dir)
+        stats = gc(self.meta, self.local_dir)
         self.assertEqual(stats["files"], 1)
         self.assertIsNone(self.meta.get_file_info("gone.md"))
 
@@ -1539,14 +1545,14 @@ class GarbageCollectionTest(unittest.TestCase):
         self.meta.set_file_info("exists.md", "f1", 100)
         self.meta.mark_synced("exists.md", ts=old_ts)
         self.meta.save()
-        stats = self.meta.gc(self.local_dir)
+        stats = gc(self.meta, self.local_dir)
         self.assertEqual(stats["files"], 0)
         self.assertIsNotNone(self.meta.get_file_info("exists.md"))
 
     def test_gc_removes_orphan_dirs(self):
         self.meta.set_dir_info("deleted_dir", "d1")
         self.meta.save()
-        stats = self.meta.gc(self.local_dir)
+        stats = gc(self.meta, self.local_dir)
         self.assertEqual(stats["dirs"], 1)
 
     def test_gc_removes_old_logs(self):
@@ -1555,13 +1561,13 @@ class GarbageCollectionTest(unittest.TestCase):
             "INSERT INTO sync_log (timestamp, path, action) VALUES (?, ?, ?)",
             (old_ts, "old.md", "uploaded"))
         self.meta.save()
-        stats = self.meta.gc(self.local_dir)
+        stats = gc(self.meta, self.local_dir)
         self.assertEqual(stats["logs"], 1)
 
     def test_gc_removes_orphan_bases(self):
-        self.meta.save_base_content("gone.md", b"content", "h1")
+        save_base_content(self.meta, "gone.md", b"content", "h1")
         self.meta.save()
-        stats = self.meta.gc(self.local_dir)
+        stats = gc(self.meta, self.local_dir)
         self.assertEqual(stats["bases"], 1)
 
 
@@ -1583,7 +1589,7 @@ class VerifyTest(unittest.TestCase):
 
     def test_detects_orphan(self):
         self.meta.set_file_info("gone.md", "f1", 100)
-        issues = self.meta.verify(self.local_dir)
+        issues = verify(self.meta, self.local_dir)
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0][1], VerifyIssueType.ORPHAN)
 
@@ -1593,7 +1599,7 @@ class VerifyTest(unittest.TestCase):
             f.write("actual content")
         self.meta.set_file_info("test.md", "f1", 100,
                                 content_hash="wrong_hash")
-        issues = self.meta.verify(self.local_dir)
+        issues = verify(self.meta, self.local_dir)
         hash_issues = [i for i in issues if i[1] == VerifyIssueType.HASH_MISMATCH]
         self.assertEqual(len(hash_issues), 1)
 
@@ -1603,7 +1609,7 @@ class VerifyTest(unittest.TestCase):
             f.write("actual content")
         self.meta.set_file_info("test.md", "f1", 100,
                                 content_hash="wrong_hash")
-        self.meta.verify(self.local_dir, auto_fix=True)
+        verify(self.meta, self.local_dir, auto_fix=True)
         info = self.meta.get_file_info("test.md")
         self.assertNotEqual(info["content_hash"], "wrong_hash")
 
@@ -1755,17 +1761,17 @@ class MetadataSetTreeHashUpsertTest(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_set_tree_hash_creates_missing_dir(self):
-        self.meta.set_tree_hash("some/new/dir", "abc123")
-        result = self.meta.get_tree_hash("some/new/dir")
+        set_tree_hash(self.meta, "some/new/dir", "abc123")
+        result = get_tree_hash(self.meta, "some/new/dir")
         self.assertEqual(result, "abc123")
 
     def test_set_tree_hash_updates_existing_dir(self):
         self.meta.set_dir_info("existing/dir", "dir_id_1", "parent_id_1")
-        self.meta.set_tree_hash("existing/dir", "hash_v1")
-        self.assertEqual(self.meta.get_tree_hash("existing/dir"), "hash_v1")
+        set_tree_hash(self.meta, "existing/dir", "hash_v1")
+        self.assertEqual(get_tree_hash(self.meta, "existing/dir"), "hash_v1")
 
-        self.meta.set_tree_hash("existing/dir", "hash_v2")
-        self.assertEqual(self.meta.get_tree_hash("existing/dir"), "hash_v2")
+        set_tree_hash(self.meta, "existing/dir", "hash_v2")
+        self.assertEqual(get_tree_hash(self.meta, "existing/dir"), "hash_v2")
         self.assertEqual(self.meta.get_dir_id("existing/dir"), "dir_id_1")
 
 

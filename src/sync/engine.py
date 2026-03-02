@@ -22,6 +22,8 @@ from typing import List, Dict, Optional
 from typing import TYPE_CHECKING
 
 from src.sync.metadata import SyncMetadata
+from src.sync.metadata_health import heal as _heal
+from src.sync.metadata_aux import save_base_content as _save_base, get_base_content as _get_base
 from src.sync.git_helper import GitHelper
 
 if TYPE_CHECKING:
@@ -289,7 +291,7 @@ class SyncManager:
         self._uploaded_paths = set()
 
         if not dry_run:
-            self.metadata.heal(self.local_dir, auto_fix=True)
+            _heal(self.metadata, self.local_dir, auto_fix=True)
 
         try:
             asyncio.run(self._async_main(cloud_dir_id, cloud_path, direction, dry_run))
@@ -908,8 +910,8 @@ class SyncManager:
 
             raw = getattr(self.downloader, "last_raw_content", None)
             if raw and item.domain == 0 and content_hash:
-                self.metadata.save_base_content(
-                    item.relative_path, raw, content_hash)
+                _save_base(
+                    self.metadata, item.relative_path, raw, content_hash)
 
             logging.info(f"下载完成: {item.relative_path}")
         else:
@@ -998,7 +1000,7 @@ class SyncManager:
 
         base_bytes = self._git.get_file_content(item.relative_path)
         if base_bytes is None:
-            base_bytes = self.metadata.get_base_content(item.relative_path)
+            base_bytes = _get_base(self.metadata, item.relative_path)
         if base_bytes is None:
             return False
 
@@ -1036,8 +1038,8 @@ class SyncManager:
                 self._hash_cache[item.local_path] = content_hash
 
         merged_bytes = result.merged_text.encode("utf-8")
-        self.metadata.save_base_content(
-            item.relative_path, merged_bytes, content_hash or "")
+        _save_base(
+            self.metadata, item.relative_path, merged_bytes, content_hash or "")
 
         parent_id = (item.cloud_parent_id
                      or self.uploader.ensure_parent_dir(item.relative_path))

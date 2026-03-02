@@ -12,10 +12,10 @@ import threading
 import time
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 
 from src.common import get_config_directory, normalize_sep
-from src.sync.utils import FileMetaInfo, VerifyIssueType, FileId, DirId, ContentHash
+from src.sync.utils import FileMetaInfo, FileId, DirId, ContentHash
 from src.sync.metadata_migrations import run_all_migrations
 
 _FILE_META_COLS = (
@@ -70,10 +70,6 @@ class SyncMetadata:
         if conn is None:
             raise RuntimeError("SyncMetadata is already closed")
         return conn
-
-    def load(self) -> None:
-        """兼容接口。SQLite 模式下数据始终在 DB 中，无需显式加载。"""
-        pass
 
     @contextmanager
     def batch(self):
@@ -564,10 +560,10 @@ class SyncMetadata:
             ).fetchall()
             result: Dict[str, Dict[str, str]] = {}
             for row in rows:
-                info: Dict[str, str] = {"dir_id": row[1]}
-                if row[2]:
-                    info["parent_id"] = row[2]
-                result[row[0]] = info
+                info: Dict[str, str] = {"dir_id": row["dir_id"]}
+                if row["parent_id"]:
+                    info["parent_id"] = row["parent_id"]
+                result[row["path"]] = info
             return result
 
     # ========== 查询方法 ==========
@@ -641,25 +637,6 @@ class SyncMetadata:
             ).fetchone()
             return row[0] if row else None
 
-    def find_duplicates_by_hash(self) -> Dict[str, List[str]]:
-        """
-        按 content_hash 分组，找出内容完全一致的文件。
-
-        :return: {hash: [path1, path2, ...]} 只包含 2 个以上路径的组
-        """
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT content_hash, path FROM files "
-                "WHERE content_hash != '' AND file_id != '' "
-                "ORDER BY content_hash"
-            ).fetchall()
-
-            groups: Dict[str, List[str]] = {}
-            for hash_val, path in rows:
-                groups.setdefault(hash_val, []).append(path)
-
-            return {h: paths for h, paths in groups.items() if len(paths) > 1}
-
     # ========== 云端 Hash 缓存 (Phase 2b) ==========
 
     def set_cloud_content_hash(self, local_path: str, cloud_hash: ContentHash) -> None:
@@ -679,48 +656,6 @@ class SyncMetadata:
                 "SELECT cloud_content_hash FROM files WHERE path = ?", (path,)
             ).fetchone()
             return row[0] if row and row[0] else None
-
-    # ========== 辅助表（委托至 metadata_aux.py）==========
-
-    def log_sync_action(self, path, action, **kw):
-        from src.sync.metadata_aux import log_sync_action as _f
-        return _f(self, path, action, **kw)
-
-    def get_sync_log(self, limit=100, path=None):
-        from src.sync.metadata_aux import get_sync_log as _f
-        return _f(self, limit, path)
-
-    def get_file_refs(self, source_path):
-        from src.sync.metadata_aux import get_file_refs as _f
-        return _f(self, source_path)
-
-    def set_file_refs(self, source_path, refs):
-        from src.sync.metadata_aux import set_file_refs as _f
-        return _f(self, source_path, refs)
-
-    def get_all_cached_refs(self):
-        from src.sync.metadata_aux import get_all_cached_refs as _f
-        return _f(self)
-
-    def save_base_content(self, rel_path, content, content_hash):
-        from src.sync.metadata_aux import save_base_content as _f
-        return _f(self, rel_path, content, content_hash)
-
-    def get_base_content(self, rel_path):
-        from src.sync.metadata_aux import get_base_content as _f
-        return _f(self, rel_path)
-
-    def get_tree_hash(self, dir_path):
-        from src.sync.metadata_aux import get_tree_hash as _f
-        return _f(self, dir_path)
-
-    def set_tree_hash(self, dir_path, tree_hash):
-        from src.sync.metadata_aux import set_tree_hash as _f
-        return _f(self, dir_path, tree_hash)
-
-    def get_all_tree_hashes(self):
-        from src.sync.metadata_aux import get_all_tree_hashes as _f
-        return _f(self)
 
     # ========== 全局同步状态 (scan-cache) ==========
 
@@ -751,20 +686,3 @@ class SyncMetadata:
         except (ValueError, TypeError):
             return default
 
-    # ========== 健康检查（委托至 metadata_health.py）==========
-
-    def gc(self, local_dir: str, max_log_age_days: int = 90) -> Dict[str, int]:
-        """清理过期和孤儿元数据记录。"""
-        from src.sync.metadata_health import gc as _gc
-        return _gc(self, local_dir, max_log_age_days)
-
-    def verify(self, local_dir: str, auto_fix: bool = False,
-               ) -> List[Tuple[str, VerifyIssueType, str]]:
-        """校验元数据与本地文件的一致性。"""
-        from src.sync.metadata_health import verify as _verify
-        return _verify(self, local_dir, auto_fix)
-
-    def heal(self, local_dir: str, auto_fix: bool = False) -> Dict[str, int]:
-        """Lightweight self-healing pass run before each sync."""
-        from src.sync.metadata_health import heal as _heal
-        return _heal(self, local_dir, auto_fix)

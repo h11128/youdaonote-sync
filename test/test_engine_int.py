@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch, MagicMock
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.sync.metadata import SyncMetadata
+from src.sync.metadata_aux import get_sync_log, get_file_refs
 from src.sync.utils import (
     decide_action, SyncAction, filter_by_direction, SyncDirection,
     SyncItem, VerifyIssueType, sanitize_filename,
@@ -206,7 +207,7 @@ class SyncLogIntegrationTest(unittest.TestCase):
                                 local_mtime=200, content_hash="new_hash")
         mgr.metadata.save()
 
-        logs = self.meta.get_sync_log(path="test.md")
+        logs = get_sync_log(self.meta, path="test.md")
         self.assertGreaterEqual(len(logs), 1)
         self.assertEqual(logs[0]["action"], "downloaded")
         self.assertEqual(logs[0]["old_hash"], "old_hash")
@@ -264,7 +265,7 @@ class IncrementalRefIndexTest(unittest.TestCase):
         self.assertIn("img.png", refs2)
 
         # Verify refs are in metadata
-        cached = self.meta.get_file_refs("doc.md")
+        cached = get_file_refs(self.meta, "doc.md")
         self.assertIn("img.png", cached)
 
 

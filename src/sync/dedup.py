@@ -26,6 +26,7 @@ import xxhash
 
 from src.common import safe_long_path, normalize_sep
 from src.sync.metadata import SyncMetadata
+from src.sync.metadata_aux import set_file_refs, get_all_cached_refs
 from src.sync.utils import (
     CloudFileInfo, LocalFileInfo, FileMetaInfo, DedupStats,
     ContentHash, compute_content_hash,
@@ -185,7 +186,7 @@ def _build_indexes_from_scan(
     referenced: Set[str] = set()
     updated = 0
 
-    cached_refs = metadata.get_all_cached_refs() if metadata else {}
+    cached_refs = get_all_cached_refs(metadata) if metadata else {}
     all_meta = metadata.get_all_files() if metadata else {}
 
     for rel, info in local_files.items():
@@ -228,7 +229,7 @@ def _build_indexes_from_scan(
                 new_refs = _extract_refs_from_md(full, md_dir, root)
                 referenced.update(new_refs)
                 if metadata:
-                    metadata.set_file_refs(rel, list(new_refs))
+                    set_file_refs(metadata, rel, list(new_refs))
 
     if updated > 0 and metadata:
         metadata.save()
