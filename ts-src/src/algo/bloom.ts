@@ -63,6 +63,15 @@ export class BloomFilter {
     return Buffer.concat([header, Buffer.from(this.bits)]);
   }
 
+  /** @internal Construct with pre-computed params (used by deserialize). */
+  private static fromRaw(m: number, k: number, bits: Uint8Array): BloomFilter {
+    const bf = new BloomFilter(1);
+    bf.m = m;
+    bf.k = k;
+    bf.bits = bits;
+    return bf;
+  }
+
   static deserialize(data: Buffer): BloomFilter {
     if (data.length < 8) throw new Error(`Bloom filter data too short: ${data.length} bytes`);
     const m = data.readUInt32LE(0);
@@ -72,10 +81,6 @@ export class BloomFilter {
     if (data.length - 8 !== expectedBytes) {
       throw new Error(`Bloom filter size mismatch: got ${data.length - 8}, expected ${expectedBytes}`);
     }
-    const bf = new BloomFilter(1);
-    bf.m = m;
-    bf.k = k;
-    bf.bits = new Uint8Array(data.subarray(8));
-    return bf;
+    return BloomFilter.fromRaw(m, k, new Uint8Array(data.subarray(8)));
   }
 }

@@ -313,7 +313,7 @@ export class MetadataStore {
     direction: string | null; oldHash: string | null; newHash: string | null;
     cloudId: string | null; detail: string | null;
   }> {
-    let sql = "SELECT * FROM sync_log";
+    let sql = "SELECT id, timestamp, path, action, direction, old_hash, new_hash, cloud_id, detail FROM sync_log";
     const params: unknown[] = [];
     if (opts?.path) { sql += " WHERE path = ?"; params.push(this.normalizePath(opts.path)); }
     sql += " ORDER BY id DESC";
@@ -399,6 +399,14 @@ export class MetadataStore {
   updateLocalMtime(localPath: string, mtime: number): void {
     const path = this.normalizePath(localPath);
     this.db.prepare("UPDATE files SET local_mtime = ? WHERE path = ?").run(mtime, path);
+  }
+
+  /**
+   * @internal Exposed for test fixtures only. Production code must use
+   * typed methods above — never raw SQL through this accessor.
+   */
+  get connection(): Database.Database {
+    return this.db;
   }
 
   // ========== Internal ==========

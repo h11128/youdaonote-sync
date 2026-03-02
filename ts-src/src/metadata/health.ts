@@ -68,11 +68,13 @@ export function verify(
 }
 
 export interface GcStats {
-  files: number;
-  dirs: number;
-  logs: number;
-  bases: number;
+  readonly files: number;
+  readonly dirs: number;
+  readonly logs: number;
+  readonly bases: number;
 }
+
+type MutableGcStats = { -readonly [K in keyof GcStats]: GcStats[K] };
 
 /**
  * Garbage-collect expired and orphan metadata records.
@@ -87,7 +89,7 @@ export function gc(
   localDir: string,
   maxLogAgeDays = 90,
 ): GcStats {
-  const stats: GcStats = { files: 0, dirs: 0, logs: 0, bases: 0 };
+  const stats: MutableGcStats = { files: 0, dirs: 0, logs: 0, bases: 0 };
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - 30 * 86400;
   const logCutoff = now - maxLogAgeDays * 86400;
@@ -121,11 +123,13 @@ export function gc(
 }
 
 export interface HealStats {
-  mtimeDrift: number;
-  orphan: number;
-  zeroCloud: number;
-  hashBackfill: number;
+  readonly mtimeDrift: number;
+  readonly orphan: number;
+  readonly zeroCloud: number;
+  readonly hashBackfill: number;
 }
+
+type MutableHealStats = { -readonly [K in keyof HealStats]: HealStats[K] };
 
 /**
  * Lightweight self-healing pass run before each sync.
@@ -141,7 +145,7 @@ export function heal(
   localDir: string,
   autoFix = false,
 ): HealStats {
-  const stats: HealStats = { mtimeDrift: 0, orphan: 0, zeroCloud: 0, hashBackfill: 0 };
+  const stats: MutableHealStats = { mtimeDrift: 0, orphan: 0, zeroCloud: 0, hashBackfill: 0 };
   const allFiles = meta.getAllFiles();
 
   for (const [path, record] of allFiles) {
