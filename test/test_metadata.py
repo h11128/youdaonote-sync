@@ -85,7 +85,7 @@ class SyncMetadataTest(unittest.TestCase):
         self.meta.set_file_info("x.md", "WEB1", cloud_mtime=1)
 
         # When
-        self.meta.remove_file("x.md")
+        self.meta.remove_file_info("x.md")
 
         # Then
         self.assertIsNone(self.meta.get_file_id("x.md"))
@@ -250,7 +250,7 @@ class SyncMetadataTest(unittest.TestCase):
         self.meta.set_file_info("a.md", "WEBA", cloud_mtime=1, content_hash="hash1")
 
         # When
-        self.meta.remove_file("a.md")
+        self.meta.remove_file_info("a.md")
 
         # Then
         self.assertIsNone(self.meta.find_cloud_file_by_hash("hash1"))
@@ -262,7 +262,7 @@ class SyncMetadataTest(unittest.TestCase):
         self.meta.set_file_info("b.md", "WEBB", cloud_mtime=2, content_hash="shared")
 
         # When — 删除其中一个
-        self.meta.remove_file("a.md")
+        self.meta.remove_file_info("a.md")
 
         # Then — 另一个仍可查到
         result = self.meta.find_cloud_file_by_hash("shared")
@@ -1633,9 +1633,9 @@ class MetadataMigrationFailureTest(unittest.TestCase):
 
 
 class MetadataRemoveFileUnifiedTest(unittest.TestCase):
-    """P1: remove_file should delegate to remove_file_info"""
+    """remove_file_info deletes metadata correctly"""
 
-    def test_remove_file_delegates_to_remove_file_info(self):
+    def test_remove_file_info(self):
         from src.sync.metadata import SyncMetadata
         tmpdir = tempfile.mkdtemp()
         try:
@@ -1643,7 +1643,7 @@ class MetadataRemoveFileUnifiedTest(unittest.TestCase):
             meta.set_file_info("a.md", "f1", 100)
             self.assertIsNotNone(meta.get_file_info("a.md"))
 
-            meta.remove_file("a.md")
+            meta.remove_file_info("a.md")
             self.assertIsNone(meta.get_file_info("a.md"))
 
             meta.set_file_info("b.md", "f2", 200)

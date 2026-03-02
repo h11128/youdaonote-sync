@@ -18,7 +18,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from src.sync.metadata import SyncMetadata
 from src.sync.utils import (
     decide_action, SyncAction, filter_by_direction, SyncDirection,
-    SyncItem, VerifyIssueType, sanitize_filename,
+    SyncItem, VerifyIssueType, sanitize_filename, compute_content_hash,
 )
 from src.sync.scanner import map_cloud_name
 from src.sync.moves import normalize_filename
@@ -147,7 +147,7 @@ class DedupCollisionTest(unittest.TestCase):
             with open(f2, "w") as f:
                 f.write(content)
 
-            real_hash = SyncMetadata.compute_content_hash(f1)
+            real_hash = compute_content_hash(f1)
             meta.set_file_info("file1.md", "WEB1", cloud_mtime=1, content_hash=real_hash)
             meta.set_file_info("file2.md", "WEB2", cloud_mtime=2, content_hash=real_hash)
             meta.save()

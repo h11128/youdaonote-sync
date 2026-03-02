@@ -105,7 +105,7 @@ def _build_indexes(
     hash_index: Dict[str, List[str]] = defaultdict(list)
     referenced: Set[str] = set()
     updated = 0
-    all_meta = metadata.get_all_file_meta_for_dedup() if metadata else {}
+    all_meta = metadata.get_all_files() if metadata else {}
 
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -186,7 +186,7 @@ def _build_indexes_from_scan(
     updated = 0
 
     cached_refs = metadata.get_all_cached_refs() if metadata else {}
-    all_meta = metadata.get_all_file_meta_for_dedup() if metadata else {}
+    all_meta = metadata.get_all_files() if metadata else {}
 
     for rel, info in local_files.items():
         if info["is_dir"]:
@@ -433,7 +433,7 @@ def _execute_removals(
 
             try:
                 if metadata:
-                    metadata.remove_file(remove_path)
+                    metadata.remove_file_info(remove_path)
                 os.remove(full)
                 logging.info(f"去重删除本地: {remove_path} ({reason})")
                 deleted_paths.append(full)

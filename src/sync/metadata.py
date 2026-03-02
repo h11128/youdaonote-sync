@@ -12,11 +12,18 @@ import threading
 import time
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, List, Tuple
 
 from src.common import get_config_directory, normalize_sep
-from src.sync.utils import FileMetaInfo, VerifyIssueType, FileId, DirId, ContentHash, TreeHash, TreeHash
+from src.sync.utils import FileMetaInfo, VerifyIssueType, FileId, DirId, ContentHash
 from src.sync.metadata_migrations import run_all_migrations
+
+_FILE_META_COLS = (
+    "file_id", "cloud_mtime", "local_mtime", "parent_id", "domain",
+    "content_hash", "create_time", "last_sync_at", "cloud_content_hash",
+    "original_domain",
+)
+_FILE_META_SQL = ", ".join(_FILE_META_COLS)
 
 
 class SyncMetadata:
@@ -45,6 +52,7 @@ class SyncMetadata:
             os.makedirs(db_dir, exist_ok=True)
         self._conn_impl: Optional[sqlite3.Connection] = sqlite3.connect(
             self._db_path, check_same_thread=False)
+        self._conn_impl.row_factory = sqlite3.Row
         try:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
@@ -179,10 +187,7 @@ class SyncMetadata:
         with self._lock:
             path = self._normalize_path(local_path)
             row = self._conn.execute(
-                "SELECT file_id, cloud_mtime, local_mtime, parent_id, domain, "
-                "content_hash, create_time, last_sync_at, cloud_content_hash, "
-                "original_domain "
-                "FROM files WHERE path = ?",
+                f"SELECT {_FILE_META_SQL} FROM files WHERE path = ?",
                 (path,),
             ).fetchone()
             if not row:
@@ -190,30 +195,31 @@ class SyncMetadata:
             return self._row_to_file_meta(row)
 
     @staticmethod
-    def _row_to_file_meta(row) -> FileMetaInfo:
+    def _row_to_file_meta(row: sqlite3.Row) -> FileMetaInfo:
         """将 SQL 行转换为 FileMetaInfo。
 
         可选字段只在有值时填入，保持 .get() 语义和 'key in info' 检查不变。
         """
         result = FileMetaInfo(
-            file_id=row[0],
-            cloud_mtime=row[1],
-            local_mtime=row[2],
+            file_id=row["file_id"],
+            cloud_mtime=row["cloud_mtime"],
+            local_mtime=row["local_mtime"],
         )
-        if row[3] is not None:
-            result["parent_id"] = row[3]
-        if row[4] is not None:
-            result["domain"] = row[4]
-        if row[5] is not None:
-            result["content_hash"] = row[5]
-        if row[6] is not None and row[6] > 0:
-            result["create_time"] = row[6]
-        if len(row) > 7 and row[7]:
-            result["last_sync_at"] = row[7]
-        if len(row) > 8 and row[8]:
-            result["cloud_content_hash"] = row[8]
-        if len(row) > 9 and row[9] is not None:
-            result["original_domain"] = row[9]
+        if row["parent_id"] is not None:
+            result["parent_id"] = row["parent_id"]
+        if row["domain"] is not None:
+            result["domain"] = row["domain"]
+        if row["content_hash"] is not None:
+            result["content_hash"] = row["content_hash"]
+        ct = row["create_time"]
+        if ct is not None and ct > 0:
+            result["create_time"] = ct
+        if row["last_sync_at"]:
+            result["last_sync_at"] = row["last_sync_at"]
+        if row["cloud_content_hash"]:
+            result["cloud_content_hash"] = row["cloud_content_hash"]
+        if row["original_domain"] is not None:
+            result["original_domain"] = row["original_domain"]
         return result
 
     def mark_synced(self, local_path: str, ts: Optional[int] = None) -> None:
@@ -224,6 +230,62 @@ class SyncMetadata:
             self._conn.execute(
                 "UPDATE files SET last_sync_at = ? WHERE path = ?", (ts, path)
             )
+
+    _UPSERT_SQL = (
+        "INSERT INTO files "
+        "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, "
+        " content_hash, create_time, last_sync_at, cloud_content_hash) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(path) DO UPDATE SET "
+        "  file_id = excluded.file_id,"
+        "  cloud_mtime = excluded.cloud_mtime,"
+        "  local_mtime = excluded.local_mtime,"
+        "  parent_id = COALESCE(excluded.parent_id, files.parent_id),"
+        "  domain = COALESCE(excluded.domain, files.domain),"
+        "  content_hash = COALESCE(excluded.content_hash, files.content_hash),"
+        "  create_time = CASE WHEN excluded.create_time IS NOT NULL"
+        "                      AND excluded.create_time > 0"
+        "                THEN excluded.create_time ELSE files.create_time END,"
+        "  last_sync_at = CASE WHEN excluded.last_sync_at > 0"
+        "                 THEN excluded.last_sync_at"
+        "                 ELSE files.last_sync_at END,"
+        "  cloud_content_hash = COALESCE(excluded.cloud_content_hash,"
+        "                                files.cloud_content_hash)"
+    )
+
+    def _upsert_file(
+        self, path: str, *, file_id: str, cloud_mtime: int,
+        local_mtime: int, parent_id: Optional[str] = None,
+        domain: Optional[int] = None, content_hash: Optional[str] = None,
+        create_time: Optional[int] = None, last_sync_at: Optional[int] = None,
+        cloud_content_hash: Optional[str] = None,
+    ) -> None:
+        """内部 upsert，调用方必须已持有 self._lock。
+
+        None 参数 → COALESCE 保留旧值；非 None → 覆盖。
+        """
+        self._conn.execute(
+            self._UPSERT_SQL,
+            (path, file_id or "", cloud_mtime, local_mtime,
+             parent_id, domain, content_hash,
+             create_time if create_time and create_time > 0 else None,
+             last_sync_at or 0, cloud_content_hash),
+        )
+
+    @staticmethod
+    def _resolve_local_mtime(
+        local_path: str, cloud_mtime: int, base_dir: Optional[str] = None,
+    ) -> int:
+        """当 local_mtime 未指定时，尝试从文件系统读取，否则用 cloud_mtime。"""
+        if os.path.isabs(local_path):
+            full_path = local_path
+        elif base_dir:
+            full_path = os.path.join(base_dir, local_path)
+        else:
+            full_path = local_path
+        if os.path.exists(full_path):
+            return int(os.path.getmtime(full_path))
+        return cloud_mtime
 
     def set_file_info(
         self,
@@ -254,49 +316,14 @@ class SyncMetadata:
             raise ValueError("local_path 不能为空")
         with self._lock:
             path = self._normalize_path(local_path)
-
             if local_mtime is None:
-                if os.path.isabs(local_path):
-                    full_path = local_path
-                elif base_dir:
-                    full_path = os.path.join(base_dir, local_path)
-                else:
-                    full_path = local_path
-                if os.path.exists(full_path):
-                    local_mtime = int(os.path.getmtime(full_path))
-                else:
-                    local_mtime = cloud_mtime
-
-            upsert_sets = [
-                "file_id = excluded.file_id",
-                "cloud_mtime = excluded.cloud_mtime",
-                "local_mtime = excluded.local_mtime",
-            ]
-            if parent_id is not None:
-                upsert_sets.append("parent_id = excluded.parent_id")
-            if domain is not None:
-                upsert_sets.append("domain = excluded.domain")
-            if content_hash is not None:
-                upsert_sets.append("content_hash = excluded.content_hash")
-            if create_time is not None and create_time > 0:
-                upsert_sets.append("create_time = excluded.create_time")
-
-            self._conn.execute(
-                "INSERT INTO files "
-                "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, content_hash, create_time) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(path) DO UPDATE SET " + ", ".join(upsert_sets),
-                (
-                    path,
-                    file_id or "",
-                    cloud_mtime,
-                    local_mtime,
-                    parent_id,
-                    domain,
-                    content_hash,
-                    create_time if create_time and create_time > 0 else None,
-                ),
-            )
+                local_mtime = self._resolve_local_mtime(
+                    local_path, cloud_mtime, base_dir)
+            self._upsert_file(
+                path, file_id=file_id, cloud_mtime=cloud_mtime,
+                local_mtime=local_mtime, parent_id=parent_id,
+                domain=domain, content_hash=content_hash,
+                create_time=create_time)
 
     def record_sync(
         self,
@@ -351,39 +378,12 @@ class SyncMetadata:
         now = int(time.time())
         with self._lock:
             path = self._normalize_path(local_path)
-
-            self._conn.execute(
-                "INSERT INTO files "
-                "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, "
-                " content_hash, create_time, last_sync_at, cloud_content_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(path) DO UPDATE SET "
-                "  file_id = excluded.file_id,"
-                "  cloud_mtime = excluded.cloud_mtime,"
-                "  local_mtime = excluded.local_mtime,"
-                "  last_sync_at = excluded.last_sync_at,"
-                "  parent_id = COALESCE(excluded.parent_id, files.parent_id),"
-                "  domain = COALESCE(excluded.domain, files.domain),"
-                "  content_hash = COALESCE(excluded.content_hash, files.content_hash),"
-                "  create_time = CASE WHEN excluded.create_time IS NOT NULL"
-                "                      AND excluded.create_time > 0"
-                "                     THEN excluded.create_time"
-                "                     ELSE files.create_time END,"
-                "  cloud_content_hash = COALESCE(excluded.cloud_content_hash,"
-                "                                files.cloud_content_hash)",
-                (
-                    path,
-                    file_id or "",
-                    cloud_mtime,
-                    local_mtime,
-                    parent_id,
-                    domain,
-                    content_hash,
-                    create_time if create_time and create_time > 0 else None,
-                    now,
-                    cloud_content_hash,
-                ),
-            )
+            self._upsert_file(
+                path, file_id=file_id, cloud_mtime=cloud_mtime,
+                local_mtime=local_mtime, parent_id=parent_id,
+                domain=domain, content_hash=content_hash,
+                create_time=create_time, last_sync_at=now,
+                cloud_content_hash=cloud_content_hash)
 
             if original_domain is not None:
                 self._conn.execute(
@@ -401,6 +401,19 @@ class SyncMetadata:
                     (now, path, action, direction,
                      old_hash, content_hash, file_id, detail),
                 )
+
+    _CACHE_CLOUD_SQL = (
+        "INSERT INTO files "
+        "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, create_time) "
+        "VALUES (?, ?, ?, 0, ?, ?, ?) "
+        "ON CONFLICT(path) DO UPDATE SET "
+        "  file_id = excluded.file_id,"
+        "  parent_id = COALESCE(excluded.parent_id, files.parent_id),"
+        "  domain = COALESCE(excluded.domain, files.domain),"
+        "  create_time = CASE WHEN excluded.create_time IS NOT NULL"
+        "                      AND excluded.create_time > 0"
+        "                THEN excluded.create_time ELSE files.create_time END"
+    )
 
     def cache_cloud_file_info(
         self,
@@ -421,29 +434,11 @@ class SyncMetadata:
             raise ValueError("local_path 不能为空")
         with self._lock:
             path = self._normalize_path(local_path)
-            upsert_sets = [
-                "file_id = excluded.file_id",
-            ]
-            if parent_id is not None:
-                upsert_sets.append("parent_id = excluded.parent_id")
-            if domain is not None:
-                upsert_sets.append("domain = excluded.domain")
-            if create_time is not None and create_time > 0:
-                upsert_sets.append("create_time = excluded.create_time")
-
             self._conn.execute(
-                "INSERT INTO files "
-                "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, create_time) "
-                "VALUES (?, ?, ?, 0, ?, ?, ?) "
-                "ON CONFLICT(path) DO UPDATE SET " + ", ".join(upsert_sets),
-                (
-                    path,
-                    file_id or "",
-                    cloud_mtime,
-                    parent_id,
-                    domain,
-                    create_time if create_time and create_time > 0 else None,
-                ),
+                self._CACHE_CLOUD_SQL,
+                (path, file_id or "", cloud_mtime,
+                 parent_id, domain,
+                 create_time if create_time and create_time > 0 else None),
             )
 
     def set_original_domain(self, local_path: str, domain: int) -> None:
@@ -496,47 +491,21 @@ class SyncMetadata:
             self._conn.execute(
                 "UPDATE files SET file_id = '' WHERE path = ?", (path,))
 
-    def remove_file(self, local_path: str) -> None:
-        """删除文件的元数据记录（remove_file_info 的别名）。"""
-        self.remove_file_info(local_path)
-
     def get_all_files(self) -> Dict[str, FileMetaInfo]:
         """获取所有文件元数据（返回独立副本，外部可安全修改）。"""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT path, file_id, cloud_mtime, local_mtime, parent_id, "
-                "domain, content_hash, create_time, last_sync_at, cloud_content_hash, "
-                "original_domain FROM files"
+                f"SELECT path, {_FILE_META_SQL} FROM files"
             ).fetchall()
-            return {
-                row[0]: self._row_to_file_meta(row[1:])
-                for row in rows
-            }
+            return {row["path"]: self._row_to_file_meta(row) for row in rows}
 
     def get_cloud_file_summaries(self) -> Dict[str, FileMetaInfo]:
-        """获取所有有 file_id 的文件的摘要信息（用于扫描缓存重建）。
-
-        只返回 path, file_id, parent_id, cloud_mtime, create_time, domain，
-        比 get_all_files() 少加载 content_hash/last_sync_at 等字段。
-        """
+        """获取所有有 file_id 的文件的摘要信息（用于扫描缓存重建）。"""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT path, file_id, parent_id, cloud_mtime, create_time, domain "
-                "FROM files WHERE file_id != ''"
+                f"SELECT path, {_FILE_META_SQL} FROM files WHERE file_id != ''"
             ).fetchall()
-            result: Dict[str, FileMetaInfo] = {}
-            for path, fid, pid, cmtime, ctime, domain in rows:
-                info = FileMetaInfo(
-                    file_id=FileId(fid),
-                    cloud_mtime=cmtime,
-                    local_mtime=0,
-                    parent_id=DirId(pid or ""),
-                    domain=domain,
-                )
-                if ctime and ctime > 0:
-                    info["create_time"] = ctime
-                result[path] = info
-            return result
+            return {row["path"]: self._row_to_file_meta(row) for row in rows}
 
     def get_stale_cloud_paths(self, active_paths: set) -> List[str]:
         """返回有 file_id 但不在 active_paths 中的文件路径（用于清理过期缓存）。"""
@@ -601,27 +570,6 @@ class SyncMetadata:
                 result[row[0]] = info
             return result
 
-    def get_all_file_meta_for_dedup(self) -> Dict[str, FileMetaInfo]:
-        """批量获取去重所需的文件元数据（content_hash, local_mtime, file_id）。
-
-        比 get_all_files() 更轻量，只返回去重阶段需要的字段。
-        """
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT path, content_hash, local_mtime, file_id FROM files"
-            ).fetchall()
-            result: Dict[str, FileMetaInfo] = {}
-            for path, chash, lmtime, fid in rows:
-                info = FileMetaInfo(
-                    file_id=FileId(fid or ""),
-                    cloud_mtime=0,
-                    local_mtime=lmtime or 0,
-                )
-                if chash:
-                    info["content_hash"] = chash
-                result[path] = info
-            return result
-
     # ========== 查询方法 ==========
 
     def find_by_file_id(self, file_id: FileId) -> Optional[str]:
@@ -655,12 +603,6 @@ class SyncMetadata:
             return row[0] if row else None
 
     # ========== 内容 Hash 相关 ==========
-
-    @staticmethod
-    def compute_content_hash(file_path: str) -> Optional[ContentHash]:
-        """deprecated: 计划在 v4.0 移除，请使用 src.sync.utils.compute_content_hash"""
-        from src.sync.utils import compute_content_hash
-        return compute_content_hash(file_path)
 
     def update_content_hash(self, local_path: str, content_hash: ContentHash) -> None:
         """更新文件的 content_hash"""
@@ -738,130 +680,47 @@ class SyncMetadata:
             ).fetchone()
             return row[0] if row and row[0] else None
 
-    # ========== 操作日志 (Phase 2d) ==========
+    # ========== 辅助表（委托至 metadata_aux.py）==========
 
-    def log_sync_action(
-        self, path: str, action: str, direction: Optional[str] = None,
-        old_hash: Optional[ContentHash] = None, new_hash: Optional[ContentHash] = None,
-        cloud_id: Optional[str] = None, detail: Optional[str] = None,
-        timestamp_override: Optional[int] = None,
-    ) -> None:
-        """记录一条同步操作日志。"""
-        ts = timestamp_override if timestamp_override is not None else int(time.time())
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO sync_log (timestamp, path, action, direction, "
-                "old_hash, new_hash, cloud_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (ts, path, action, direction,
-                 old_hash, new_hash, cloud_id, detail),
-            )
+    def log_sync_action(self, path, action, **kw):
+        from src.sync.metadata_aux import log_sync_action as _f
+        return _f(self, path, action, **kw)
 
-    def get_sync_log(self, limit: int = 100, path: Optional[str] = None) -> List[Dict[str, Any]]:
-        """查询同步操作日志。"""
-        with self._lock:
-            if path:
-                rows = self._conn.execute(
-                    "SELECT id, timestamp, path, action, direction, old_hash, "
-                    "new_hash, cloud_id, detail FROM sync_log "
-                    "WHERE path = ? ORDER BY id DESC LIMIT ?", (path, limit)
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT id, timestamp, path, action, direction, old_hash, "
-                    "new_hash, cloud_id, detail FROM sync_log "
-                    "ORDER BY id DESC LIMIT ?", (limit,)
-                ).fetchall()
-            return [
-                {"id": r[0], "timestamp": r[1], "path": r[2], "action": r[3],
-                 "direction": r[4], "old_hash": r[5], "new_hash": r[6],
-                 "cloud_id": r[7], "detail": r[8]}
-                for r in rows
-            ]
+    def get_sync_log(self, limit=100, path=None):
+        from src.sync.metadata_aux import get_sync_log as _f
+        return _f(self, limit, path)
 
-    # ========== 引用索引缓存 (Phase 2c) ==========
+    def get_file_refs(self, source_path):
+        from src.sync.metadata_aux import get_file_refs as _f
+        return _f(self, source_path)
 
-    def get_file_refs(self, source_path: str) -> List[str]:
-        """获取缓存的文件引用列表。"""
-        with self._lock:
-            path = self._normalize_path(source_path)
-            rows = self._conn.execute(
-                "SELECT ref_path FROM file_refs WHERE source_path = ?", (path,)
-            ).fetchall()
-            return [r[0] for r in rows]
+    def set_file_refs(self, source_path, refs):
+        from src.sync.metadata_aux import set_file_refs as _f
+        return _f(self, source_path, refs)
 
-    def set_file_refs(self, source_path: str, refs: List[str]) -> None:
-        """更新文件的引用列表（先删后插）。"""
-        with self._lock:
-            path = self._normalize_path(source_path)
-            self._conn.execute(
-                "DELETE FROM file_refs WHERE source_path = ?", (path,))
-            if refs:
-                self._conn.executemany(
-                    "INSERT OR IGNORE INTO file_refs (source_path, ref_path) VALUES (?, ?)",
-                    [(path, r) for r in refs],
-                )
+    def get_all_cached_refs(self):
+        from src.sync.metadata_aux import get_all_cached_refs as _f
+        return _f(self)
 
-    def get_all_cached_refs(self) -> Dict[str, List[str]]:
-        """获取所有缓存的引用（用于增量构建引用索引）。"""
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT source_path, ref_path FROM file_refs"
-            ).fetchall()
-            result: Dict[str, List[str]] = {}
-            for src, ref in rows:
-                result.setdefault(src, []).append(ref)
-            return result
+    def save_base_content(self, rel_path, content, content_hash):
+        from src.sync.metadata_aux import save_base_content as _f
+        return _f(self, rel_path, content, content_hash)
 
-    # ========== Base 版本存储 (Phase 3d) ==========
+    def get_base_content(self, rel_path):
+        from src.sync.metadata_aux import get_base_content as _f
+        return _f(self, rel_path)
 
-    def save_base_content(self, rel_path: str, content: bytes, content_hash: ContentHash) -> None:
-        """保存文件的 base 版本（用于 diff3 三路合并）。"""
-        with self._lock:
-            path = self._normalize_path(rel_path)
-            self._conn.execute(
-                "INSERT OR REPLACE INTO file_base (path, content, hash, saved_at) "
-                "VALUES (?, ?, ?, ?)",
-                (path, content, content_hash, int(time.time())),
-            )
+    def get_tree_hash(self, dir_path):
+        from src.sync.metadata_aux import get_tree_hash as _f
+        return _f(self, dir_path)
 
-    def get_base_content(self, rel_path: str) -> Optional[bytes]:
-        """获取文件的 base 版本内容。"""
-        with self._lock:
-            path = self._normalize_path(rel_path)
-            row = self._conn.execute(
-                "SELECT content FROM file_base WHERE path = ?", (path,)
-            ).fetchone()
-            return row[0] if row else None
+    def set_tree_hash(self, dir_path, tree_hash):
+        from src.sync.metadata_aux import set_tree_hash as _f
+        return _f(self, dir_path, tree_hash)
 
-    # ========== Merkle Tree (Phase 4a) ==========
-
-    def get_tree_hash(self, dir_path: str) -> Optional[TreeHash]:
-        """获取目录的 tree_hash。"""
-        with self._lock:
-            path = self._normalize_path(dir_path)
-            row = self._conn.execute(
-                "SELECT tree_hash FROM directories WHERE path = ?", (path,)
-            ).fetchone()
-            return row[0] if row and row[0] else None
-
-    def set_tree_hash(self, dir_path: str, tree_hash: TreeHash) -> None:
-        """更新目录的 tree_hash（目录行不存在时自动创建）。"""
-        with self._lock:
-            path = self._normalize_path(dir_path)
-            self._conn.execute(
-                "INSERT INTO directories (path, dir_id, parent_id, tree_hash) "
-                "VALUES (?, '', '', ?) "
-                "ON CONFLICT(path) DO UPDATE SET tree_hash = excluded.tree_hash",
-                (path, tree_hash),
-            )
-
-    def get_all_tree_hashes(self) -> Dict[str, TreeHash]:
-        """获取所有目录的 tree_hash。"""
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT path, tree_hash FROM directories WHERE tree_hash IS NOT NULL"
-            ).fetchall()
-            return {r[0]: r[1] for r in rows}
+    def get_all_tree_hashes(self):
+        from src.sync.metadata_aux import get_all_tree_hashes as _f
+        return _f(self)
 
     # ========== 全局同步状态 (scan-cache) ==========
 
@@ -892,195 +751,20 @@ class SyncMetadata:
         except (ValueError, TypeError):
             return default
 
-    # ========== 垃圾回收 (Phase 3a) ==========
+    # ========== 健康检查（委托至 metadata_health.py）==========
 
     def gc(self, local_dir: str, max_log_age_days: int = 90) -> Dict[str, int]:
-        """清理过期和孤儿元数据记录。
-
-        :return: {"files": n, "dirs": n, "logs": n, "bases": n}
-        """
-        stats = {"files": 0, "dirs": 0, "logs": 0, "bases": 0}
-        cutoff = int(time.time()) - 30 * 86400
-        log_cutoff = int(time.time()) - max_log_age_days * 86400
-
-        with self._lock:
-            # 清理 files 表：last_sync_at 过期且本地不存在
-            rows = self._conn.execute(
-                "SELECT path FROM files WHERE last_sync_at > 0 AND last_sync_at < ?",
-                (cutoff,),
-            ).fetchall()
-            for (path,) in rows:
-                full = os.path.join(local_dir, path)
-                if not os.path.exists(full):
-                    self._conn.execute("DELETE FROM files WHERE path = ?", (path,))
-                    stats["files"] += 1
-
-            # 清理 directories 表：本地不存在的目录
-            rows = self._conn.execute("SELECT path FROM directories").fetchall()
-            for (path,) in rows:
-                full = os.path.join(local_dir, path)
-                if not os.path.exists(full):
-                    self._conn.execute("DELETE FROM directories WHERE path = ?", (path,))
-                    stats["dirs"] += 1
-
-            # 清理过期的 sync_log
-            cur = self._conn.execute(
-                "DELETE FROM sync_log WHERE timestamp < ?", (log_cutoff,))
-            stats["logs"] = cur.rowcount
-
-            # 清理 file_base 中不存在的文件
-            rows = self._conn.execute("SELECT path FROM file_base").fetchall()
-            for (path,) in rows:
-                full = os.path.join(local_dir, path)
-                if not os.path.exists(full):
-                    self._conn.execute("DELETE FROM file_base WHERE path = ?", (path,))
-                    stats["bases"] += 1
-
-            # 清理 file_refs 中不存在的 source
-            rows = self._conn.execute(
-                "SELECT DISTINCT source_path FROM file_refs").fetchall()
-            for (path,) in rows:
-                full = os.path.join(local_dir, path)
-                if not os.path.exists(full):
-                    self._conn.execute(
-                        "DELETE FROM file_refs WHERE source_path = ?", (path,))
-
-            self._conn.commit()
-
-        if any(v > 0 for v in stats.values()):
-            logging.info(
-                f"GC 清理: files={stats['files']}, dirs={stats['dirs']}, "
-                f"logs={stats['logs']}, bases={stats['bases']}")
-        return stats
-
-    # ========== 完整性校验 (Phase 3b) ==========
+        """清理过期和孤儿元数据记录。"""
+        from src.sync.metadata_health import gc as _gc
+        return _gc(self, local_dir, max_log_age_days)
 
     def verify(self, local_dir: str, auto_fix: bool = False,
                ) -> List[Tuple[str, VerifyIssueType, str]]:
-        """校验元数据与本地文件的一致性。
-
-        :return: [(path, issue_type, detail), ...]
-        """
-        from src.sync.utils import compute_content_hash
-        issues: List[Tuple[str, VerifyIssueType, str]] = []
-
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT path, file_id, content_hash FROM files"
-            ).fetchall()
-
-        for path, file_id, meta_hash in rows:
-            full = os.path.join(local_dir, path)
-            if not os.path.exists(full):
-                if file_id:
-                    issues.append((path, VerifyIssueType.ORPHAN,
-                                   "本地文件不存在但有 file_id"))
-                continue
-            if meta_hash:
-                actual = compute_content_hash(full)
-                if actual and actual != meta_hash:
-                    issues.append((path, VerifyIssueType.HASH_MISMATCH,
-                                   f"记录={meta_hash[:16]}.. 实际={actual[:16]}.."))
-                    if auto_fix:
-                        self.update_content_hash(path, actual)
-
-        with self._lock:
-            dir_rows = self._conn.execute(
-                "SELECT path FROM directories").fetchall()
-        for (path,) in dir_rows:
-            full = os.path.join(local_dir, path)
-            if not os.path.exists(full):
-                issues.append((path, VerifyIssueType.ORPHAN_DIR,
-                               "本地目录不存在"))
-                if auto_fix:
-                    self.remove_dir(path)
-
-        if auto_fix and issues:
-            self.save()
-        return issues
-
-    # ========== 自愈 (Phase SOT) ==========
+        """校验元数据与本地文件的一致性。"""
+        from src.sync.metadata_health import verify as _verify
+        return _verify(self, local_dir, auto_fix)
 
     def heal(self, local_dir: str, auto_fix: bool = False) -> Dict[str, int]:
-        """Lightweight self-healing pass run before each sync.
-
-        Detects and optionally repairs common metadata inconsistencies:
-
-        1. **local_mtime drift** — ``os.path.getmtime`` differs from metadata
-           but ``content_hash`` is unchanged → silently update ``local_mtime``
-           (file was touched/copied without content change).
-        2. **orphan records** — metadata row exists but local file is missing
-           *and* there is no ``file_id`` (pure local stub) → delete row.
-        3. **cloud_mtime = 0** — legacy migration leftover → log warning.
-        4. **content_hash missing** — has ``file_id`` and ``local_mtime > 0``
-           but no hash → compute and backfill.
-
-        :param auto_fix: When ``False`` only reports; when ``True`` writes fixes.
-        :return: ``{"mtime_drift": n, "orphan": n, "zero_cloud": n, "hash_backfill": n}``
-        """
-        from src.sync.utils import compute_content_hash
-
-        stats = {"mtime_drift": 0, "orphan": 0, "zero_cloud": 0, "hash_backfill": 0}
-
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT path, file_id, cloud_mtime, local_mtime, content_hash "
-                "FROM files"
-            ).fetchall()
-
-        for path, file_id, cloud_mtime, local_mtime, meta_hash in rows:
-            full = os.path.join(local_dir, path)
-            exists = os.path.exists(full)
-
-            # 1. Orphan: no local file and no cloud identity
-            if not exists and not file_id:
-                stats["orphan"] += 1
-                if auto_fix:
-                    self.remove_file_info(path)
-                continue
-
-            if not exists:
-                continue
-
-            actual_mtime = int(os.path.getmtime(full))
-
-            # 2. local_mtime drift
-            if local_mtime and actual_mtime != local_mtime and meta_hash:
-                actual_hash = compute_content_hash(full)
-                if actual_hash and actual_hash == meta_hash:
-                    stats["mtime_drift"] += 1
-                    if auto_fix:
-                        with self._lock:
-                            self._conn.execute(
-                                "UPDATE files SET local_mtime = ? WHERE path = ?",
-                                (actual_mtime, path),
-                            )
-
-            # 3. cloud_mtime = 0
-            if cloud_mtime == 0 and file_id:
-                stats["zero_cloud"] += 1
-                if not auto_fix:
-                    logging.debug("heal: cloud_mtime=0 for %s", path)
-
-            # 4. content_hash missing — only safe to backfill when mtime
-            #    matches (file untouched since last sync)
-            if (not meta_hash and file_id and local_mtime > 0
-                    and actual_mtime == local_mtime):
-                actual_hash = compute_content_hash(full)
-                if actual_hash:
-                    stats["hash_backfill"] += 1
-                    if auto_fix:
-                        self.update_content_hash(path, actual_hash)
-
-        if auto_fix:
-            self.save()
-
-        total = sum(stats.values())
-        if total > 0:
-            logging.info(
-                "heal(%s): mtime_drift=%d, orphan=%d, zero_cloud=%d, hash_backfill=%d",
-                "fix" if auto_fix else "check",
-                stats["mtime_drift"], stats["orphan"],
-                stats["zero_cloud"], stats["hash_backfill"],
-            )
-        return stats
+        """Lightweight self-healing pass run before each sync."""
+        from src.sync.metadata_health import heal as _heal
+        return _heal(self, local_dir, auto_fix)
