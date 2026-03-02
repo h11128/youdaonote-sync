@@ -306,9 +306,63 @@ export class MetadataStore {
     return isNaN(n) ? defaultValue : n;
   }
 
+  // ========== Sync log ==========
+
+  getSyncLog(opts?: { limit?: number; path?: string }): Array<{
+    id: number; timestamp: number; path: string; action: string;
+    direction: string | null; oldHash: string | null; newHash: string | null;
+    cloudId: string | null; detail: string | null;
+  }> {
+    let sql = "SELECT * FROM sync_log";
+    const params: unknown[] = [];
+    if (opts?.path) { sql += " WHERE path = ?"; params.push(this.normalizePath(opts.path)); }
+    sql += " ORDER BY id DESC";
+    if (opts?.limit) { sql += " LIMIT ?"; params.push(opts.limit); }
+    const rows = this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: r['id'] as number,
+      timestamp: r['timestamp'] as number,
+      path: r['path'] as string,
+      action: r['action'] as string,
+      direction: (r['direction'] as string) || null,
+      oldHash: (r['old_hash'] as string) || null,
+      newHash: (r['new_hash'] as string) || null,
+      cloudId: (r['cloud_id'] as string) || null,
+      detail: (r['detail'] as string) || null,
+    }));
+  }
+
+  // ========== File base (for three-way merge) ==========
+
+  saveBaseContent(localPath: string, content: Buffer, hash: string): void {
+    const path = this.normalizePath(localPath);
+    const now = Math.floor(Date.now() / 1000);
+    this.db.prepare(
+      "INSERT OR REPLACE INTO file_base (path, content, hash, saved_at) VALUES (?, ?, ?, ?)",
+    ).run(path, content, hash, now);
+  }
+
+  getBaseContent(localPath: string): { content: Buffer; hash: string } | null {
+    const path = this.normalizePath(localPath);
+    const row = this.db.prepare(
+      "SELECT content, hash FROM file_base WHERE path = ?",
+    ).get(path) as { content: Buffer; hash: string } | undefined;
+    if (!row) return null;
+    return { content: Buffer.from(row.content), hash: row.hash };
+  }
+
+  removeBaseContent(localPath: string): void {
+    const path = this.normalizePath(localPath);
+    this.db.prepare("DELETE FROM file_base WHERE path = ?").run(path);
+  }
+
   // ========== Batch operations ==========
 
-  transaction<T>(fn: () => T): T {
+  /**
+   * Run multiple operations in a single SQLite transaction.
+   * All writes inside `fn` are committed atomically on success, or rolled back on error.
+   */
+  batch<T>(fn: () => T): T {
     return this.db.transaction(fn)();
   }
 
@@ -317,6 +371,34 @@ export class MetadataStore {
     if (this.saveCount % 50 === 0) {
       this.db.pragma('wal_checkpoint(PASSIVE)');
     }
+  }
+
+  // ========== Health operations (gc / heal internals) ==========
+
+  getStaleFilePaths(cutoffTs: number): string[] {
+    const rows = this.db.prepare(
+      "SELECT path FROM files WHERE last_sync_at > 0 AND last_sync_at < ?",
+    ).all(cutoffTs) as Array<{ path: string }>;
+    return rows.map((r) => r.path);
+  }
+
+  getAllDirPaths(): string[] {
+    const rows = this.db.prepare("SELECT path FROM directories").all() as Array<{ path: string }>;
+    return rows.map((r) => r.path);
+  }
+
+  deleteSyncLogBefore(cutoffTs: number): number {
+    return this.db.prepare("DELETE FROM sync_log WHERE timestamp < ?").run(cutoffTs).changes;
+  }
+
+  getAllBaseContentPaths(): string[] {
+    const rows = this.db.prepare("SELECT path FROM file_base").all() as Array<{ path: string }>;
+    return rows.map((r) => r.path);
+  }
+
+  updateLocalMtime(localPath: string, mtime: number): void {
+    const path = this.normalizePath(localPath);
+    this.db.prepare("UPDATE files SET local_mtime = ? WHERE path = ?").run(mtime, path);
   }
 
   // ========== Internal ==========

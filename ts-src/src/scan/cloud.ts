@@ -42,18 +42,13 @@ export async function scanCloud(
   const visited = new Set<string>([rootDirId]);
 
   type QueueItem = { dirId: DirId; basePath: string };
-  let queue: QueueItem[] = [{ dirId: rootDirId, basePath: base }];
+  const queue: QueueItem[] = [{ dirId: rootDirId, basePath: base }];
+  let inflight = 0;
+  let resolveAll: (() => void) | null = null;
 
-  while (queue.length > 0) {
-    const batch = queue.splice(0, maxConcurrent);
-    const results = await Promise.allSettled(
-      batch.map((item) => fetchDir(api, item.dirId, item.basePath)),
-    );
-
-    const nextQueue: QueueItem[] = [];
-    for (const result of results) {
-      if (result.status === 'rejected') continue;
-      const { entries, subdirs } = result.value;
+  async function processItem(item: QueueItem): Promise<void> {
+    try {
+      const { entries, subdirs } = await fetchDir(api, item.dirId, item.basePath);
 
       for (const [rel, cloud] of entries) {
         files.set(rel, cloud);
@@ -61,12 +56,31 @@ export async function scanCloud(
       for (const sub of subdirs) {
         if (!visited.has(sub.dirId)) {
           visited.add(sub.dirId);
-          nextQueue.push(sub);
+          queue.push(sub);
         }
       }
+    } finally {
+      inflight--;
+      drain();
     }
-    queue.push(...nextQueue);
   }
+
+  function drain(): void {
+    while (queue.length > 0 && inflight < maxConcurrent) {
+      const item = queue.shift()!;
+      inflight++;
+      void processItem(item);
+    }
+    if (inflight === 0 && queue.length === 0 && resolveAll) {
+      resolveAll();
+    }
+  }
+
+  await new Promise<void>((resolve) => {
+    resolveAll = resolve;
+    drain();
+    if (inflight === 0 && queue.length === 0) resolve();
+  });
 
   return files;
 }

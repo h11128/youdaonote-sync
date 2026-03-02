@@ -1,0 +1,175 @@
+import { XMLParser } from 'fast-xml-parser';
+
+const MD_ESCAPE_RE = /[\\*_#&<>\u201c\u2019\t\r\n]/g;
+const MD_ESCAPE_MAP: Record<string, string> = {
+  '\\': '\\\\', '*': '\\*', '_': '\\_', '#': '\\#',
+  '&': '&amp;', '<': '&lt;', '>': '&gt;',
+  '\u201c': '&quot;', '\u2019': '&apos;',
+  '\t': '&emsp;', '\r': '<br>', '\n': '<br>',
+};
+
+function encodeMd(text: string): string {
+  if (!text || text === ' ') return text;
+  text = text.replace(/\r\n/g, '<br>').replace(/\n\r/g, '<br>');
+  return text.replace(MD_ESCAPE_RE, (ch) => MD_ESCAPE_MAP[ch] ?? ch);
+}
+
+interface XmlElement {
+  ':@'?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+function getTextByKey(children: XmlElement[], key = 'text'): string {
+  for (const child of children) {
+    const keys = Object.keys(child).filter((k) => k !== ':@');
+    for (const k of keys) {
+      if (k.includes(key)) {
+        const val = child[k];
+        if (typeof val === 'string') return val;
+        if (typeof val === 'object' && val !== null && '#text' in (val as Record<string, unknown>)) {
+          return String((val as Record<string, unknown>)['#text']);
+        }
+        return '';
+      }
+    }
+  }
+  return '';
+}
+
+function getChildren(element: unknown): XmlElement[] {
+  if (Array.isArray(element)) return element as XmlElement[];
+  if (typeof element === 'object' && element !== null) {
+    const keys = Object.keys(element).filter((k) => k !== ':@' && k !== '#text');
+    for (const k of keys) {
+      const v = (element as Record<string, unknown>)[k];
+      if (Array.isArray(v)) return v as XmlElement[];
+    }
+  }
+  return [];
+}
+
+type Converter = (text: string, element: XmlElement, listTypes: Record<string, string>) => string;
+
+const converters: Record<string, Converter> = {
+  para: (text) => text,
+  heading: (text, el) => {
+    const attrs = el[':@'] ?? {};
+    let level = (attrs as Record<string, unknown>)['@_level'] ?? 1;
+    if (level === 'a' || level === 'b') level = 1;
+    return text ? `${'#'.repeat(Number(level))} ${text}` : text;
+  },
+  image: (text, el) => {
+    const children = getChildren(el);
+    const source = getTextByKey(children, 'source');
+    return `![${text}](${source})`;
+  },
+  attach: (_text, el) => {
+    const children = getChildren(el);
+    const filename = getTextByKey(children, 'filename');
+    const resource = getTextByKey(children, 'resource');
+    return `[${filename}](${resource})`;
+  },
+  code: (text, el) => {
+    const children = getChildren(el);
+    const lang = getTextByKey(children, 'language');
+    return `\`\`\`${lang}\n${text}\`\`\``;
+  },
+  todo: (text) => `- [ ] ${text}`,
+  quote: (text) => `> ${text}`,
+  horizontal_line: () => '---',
+  list_item: (text, el, listTypes) => {
+    const attrs = el[':@'] ?? {};
+    const listId = (attrs as Record<string, unknown>)['@_list-id'] as string;
+    const type = listTypes[listId];
+    return type === 'ordered' ? `1. ${text}` : `- ${text}`;
+  },
+  table: (_text, el) => {
+    const children = getChildren(el);
+    const content = getTextByKey(children, 'content');
+    try {
+      const data = JSON.parse(content) as {
+        widths?: unknown[];
+        cells?: Array<{ value?: string }>;
+      };
+      const colCount = data.widths?.length ?? 0;
+      if (colCount === 0) return content;
+
+      const rows: string[][] = [];
+      let row: string[] = [];
+      for (const cell of data.cells ?? []) {
+        row.push(encodeMd(cell.value ?? ''));
+        if (row.length === colCount) {
+          rows.push(row);
+          row = [];
+        }
+      }
+
+      if (rows.length === 1) {
+        rows.unshift(Array(colCount).fill(' '));
+        rows.splice(1, 0, Array(colCount).fill('-'));
+      } else if (rows.length > 1) {
+        rows.splice(1, 0, Array(colCount).fill('-'));
+      }
+
+      return rows.map((r) => `| ${r.join(' | ')} |`).join('\n') + '\n';
+    } catch {
+      return content || '';
+    }
+  },
+};
+
+const NS = 'http://note.youdao.com';
+
+/**
+ * Convert Youdao XML note bytes to Markdown.
+ */
+export function xmlBytesToMarkdown(data: Buffer | Uint8Array): string {
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    preserveOrder: true,
+    trimValues: false,
+  });
+
+  const xmlStr = typeof data === 'string' ? data : Buffer.from(data).toString('utf-8');
+  const parsed = parser.parse(xmlStr);
+
+  // Extract root → [0] = list types, [1] = body
+  const rootChildren = getChildren(parsed[0] ?? parsed);
+  const listTypes: Record<string, string> = {};
+
+  // First child: list definitions
+  const listDefs = getChildren(rootChildren[0] ?? {});
+  for (const item of listDefs) {
+    const keys = Object.keys(item).filter((k) => k !== ':@');
+    for (const k of keys) {
+      if (k.includes('list')) {
+        const attrs = item[':@'] ?? {};
+        const a = attrs as Record<string, unknown>;
+        if (a['@_id'] && a['@_type']) {
+          listTypes[String(a['@_id'])] = String(a['@_type']);
+        }
+      }
+    }
+  }
+
+  // Second child: body
+  const bodyChildren = getChildren(rootChildren[1] ?? {});
+  const result: string[] = [];
+
+  for (const element of bodyChildren) {
+    const children = getChildren(element);
+    const text = getTextByKey(children);
+    const keys = Object.keys(element).filter((k) => k !== ':@');
+    const tagName = keys[0] ?? '';
+    const name = tagName.replace(`${NS}:`, '').replace(/{[^}]+}/, '').replace(/-/g, '_');
+
+    const converter = converters[name];
+    if (converter) {
+      result.push(converter(text, element, listTypes));
+    } else {
+      result.push(text);
+    }
+  }
+
+  return result.join('\n\n');
+}

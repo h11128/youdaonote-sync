@@ -1,0 +1,81 @@
+import { createHash } from 'node:crypto';
+
+function optimalM(n: number, p: number): number {
+  return Math.max(1, Math.floor(-n * Math.log(p) / (Math.log(2) ** 2)));
+}
+
+function optimalK(m: number, n: number): number {
+  return Math.max(1, Math.floor(m * Math.log(2) / n));
+}
+
+function hash64(data: string, seed: number): bigint {
+  const h = createHash('sha256').update(`${seed}:${data}`).digest();
+  return h.readBigUInt64LE(0);
+}
+
+/**
+ * Space-efficient probabilistic set for membership testing.
+ *
+ * Uses Kirsch–Mitzenmacher double-hash technique.
+ * False positives possible; false negatives are not.
+ */
+export class BloomFilter {
+  private m: number;
+  private k: number;
+  private bits: Uint8Array;
+
+  constructor(expectedItems: number, fpRate = 0.01) {
+    if (fpRate <= 0 || fpRate >= 1) throw new Error(`fpRate must be in (0, 1), got ${fpRate}`);
+    const n = Math.max(1, expectedItems);
+    this.m = optimalM(n, fpRate);
+    this.k = Math.min(optimalK(this.m, n), this.m);
+    this.bits = new Uint8Array(Math.ceil(this.m / 8));
+  }
+
+  private hashes(item: string): number[] {
+    const h1 = hash64(item, 0);
+    const h2 = hash64(item, 0x9e37);
+    const result: number[] = [];
+    for (let i = 0; i < this.k; i++) {
+      const pos = Number((h1 + BigInt(i) * h2) % BigInt(this.m));
+      result.push(pos < 0 ? pos + this.m : pos);
+    }
+    return result;
+  }
+
+  add(item: string): void {
+    for (const pos of this.hashes(item)) {
+      this.bits[Math.floor(pos / 8)]! |= 1 << (pos % 8);
+    }
+  }
+
+  mightContain(item: string): boolean {
+    for (const pos of this.hashes(item)) {
+      if (!(this.bits[Math.floor(pos / 8)]! & (1 << (pos % 8)))) return false;
+    }
+    return true;
+  }
+
+  serialize(): Buffer {
+    const header = Buffer.alloc(8);
+    header.writeUInt32LE(this.m, 0);
+    header.writeUInt32LE(this.k, 4);
+    return Buffer.concat([header, Buffer.from(this.bits)]);
+  }
+
+  static deserialize(data: Buffer): BloomFilter {
+    if (data.length < 8) throw new Error(`Bloom filter data too short: ${data.length} bytes`);
+    const m = data.readUInt32LE(0);
+    const k = data.readUInt32LE(4);
+    if (m < 1 || k < 1) throw new Error(`Invalid Bloom filter params: m=${m}, k=${k}`);
+    const expectedBytes = Math.ceil(m / 8);
+    if (data.length - 8 !== expectedBytes) {
+      throw new Error(`Bloom filter size mismatch: got ${data.length - 8}, expected ${expectedBytes}`);
+    }
+    const bf = new BloomFilter(1);
+    bf.m = m;
+    bf.k = k;
+    bf.bits = new Uint8Array(data.subarray(8));
+    return bf;
+  }
+}
