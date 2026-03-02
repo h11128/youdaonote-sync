@@ -2,7 +2,7 @@
 
 > 2026-03-01 | 前置分析见 [sync-engine-overhaul.md](sync-engine-overhaul.md)
 >
-> 本文档是实现层面的设计，不再重复"为什么要重写"。
+> 本文档是实现层面的设计，不再重复"为什么要重写"。TS 代码库 SOLID 与 Dev Practice 审查见 [solid-and-dev-practice-audit-ts.md](solid-and-dev-practice-audit-ts.md)。
 
 ## 一、架构
 

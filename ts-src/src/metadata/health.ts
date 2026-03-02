@@ -30,6 +30,9 @@ export function verify(
   localDir: string,
   autoFix = false,
 ): VerifyIssue[] {
+  if (!localDir || typeof localDir !== 'string') {
+    throw new Error('verify: localDir must be a non-empty string');
+  }
   const issues: VerifyIssue[] = [];
 
   const allFiles = meta.getAllFiles();
@@ -99,6 +102,9 @@ export function gc(
   localDir: string,
   maxLogAgeDays = 90,
 ): GcStats {
+  if (!localDir || typeof localDir !== 'string') {
+    throw new Error('gc: localDir must be a non-empty string');
+  }
   const stats: MutableGcStats = { files: 0, dirs: 0, logs: 0, bases: 0 };
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - 30 * 86400;
@@ -155,6 +161,9 @@ export function heal(
   localDir: string,
   autoFix = false,
 ): HealStats {
+  if (!localDir || typeof localDir !== 'string') {
+    throw new Error('heal: localDir must be a non-empty string');
+  }
   const stats: MutableHealStats = { mtimeDrift: 0, orphan: 0, zeroCloud: 0, hashBackfill: 0 };
   const allFiles = meta.getAllFiles();
 

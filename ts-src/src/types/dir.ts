@@ -1,0 +1,17 @@
+/**
+ * Types for directory listing API (DirBrowser / getDirInfoById).
+ * Shared by api and scan so YoudaoNoteApi.getDirInfoById can be typed compatible with DirBrowser.
+ */
+export interface DirFileEntry {
+  id: string;
+  name: string;
+  dir?: boolean;
+  modifyTimeForSort?: number;
+  createTimeForSort?: number;
+  domain?: number;
+}
+
+export interface DirInfoByIdResponse {
+  entries?: Array<{ fileEntry: DirFileEntry }>;
+  count?: number;
+}

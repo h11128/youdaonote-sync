@@ -1,5 +1,6 @@
 import type { DirId, FileId } from '../types/common.js';
 import type { NoteDomain } from '../types/common.js';
+import type { DirInfoByIdResponse } from '../types/dir.js';
 import type { CloudFile } from '../types/scan.js';
 import { mapCloudName } from './name.js';
 
@@ -8,18 +9,7 @@ import { mapCloudName } from './name.js';
  * Matches the subset of YoudaoNoteApi needed for cloud scanning.
  */
 export interface DirBrowser {
-  getDirInfoById(dirId: DirId): Promise<{
-    entries?: Array<{
-      fileEntry: {
-        id: string;
-        name: string;
-        dir?: boolean;
-        modifyTimeForSort?: number;
-        createTimeForSort?: number;
-        domain?: number;
-      };
-    }>;
-  }>;
+  getDirInfoById(dirId: DirId): Promise<DirInfoByIdResponse>;
 }
 
 /**

@@ -21,6 +21,10 @@ export interface SyncEngineConfig {
   syncExclude?: string[] | undefined;
   dryRun?: boolean | undefined;
   hashFn?: ((data: Uint8Array, path: string) => ContentHash | null) | undefined;
+  /** Optional: inject for testing; otherwise created from cookiesPath/metadataPath. */
+  api?: YoudaoNoteApi;
+  /** Optional: inject for testing; otherwise created from metadataPath. */
+  meta?: MetadataStore;
 }
 
 export interface SyncResult {
@@ -40,8 +44,8 @@ export class SyncEngine {
 
   constructor(config: SyncEngineConfig) {
     this.config = config;
-    this.api = new YoudaoNoteApi(config.cookiesPath);
-    this.meta = new MetadataStore(config.metadataPath);
+    this.api = config.api ?? new YoudaoNoteApi(config.cookiesPath);
+    this.meta = config.meta ?? new MetadataStore(config.metadataPath);
   }
 
   async sync(): Promise<SyncResult> {
@@ -56,7 +60,7 @@ export class SyncEngine {
     if (this.config.syncExclude) scanOpts.exclude = this.config.syncExclude;
 
     const [cloudSnap, localSnap] = await Promise.all([
-      scanCloud(this.api as any, rootDirId),
+      scanCloud(this.api, rootDirId),
       Promise.resolve(scanLocal(this.config.localDir, '', scanOpts)),
     ]);
 
@@ -98,7 +102,6 @@ export class SyncEngine {
       localDir: this.config.localDir,
       hashFn,
     };
-    if (this.config.dryRun != null) (ctx as any).dryRun = this.config.dryRun;
 
     const stats = await executeAll(classified, cloudSnap, ctx);
 
@@ -125,5 +128,5 @@ function dryRunStats(classified: Map<string, FileState>): SyncStats {
       case 'move': stats.moved++; break;
     }
   }
-  return stats;
+  return Object.freeze(stats) as Readonly<SyncStats>;
 }

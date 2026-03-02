@@ -4,11 +4,10 @@ import { dirname } from 'node:path';
 import type { ContentHash, DirId, FileId, NoteDomain } from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
 import { runAllMigrations } from './migrations.js';
-import { sanitizeFilename, normalizeSep } from '../scan/name.js';
-
-const FILE_META_COLS =
-  "file_id, cloud_mtime, local_mtime, parent_id, domain, " +
-  "content_hash, create_time, last_sync_at, cloud_content_hash, original_domain";
+import { sanitizeFilename, normalizeSep } from '../util/path.js';
+import * as storeDirs from './store-dirs.js';
+import * as storeState from './store-state.js';
+import * as storeFiles from './store-files.js';
 
 /**
  * SQLite-backed metadata store for sync state.
@@ -45,31 +44,18 @@ export class MetadataStore {
     return normalizeSep(localPath);
   }
 
-  // ========== File methods ==========
+  // ========== File methods (delegate to store-files) ==========
 
   getFileId(localPath: string): FileId | null {
-    const path = this.normalizePath(localPath);
-    const row = this.db.prepare(
-      "SELECT file_id FROM files WHERE path = ?",
-    ).get(path) as { file_id: string } | undefined;
-    return (row?.file_id || null) as FileId | null;
+    return storeFiles.getFileId(this.db, this.normalizePath(localPath));
   }
 
   getFileInfo(localPath: string): MetadataRecord | null {
-    const path = this.normalizePath(localPath);
-    const row = this.db.prepare(
-      `SELECT ${FILE_META_COLS} FROM files WHERE path = ?`,
-    ).get(path) as Record<string, unknown> | undefined;
-    if (!row) return null;
-    return rowToMetadata(row);
+    return storeFiles.getFileInfo(this.db, this.normalizePath(localPath));
   }
 
   markSynced(localPath: string, ts?: number): void {
-    const path = this.normalizePath(localPath);
-    const now = ts ?? Math.floor(Date.now() / 1000);
-    this.db.prepare(
-      "UPDATE files SET last_sync_at = ? WHERE path = ?",
-    ).run(now, path);
+    storeFiles.markSynced(this.db, this.normalizePath(localPath), ts);
   }
 
   setFileInfo(
@@ -87,8 +73,7 @@ export class MetadataStore {
     },
   ): void {
     if (!localPath) throw new Error("localPath must not be empty");
-    const path = this.normalizePath(localPath);
-    this.upsertFile(path, opts);
+    storeFiles.upsertFile(this.db, this.normalizePath(localPath), opts);
   }
 
   recordSync(
@@ -114,25 +99,21 @@ export class MetadataStore {
     const path = this.normalizePath(localPath);
 
     const txn = this.db.transaction(() => {
-      this.upsertFile(path, { ...opts, lastSyncAt: now });
-
+      storeFiles.upsertFile(this.db, path, { ...opts, lastSyncAt: now });
       if (opts.originalDomain != null) {
-        this.db.prepare(
-          "UPDATE files SET original_domain = ? " +
-          "WHERE path = ? AND original_domain IS NULL",
-        ).run(opts.originalDomain, path);
+        storeFiles.updateOriginalDomain(this.db, path, opts.originalDomain);
       }
-
       if (opts.action) {
-        this.db.prepare(
-          "INSERT INTO sync_log " +
-          "(timestamp, path, action, direction, old_hash, new_hash, cloud_id, detail) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ).run(
-          now, path, opts.action, opts.direction ?? null,
-          opts.oldHash ?? null, opts.contentHash ?? null,
-          opts.fileId, opts.detail ?? null,
-        );
+        storeState.insertSyncLog(this.db, {
+          timestamp: now,
+          path,
+          action: opts.action,
+          direction: opts.direction ?? null,
+          oldHash: opts.oldHash ?? null,
+          newHash: opts.contentHash ?? null,
+          cloudId: opts.fileId,
+          detail: opts.detail ?? null,
+        });
       }
     });
     txn();
@@ -149,210 +130,99 @@ export class MetadataStore {
     },
   ): void {
     if (!localPath) throw new Error("localPath must not be empty");
-    const path = this.normalizePath(localPath);
-    this.db.prepare(
-      "INSERT INTO files " +
-      "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, create_time) " +
-      "VALUES (?, ?, ?, 0, ?, ?, ?) " +
-      "ON CONFLICT(path) DO UPDATE SET " +
-      "  file_id = excluded.file_id," +
-      "  parent_id = COALESCE(excluded.parent_id, files.parent_id)," +
-      "  domain = COALESCE(excluded.domain, files.domain)," +
-      "  create_time = CASE WHEN excluded.create_time IS NOT NULL" +
-      "                      AND excluded.create_time > 0" +
-      "                THEN excluded.create_time ELSE files.create_time END",
-    ).run(
-      path,
-      opts.fileId || "",
-      opts.cloudMtime,
-      opts.parentId ?? null,
-      opts.domain ?? null,
-      opts.createTime && opts.createTime > 0 ? opts.createTime : null,
-    );
+    storeFiles.cacheCloudFileInfo(this.db, this.normalizePath(localPath), opts);
   }
 
   removeFileInfo(localPath: string): void {
-    const path = this.normalizePath(localPath);
-    this.db.prepare("DELETE FROM files WHERE path = ?").run(path);
+    storeFiles.removeFileInfo(this.db, this.normalizePath(localPath));
   }
 
   renamePath(oldPath: string, newPath: string): boolean {
-    const oldNorm = this.normalizePath(oldPath);
-    const newNorm = this.normalizePath(newPath);
-    try {
-      const result = this.db.prepare(
-        "UPDATE files SET path = ? WHERE path = ?",
-      ).run(newNorm, oldNorm);
-      return result.changes > 0;
-    } catch (e: unknown) {
-      if (String(e).includes("UNIQUE constraint")) {
-        this.db.prepare("DELETE FROM files WHERE path = ?").run(oldNorm);
-        return false;
-      }
-      throw e;
-    }
+    return storeFiles.renamePath(
+      this.db,
+      this.normalizePath(oldPath),
+      this.normalizePath(newPath),
+    );
   }
 
   getAllFiles(): Map<string, MetadataRecord> {
-    const rows = this.db.prepare(
-      `SELECT path, ${FILE_META_COLS} FROM files`,
-    ).all() as Array<Record<string, unknown>>;
-    const result = new Map<string, MetadataRecord>();
-    for (const row of rows) {
-      result.set(row['path'] as string, rowToMetadata(row));
-    }
-    return result;
+    return storeFiles.getAllFiles(this.db);
   }
 
-  // ========== Directory methods ==========
+  // ========== Directory methods (delegate to store-dirs) ==========
 
   getDirId(localPath: string): DirId | null {
-    const path = this.normalizePath(localPath);
-    const row = this.db.prepare(
-      "SELECT dir_id FROM directories WHERE path = ?",
-    ).get(path) as { dir_id: string } | undefined;
-    return (row?.dir_id || null) as DirId | null;
+    return storeDirs.getDirId(this.db, this.normalizePath(localPath));
   }
 
   setDirInfo(localPath: string, dirId: DirId, parentId?: DirId | null): void {
-    const path = this.normalizePath(localPath);
-    this.db.prepare(
-      "INSERT OR REPLACE INTO directories (path, dir_id, parent_id) VALUES (?, ?, ?)",
-    ).run(path, dirId || "", parentId || "");
+    storeDirs.setDirInfo(this.db, this.normalizePath(localPath), dirId, parentId);
   }
 
   removeDir(localPath: string): void {
-    const path = this.normalizePath(localPath);
-    this.db.prepare("DELETE FROM directories WHERE path = ?").run(path);
+    storeDirs.removeDir(this.db, this.normalizePath(localPath));
   }
 
   getAllDirs(): Map<string, { dirId: DirId; parentId: DirId | null }> {
-    const rows = this.db.prepare(
-      "SELECT path, dir_id, parent_id FROM directories",
-    ).all() as Array<{ path: string; dir_id: string; parent_id: string }>;
-    const result = new Map<string, { dirId: DirId; parentId: DirId | null }>();
-    for (const row of rows) {
-      result.set(row.path, {
-        dirId: row.dir_id as DirId,
-        parentId: (row.parent_id || null) as DirId | null,
-      });
-    }
-    return result;
+    return storeDirs.getAllDirs(this.db);
   }
 
   // ========== Lookup methods ==========
 
   findByFileId(fileId: FileId): string | null {
-    if (!fileId) return null;
-    const row = this.db.prepare(
-      "SELECT path FROM files WHERE file_id = ?",
-    ).get(fileId) as { path: string } | undefined;
-    return row?.path ?? null;
+    return storeFiles.findByFileId(this.db, fileId);
   }
 
   findByDirId(dirId: DirId): string | null {
-    if (!dirId) return null;
-    const row = this.db.prepare(
-      "SELECT path FROM directories WHERE dir_id = ?",
-    ).get(dirId) as { path: string } | undefined;
-    return row?.path ?? null;
+    return storeDirs.findByDirId(this.db, dirId);
   }
 
   // ========== Content hash ==========
 
   updateContentHash(localPath: string, contentHash: ContentHash): void {
-    const path = this.normalizePath(localPath);
-    this.db.prepare(
-      "UPDATE files SET content_hash = ? WHERE path = ?",
-    ).run(contentHash || "", path);
+    storeFiles.updateContentHash(this.db, this.normalizePath(localPath), contentHash);
   }
 
   getContentHash(localPath: string): ContentHash | null {
-    const path = this.normalizePath(localPath);
-    const row = this.db.prepare(
-      "SELECT content_hash FROM files WHERE path = ?",
-    ).get(path) as { content_hash: string | null } | undefined;
-    return (row?.content_hash || null) as ContentHash | null;
+    return storeFiles.getContentHash(this.db, this.normalizePath(localPath));
   }
 
   setCloudContentHash(localPath: string, cloudHash: ContentHash): void {
-    const path = this.normalizePath(localPath);
-    this.db.prepare(
-      "UPDATE files SET cloud_content_hash = ? WHERE path = ?",
-    ).run(cloudHash, path);
+    storeFiles.setCloudContentHash(this.db, this.normalizePath(localPath), cloudHash);
   }
 
-  // ========== Sync state (key-value) ==========
+  // ========== Sync state & log & file_base (delegate to store-state) ==========
 
   getState(key: string): string | null {
-    const row = this.db.prepare(
-      "SELECT value FROM sync_state WHERE key = ?",
-    ).get(key) as { value: string } | undefined;
-    return row?.value ?? null;
+    return storeState.getState(this.db, key);
   }
 
   setState(key: string, value: string): void {
-    this.db.prepare(
-      "INSERT INTO sync_state (key, value) VALUES (?, ?) " +
-      "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(key, String(value));
+    storeState.setState(this.db, key, value);
   }
 
   getStateInt(key: string, defaultValue = 0): number {
-    const val = this.getState(key);
-    if (val === null) return defaultValue;
-    const n = parseInt(val, 10);
-    return isNaN(n) ? defaultValue : n;
+    return storeState.getStateInt(this.db, key, defaultValue);
   }
-
-  // ========== Sync log ==========
 
   getSyncLog(opts?: { limit?: number; path?: string }): Array<{
     id: number; timestamp: number; path: string; action: string;
     direction: string | null; oldHash: string | null; newHash: string | null;
     cloudId: string | null; detail: string | null;
   }> {
-    let sql = "SELECT id, timestamp, path, action, direction, old_hash, new_hash, cloud_id, detail FROM sync_log";
-    const params: unknown[] = [];
-    if (opts?.path) { sql += " WHERE path = ?"; params.push(this.normalizePath(opts.path)); }
-    sql += " ORDER BY id DESC";
-    if (opts?.limit) { sql += " LIMIT ?"; params.push(opts.limit); }
-    const rows = this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
-    return rows.map((r) => ({
-      id: r['id'] as number,
-      timestamp: r['timestamp'] as number,
-      path: r['path'] as string,
-      action: r['action'] as string,
-      direction: (r['direction'] as string) || null,
-      oldHash: (r['old_hash'] as string) || null,
-      newHash: (r['new_hash'] as string) || null,
-      cloudId: (r['cloud_id'] as string) || null,
-      detail: (r['detail'] as string) || null,
-    }));
+    return storeState.getSyncLog(this.db, opts, (p) => this.normalizePath(p));
   }
 
-  // ========== File base (for three-way merge) ==========
-
   saveBaseContent(localPath: string, content: Buffer, hash: string): void {
-    const path = this.normalizePath(localPath);
-    const now = Math.floor(Date.now() / 1000);
-    this.db.prepare(
-      "INSERT OR REPLACE INTO file_base (path, content, hash, saved_at) VALUES (?, ?, ?, ?)",
-    ).run(path, content, hash, now);
+    storeState.saveBaseContent(this.db, this.normalizePath(localPath), content, hash);
   }
 
   getBaseContent(localPath: string): { content: Buffer; hash: string } | null {
-    const path = this.normalizePath(localPath);
-    const row = this.db.prepare(
-      "SELECT content, hash FROM file_base WHERE path = ?",
-    ).get(path) as { content: Buffer; hash: string } | undefined;
-    if (!row) return null;
-    return { content: Buffer.from(row.content), hash: row.hash };
+    return storeState.getBaseContent(this.db, this.normalizePath(localPath));
   }
 
   removeBaseContent(localPath: string): void {
-    const path = this.normalizePath(localPath);
-    this.db.prepare("DELETE FROM file_base WHERE path = ?").run(path);
+    storeState.removeBaseContent(this.db, this.normalizePath(localPath));
   }
 
   // ========== Batch operations ==========
@@ -375,29 +245,23 @@ export class MetadataStore {
   // ========== Health operations (gc / heal internals) ==========
 
   getStaleFilePaths(cutoffTs: number): string[] {
-    const rows = this.db.prepare(
-      "SELECT path FROM files WHERE last_sync_at > 0 AND last_sync_at < ?",
-    ).all(cutoffTs) as Array<{ path: string }>;
-    return rows.map((r) => r.path);
+    return storeFiles.getStaleFilePaths(this.db, cutoffTs);
   }
 
   getAllDirPaths(): string[] {
-    const rows = this.db.prepare("SELECT path FROM directories").all() as Array<{ path: string }>;
-    return rows.map((r) => r.path);
+    return storeDirs.getAllDirPaths(this.db);
   }
 
   deleteSyncLogBefore(cutoffTs: number): number {
-    return this.db.prepare("DELETE FROM sync_log WHERE timestamp < ?").run(cutoffTs).changes;
+    return storeState.deleteSyncLogBefore(this.db, cutoffTs);
   }
 
   getAllBaseContentPaths(): string[] {
-    const rows = this.db.prepare("SELECT path FROM file_base").all() as Array<{ path: string }>;
-    return rows.map((r) => r.path);
+    return storeState.getAllBaseContentPaths(this.db);
   }
 
   updateLocalMtime(localPath: string, mtime: number): void {
-    const path = this.normalizePath(localPath);
-    this.db.prepare("UPDATE files SET local_mtime = ? WHERE path = ?").run(mtime, path);
+    storeFiles.updateLocalMtime(this.db, this.normalizePath(localPath), mtime);
   }
 
   /**
@@ -407,68 +271,4 @@ export class MetadataStore {
   get connection(): Database.Database {
     return this.db;
   }
-
-  // ========== Internal ==========
-
-  private upsertFile(
-    path: string,
-    opts: {
-      fileId: FileId;
-      cloudMtime: number;
-      localMtime: number;
-      parentId?: DirId | null;
-      domain?: NoteDomain | null;
-      contentHash?: ContentHash | null;
-      createTime?: number | null;
-      lastSyncAt?: number;
-      cloudContentHash?: ContentHash | null;
-    },
-  ): void {
-    this.db.prepare(
-      "INSERT INTO files " +
-      "(path, file_id, cloud_mtime, local_mtime, parent_id, domain, " +
-      " content_hash, create_time, last_sync_at, cloud_content_hash) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(path) DO UPDATE SET " +
-      "  file_id = excluded.file_id," +
-      "  cloud_mtime = excluded.cloud_mtime," +
-      "  local_mtime = excluded.local_mtime," +
-      "  parent_id = COALESCE(excluded.parent_id, files.parent_id)," +
-      "  domain = COALESCE(excluded.domain, files.domain)," +
-      "  content_hash = COALESCE(excluded.content_hash, files.content_hash)," +
-      "  create_time = CASE WHEN excluded.create_time IS NOT NULL" +
-      "                      AND excluded.create_time > 0" +
-      "                THEN excluded.create_time ELSE files.create_time END," +
-      "  last_sync_at = CASE WHEN excluded.last_sync_at > 0" +
-      "                 THEN excluded.last_sync_at" +
-      "                 ELSE files.last_sync_at END," +
-      "  cloud_content_hash = COALESCE(excluded.cloud_content_hash," +
-      "                                files.cloud_content_hash)",
-    ).run(
-      path,
-      opts.fileId || "",
-      opts.cloudMtime,
-      opts.localMtime,
-      opts.parentId ?? null,
-      opts.domain ?? null,
-      opts.contentHash ?? null,
-      opts.createTime && opts.createTime > 0 ? opts.createTime : null,
-      opts.lastSyncAt ?? 0,
-      opts.cloudContentHash ?? null,
-    );
-  }
-}
-
-function rowToMetadata(row: Record<string, unknown>): MetadataRecord {
-  return {
-    fileId: (row['file_id'] as string || '') as FileId,
-    cloudMtime: (row['cloud_mtime'] as number) ?? 0,
-    localMtime: (row['local_mtime'] as number) ?? 0,
-    contentHash: (row['content_hash'] as string || null) as ContentHash | null,
-    cloudContentHash: (row['cloud_content_hash'] as string || null) as ContentHash | null,
-    parentId: (row['parent_id'] as string || null) as DirId | null,
-    domain: (row['domain'] as number ?? 1) as NoteDomain,
-    lastSyncAt: (row['last_sync_at'] as number) ?? 0,
-    originalDomain: (row['original_domain'] as number ?? null) as NoteDomain | null,
-  };
 }

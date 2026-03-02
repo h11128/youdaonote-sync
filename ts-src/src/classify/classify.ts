@@ -20,6 +20,7 @@ export function matchesRule<T>(
 }
 
 export function classify(input: ClassifyInput): FileState {
+  if (input == null) throw new Error('classify input must not be null');
   const cond = extractConditions(input);
   for (const rule of RULES) {
     if (matchesRule(cond, rule.when)) {
@@ -39,6 +40,9 @@ export function classifyAll(
   meta: ReadonlyMap<string, ClassifyInput['meta']>,
   localHashes: ReadonlyMap<string, ClassifyInput['localHash']>,
 ): Map<string, FileState> {
+  if (cloud == null || local == null || meta == null || localHashes == null) {
+    throw new Error('classifyAll: cloud, local, meta, localHashes must not be null');
+  }
   const allPaths = new Set([...cloud.keys(), ...local.keys(), ...meta.keys()]);
   const result = new Map<string, FileState>();
   for (const path of allPaths) {

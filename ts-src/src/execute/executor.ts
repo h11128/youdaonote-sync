@@ -69,7 +69,7 @@ export async function executeAll(
     }
   }
 
-  return stats;
+  return Object.freeze(stats) as Readonly<SyncStats>;
 }
 
 function countAction(stats: SyncStats, action: SyncAction): void {
