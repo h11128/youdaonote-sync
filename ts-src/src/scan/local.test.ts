@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { scanLocal } from './local.js';
+import { scanLocal, patternToRegex } from './local.js';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -96,5 +96,23 @@ describe('scanLocal', () => {
 
     expect(result.has('keep.md')).toBe(true);
     expect(result.has('secret.md')).toBe(false);
+  });
+});
+
+describe('patternToRegex', () => {
+  const cases: Array<{ name: string; pattern: string; match: string[]; noMatch: string[] }> = [
+    { name: 'literal filename', pattern: 'secret.md', match: ['secret.md', 'dir/secret.md'], noMatch: ['secret.txt', 'xsecret.md'] },
+    { name: 'wildcard *', pattern: '*.tmp', match: ['a.tmp', 'dir/b.tmp'], noMatch: ['a.txt', 'tmp'] },
+    { name: 'single char ?', pattern: 'doc?.md', match: ['doc1.md', 'dir/docX.md'], noMatch: ['doc12.md', 'doc.md'] },
+    { name: 'special regex chars', pattern: 'file(1).md', match: ['file(1).md', 'sub/file(1).md'], noMatch: ['file1.md'] },
+    { name: 'nested path', pattern: 'archive/*', match: ['archive/old.md'], noMatch: ['archive2/old.md'] },
+  ];
+
+  cases.forEach(({ name, pattern, match, noMatch }) => {
+    it(name, () => {
+      const re = patternToRegex(pattern);
+      for (const m of match) expect(re.test(m), `expected "${m}" to match /${re.source}/`).toBe(true);
+      for (const n of noMatch) expect(re.test(n), `expected "${n}" NOT to match /${re.source}/`).toBe(false);
+    });
   });
 });

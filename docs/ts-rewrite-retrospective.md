@@ -563,3 +563,69 @@ Python 在文件名+祖先深度匹配后，还检查内容 hash：hash 不同�
 教训：**参数顺序和运算符语义是最容易被"看起来差不多"掩盖的错误类型**。类型系统可以防 API 不存在，但挡不住"参数传反"或"`!==` vs `>`"——这些只有逐行摆在一起看才能发现。
 
 **修复验证（2026-03-03）：** 9 项遗留全部修复完成。`tsc --noEmit` 通过，243 测试全绿。同时完成了 `dedup.ts`（585 行）→ `dedup/` 目录拆分（9 文件，最大 144 行）。
+
+---
+
+## 十、第四次审查：独立上下文全模块对比（2026-03-03）
+
+### 10.1 审查方法
+
+用 4 个并行审查代理在独立上下文中分别对比 engine、executor、classify、dedup/moves/scan 四大模块，每个代理逐函数逐分支对照 Python 源码。
+
+### 10.2 P0 — 影响数据安全
+
+| # | 差距 | 影响 |
+|---|------|------|
+| 1 | **Move 失败仍更新 metadata** — `renamePath`/`recordSync` 在 move API 失败时仍执行 | metadata 与云端状态不一致，后续同步可能跳过或误删文件 |
+| 2 | **localMtime 使用 `Date.now()`** — 下载后文件 mtime 被 `utimesSync` 设为 cloudMtime，但 metadata 记录 `Date.now()`  | 下次同步 `localMtimeChanged` 误判为 true，触发无意义的冲突或上传 |
+| 3 | **冲突处理无方向分支** — Python PUSH 时 backup+upload，TS 始终 backup+download | push 模式下冲突文件不上传，数据丢失风险 |
+
+### 10.3 P1 — 影响功能完整性
+
+| # | 差距 | 影响 |
+|---|------|------|
+| 4 | 云端文件未过滤 sync_include/sync_exclude | 过滤仅作用于本地，云端不匹配的文件仍参与同步 |
+| 5 | cleanupStalePaths 在缓存扫描时执行 | 缓存 cloudSnap 不完整 → 误清 metadata |
+| 6 | 移动检测后缺少二次 calibrate | moves 产生的新路径缺少 metadata 基线 |
+| 7 | HASHABLE_EXTS 缺失 .css/.js/.csv | 这些文件不参与 hash warmup 和 refine |
+| 8 | refine 未利用缓存 cloudContentHash | cloudMtime 未变时仍下载云端内容计算 hash |
+| 9 | autoDedup 未接收 hashCache/localFiles | 每次去重重新扫描文件系统和计算哈希 |
+| 10 | ref URL 跳过模式缺少 UNC 路径和通用协议检测 | 去重时可能删掉 UNC 或 Windows 路径引用的文件 |
+
+### 10.4 P2 — 改进项
+
+| # | 差距 |
+|---|------|
+| 11 | calibrate 未设置 createTime |
+| 12 | dedup cloudScore 未优先使用 createTime |
+| 13 | MetadataRecord 缺少 createTime 字段 |
+
+### 10.5 为什么前三次审查没有发现这些
+
+| 盲区 | 原因 |
+|------|------|
+| Move 失败路径 | 前三次只验证"move 是否被调用"和"failedMoves 是否被跟踪"，没有验证 catch 之后 metadata 是否被隔离 |
+| localMtime | 前三次关注"localMtime 是否被记录"，没有关注"记录的值是否正确" |
+| 冲突方向 | 前三次验证"conflict case 是否存在 diff3"，没有验证"非 BOTH 方向的 fallback 行为" |
+| 云端过滤 | 前三次只检查"local scan 接收 filters"，没有检查"cloud scan 也需要 filters" |
+| 缓存扫描 | cleanupStalePaths 是后加的功能，没有考虑缓存 vs 全量扫描的前置条件 |
+
+### 10.6 修复跟踪
+
+| # | 项目 | 优先级 | 状态 |
+|---|------|--------|------|
+| 1 | move 失败隔离 metadata 更新 | P0 | ✅ |
+| 2 | localMtime 改用 readFileMtime() | P0 | ✅ |
+| 3 | 冲突 conflictFallback 按方向分支 | P0 | ✅ |
+| 4 | filterCloudSnap + patternToRegex | P1 | ✅ |
+| 5 | cleanupStalePaths 仅全量扫描后执行 | P1 | ✅ |
+| 6 | moves 后二次 calibrate | P1 | ✅ |
+| 7 | HASHABLE_EXTS 补全 .css/.js/.csv | P1 | ✅ |
+| 8 | refine 缓存 cloudContentHash | P1 | ✅ |
+| 9 | autoDedup 传入 hashCache/localFiles | P1 | ✅ |
+| 10 | ref URL 跳过模式补全 | P1 | ✅ |
+| 11 | calibrate 设置 createTime | P2 | ✅ |
+| 12 | cloudScore 优先 createTime | P2 | ✅ |
+| 13 | MetadataRecord 增加 createTime | P2 | ✅ |
+
+**修复验证：** `tsc --noEmit` 通过，243 测试全绿，0 lint 错误。

@@ -76,6 +76,9 @@ export async function autoDedup(
     localFiles?: Map<string, { path: string; mtime: number; isDir: boolean }>;
   },
 ): Promise<DedupResult> {
+  if (!root || typeof root !== 'string') {
+    throw new Error('autoDedup: root must be a non-empty string');
+  }
   const stats = emptyDedupStats();
 
   const indexOpts: BuildIndexOpts = {

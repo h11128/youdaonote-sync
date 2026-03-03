@@ -1,7 +1,7 @@
 import type { DirId, FileId, NoteDomain } from './common.js';
 
 export interface CloudFile {
-  readonly id: FileId;
+  readonly id: FileId | DirId;
   readonly parentId: DirId;
   readonly name: string;
   readonly isDir: boolean;

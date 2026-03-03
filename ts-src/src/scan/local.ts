@@ -142,7 +142,7 @@ function compileFilter(
   };
 }
 
-function patternToRegex(pattern: string): RegExp {
+export function patternToRegex(pattern: string): RegExp {
   const escaped = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replace(/\*/g, '.*')

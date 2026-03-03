@@ -14,7 +14,8 @@ function extractRefsFromFile(fullPath: string, mdDir: string, root: string): Set
   for (const m of content.matchAll(MD_REF_RE)) {
     const refPath = m[1] ?? m[2];
     if (!refPath) continue;
-    if (/^(https?:|data:|note:|ftp:|mailto:|\/\/)/.test(refPath)) continue;
+    if (/^(https?:|data:|note:|ftp:|mailto:|\/\/|\\\\)/.test(refPath)) continue;
+    if (refPath.includes('://') || (refPath.length > 2 && refPath[2] === ':')) continue;
 
     const abs = join(mdDir, refPath);
     const rel = relative(root, abs).replace(/\\/g, '/');

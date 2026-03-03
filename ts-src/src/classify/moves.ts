@@ -232,7 +232,7 @@ function crossDirMatch(
   const newByName = new Map<string, string[]>();
   for (const np of newPaths) {
     const norm = sanitizeFilename(basename(np)).toLowerCase();
-    pushToMap(newByName, norm as ContentHash, np);
+    pushToMap(newByName, norm, np);
   }
 
   for (const dp of [...deletedPaths]) {

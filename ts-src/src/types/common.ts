@@ -23,3 +23,5 @@ export function asDirId(s: string): DirId {
 export function asContentHash(s: string): ContentHash {
   return s as ContentHash;
 }
+
+export type SyncDirection = 'both' | 'pull' | 'push';

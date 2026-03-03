@@ -22,7 +22,7 @@ export function calibrateMetadata(
     for (const [relPath, cloudFile] of cloudSnap) {
       if (cloudFile.isDir) {
         if (!meta.getDirId(relPath) && cloudFile.id) {
-          meta.setDirInfo(relPath, cloudFile.id as unknown as DirId, cloudFile.parentId);
+          meta.setDirInfo(relPath, cloudFile.id as DirId, cloudFile.parentId);
           calibrated++;
         }
         continue;
@@ -62,6 +62,7 @@ export function calibrateMetadata(
         parentId: cloudFile.parentId,
         domain: cloudFile.domain,
         contentHash: hash,
+        createTime: cloudFile.ctime || 0,
       });
       meta.markSynced(relPath);
       calibrated++;

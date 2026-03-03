@@ -19,6 +19,9 @@ export function buildHashIndex(
   meta: MetadataStore,
   opts?: BuildIndexOpts,
 ): Map<ContentHash, string[]> {
+  if (!root || typeof root !== 'string') {
+    throw new Error('buildHashIndex: root must be a non-empty string');
+  }
   const index = new Map<ContentHash, string[]>();
   const hashCache = opts?.hashCache;
   const allMeta = meta.getAllFiles();

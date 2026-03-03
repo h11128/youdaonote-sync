@@ -172,3 +172,76 @@
 - **store-state 拆片**：store-state-kv.ts（sync_state）、store-sync-log.ts（sync_log）、store-file-base.ts（file_base），store-state.ts 仅 re-export。
 - **api 常量命名**：urls.ts 重命名为 constants.ts。
 - **验证**：`tsc --noEmit` 与 167 个测试通过。
+
+---
+
+## 八、第四轮审查（2026-03-03，含 3 个后续 commit）
+
+> 审查范围：c11f7af（retrospective action items）、684808a（port remaining features）、1e34b45（three-round audit）
+
+### 问题清单
+
+| ID | 严重性 | 问题 | 位置 | 依据 |
+|----|--------|------|------|------|
+| R4-1 | P0 | `writeFileSync(fd)` 后缺少 `closeSync(fd)` — 文件描述符泄漏 | lock.ts:28-31, 51 | 正确性：Node.js writeFileSync 不关闭 fd |
+| R4-2 | P0 | `resolveAllCloud` 统计多计 — `stats.deleted/cloudDeleted` 用 `toRemove.length` 但部分被 protectedRefs 跳过 | dedup/resolve.ts:140-142 | 正确性：stats 与实际行为不一致 |
+| R4-3 | P0 | `CloudFile.id` 类型为 `FileId` 但目录条目实际是 `DirId` — 导致 `as unknown as DirId` 双重转型 | types/scan.ts, calibrate.ts:25, engine.ts:345 | 类型安全 |
+| R4-4 | P1 | `norm as ContentHash` 类型滥用 — 复用 `pushToMap` 时将文件名伪装成 ContentHash | moves.ts:235 | 类型安全 |
+| R4-5 | P1 | IIFE 不可读 — bySize 的 get-or-set 写成一行 IIFE | dedup/resolve.ts:23 | Code quality |
+| R4-6 | P1 | `ExecuteContext.dryRun` 死代码 — engine 在调用 executeAll 前已处理 dryRun，executor 内的检查永远不触发 | executor.ts:38,72-75 | DRY / 死代码 |
+| R4-7 | P1 | engine.ts 581 行超限，云端缓存扫描是独立职责 | engine.ts | Single responsibility |
+| R4-8 | P2 | `buildHashIndex`、`autoDedup` 缺 root 非空校验 | dedup/hash-index.ts, dedup/execute.ts | Specify preconditions |
+
+### 修复记录
+
+| 问题 | 修复方式 | 状态 |
+|------|----------|------|
+| R4-1 | lock.ts：两处 `writeFileSync(fd, ...)` 后加 `closeSync(fd)` | ✅ |
+| R4-2 | dedup/resolve.ts `resolveAllCloud`：`stats.deleted/cloudDeleted` 改用 `actions.length`（已排除 protectedRefs） | ✅ |
+| R4-3 | types/scan.ts：`CloudFile.id` 改为 `FileId \| DirId`；scan/cloud.ts 按 `isDir` 区分品牌类型；calibrate.ts、engine.ts 去掉 `as unknown as DirId`；executor.ts 文件操作处加 `as FileId` | ✅ |
+| R4-4 | moves.ts：去掉 `norm as ContentHash`，`pushToMap` 直接用 `string` 类型推导 | ✅ |
+| R4-5 | dedup/resolve.ts：IIFE 改为标准 `let list = bySize.get(sz); if (!list) { list = []; bySize.set(sz, list); }` | ✅ |
+| R4-6 | executor.ts：删除 `ExecuteContext.dryRun` 字段、`countAction` 函数和 `executeAll` 内的 dryRun 分支 | ✅ |
+| R4-7 | 提取 scan/cloud-cache.ts（~190 行）：tryCachedCloudScan、saveScanVersion、fetchCurrentVersion、loadCloudFilesFromCache、applyIncrementalChanges、trySeedFromDesktop；engine.ts 581→396 行 | ✅ |
+| R4-8 | dedup/hash-index.ts `buildHashIndex` 和 dedup/execute.ts `autoDedup` 开头加 root 非空校验 | ✅ |
+
+### 附加：修复工作目录中的半成品变更
+
+审查过程中发现 executor.ts 和 engine.ts 有未完成的预存修改（direction-aware conflict、readFileMtime、moveFailed、filterCloudSnap），编译不过。一并修复：
+
+| 问题 | 修复方式 | 状态 |
+|------|----------|------|
+| `readFileMtime` 函数被调用但未定义 | 使用预存版本（statSync mtime + fallback），删除重复定义 | ✅ |
+| `conflictFallback` 函数被调用但未定义 | 保留预存的完整实现（direction-aware: push=upload, pull/both=backup+download） | ✅ |
+| `SyncDirection` 从 engine.ts 导入会造成循环依赖 | 移至 types/common.ts，engine.ts re-export | ✅ |
+| `filterCloudSnap` 函数被调用但未定义 | 实现：对 cloudSnap 按 include/exclude 过滤，复用 scanLocal 的 glob 逻辑 | ✅ |
+| `didFullScan` 控制 cleanupStalePaths 只在完整扫描后执行 | 保留预存逻辑（缓存扫描不完整时不应清理 stale paths） | ✅ |
+| move 方向标记从 'pull' 改为 'push' | 保留预存修改（本地 move 同步到云端是 push） | ✅ |
+| move 失败不应更新 metadata | 保留预存的 `moveFailed` 逻辑 | ✅ |
+| executor.ts 死导入 `SyncDirection from engine` | 删除，改从 types/common.ts 导入 | ✅ |
+
+### 验证
+
+- `tsc --noEmit`：通过
+- `vitest run`：243 个测试通过（与修复前一致）
+
+### SOLID 对照
+
+| 原则 | 变化 | 结论 |
+|------|------|------|
+| **S** | engine.ts 拆出 cloud-cache.ts，396 行 vs 581 行 | ✅ 云端缓存扫描独立 |
+| **O** | 无变化 | ✅ |
+| **L** | 无继承 | ✅ |
+| **I** | 删除 ExecuteContext.dryRun 死字段；CloudCacheDeps 窄接口 | ✅ 接口更精简 |
+| **D** | cloud-cache.ts 依赖 CloudCacheDeps 抽象（不直接依赖 YoudaoNoteApi） | ✅ |
+
+### Dev Practice 对照
+
+| 条款 | 变化 | 结论 |
+|------|------|------|
+| **类型安全** | 消除 3 处 `as unknown as`、1 处类型滥用 | ✅ |
+| **资源管理** | 修复 fd 泄漏 | ✅ |
+| **正确性** | 修复 stats 多计 | ✅ |
+| **前置条件** | buildHashIndex、autoDedup 加 root 校验 | ✅ |
+| **文件管理** | 新增 scan/cloud-cache.ts — 审计明确建议拆文件 | ✅ |
+| **DRY** | 删除 executor 死代码 | ✅ |

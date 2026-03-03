@@ -1,4 +1,4 @@
-import { openSync, writeFileSync, readFileSync, unlinkSync, existsSync, constants } from 'node:fs';
+import { openSync, writeFileSync, readFileSync, unlinkSync, existsSync, closeSync, constants } from 'node:fs';
 import { join } from 'node:path';
 
 const STALE_THRESHOLD_MS = 3600 * 1000; // 1 hour
@@ -28,7 +28,7 @@ export class SyncLock {
       const fd = openSync(this.lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
       const info: LockInfo = { pid: process.pid, started: Date.now() };
       writeFileSync(fd, JSON.stringify(info));
-      // closeSync is handled by writeFileSync when given a fd
+      closeSync(fd);
       return true;
     } catch (e: unknown) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') return false;
@@ -51,6 +51,7 @@ export class SyncLock {
       const fd = openSync(this.lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
       const info: LockInfo = { pid: process.pid, started: Date.now() };
       writeFileSync(fd, JSON.stringify(info));
+      closeSync(fd);
       return true;
     } catch {
       return false;

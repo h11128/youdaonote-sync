@@ -17,6 +17,7 @@ export function rowToMetadata(row: Record<string, unknown>): MetadataRecord {
     domain: (row['domain'] as number ?? 1) as NoteDomain,
     lastSyncAt: (row['last_sync_at'] as number) ?? 0,
     originalDomain: (row['original_domain'] as number ?? null) as NoteDomain | null,
+    createTime: (row['create_time'] as number) ?? 0,
   };
 }
 

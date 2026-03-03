@@ -10,4 +10,5 @@ export interface MetadataRecord {
   readonly domain: NoteDomain;
   readonly lastSyncAt: number;
   readonly originalDomain: NoteDomain | null;
+  readonly createTime: number;
 }

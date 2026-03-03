@@ -1,5 +1,4 @@
-import type { DirId, FileId } from '../types/common.js';
-import type { NoteDomain } from '../types/common.js';
+import type { DirId, FileId, NoteDomain } from '../types/common.js';
 import type { DirInfoByIdResponse } from '../types/dir.js';
 import type { CloudFile } from '../types/scan.js';
 import { mapCloudName } from './name.js';
@@ -103,7 +102,7 @@ async function fetchDir(
     const eid = fe.id;
 
     const cloudFile: CloudFile = {
-      id: (isDir ? eid : eid) as FileId,
+      id: isDir ? (eid as DirId) : (eid as FileId),
       parentId: dirId,
       name,
       isDir,

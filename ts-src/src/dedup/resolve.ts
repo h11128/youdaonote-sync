@@ -20,7 +20,9 @@ export function classifyDuplicates(
     for (const p of paths) {
       try {
         const sz = statSync(join(root, p)).size;
-        (bySize.get(sz) ?? (() => { const a: string[] = []; bySize.set(sz, a); return a; })()).push(p);
+        let list = bySize.get(sz);
+        if (!list) { list = []; bySize.set(sz, list); }
+        list.push(p);
       } catch {
         stats.skipped++;
       }
@@ -48,7 +50,10 @@ function cloudScore(path: string, meta: MetadataStore, root: string): [number, n
 
   let ctime = 0;
   const info = meta.getFileInfo(path);
-  if (info) ctime = info.cloudMtime || info.localMtime || 0;
+  if (info) {
+    ctime = info.createTime || 0;
+    if (ctime === 0) ctime = info.cloudMtime || info.localMtime || 0;
+  }
   if (ctime === 0) {
     try { ctime = Math.floor(statSync(join(root, path)).mtimeMs / 1000); } catch { /* */ }
   }
@@ -138,7 +143,7 @@ function resolveAllCloud(
   }
 
   stats.kept++;
-  stats.deleted += toRemove.length;
-  stats.cloudDeleted += toRemove.length;
+  stats.deleted += actions.length;
+  stats.cloudDeleted += actions.length;
   return actions;
 }
