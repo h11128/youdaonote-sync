@@ -11,6 +11,7 @@ import { uploadFile, ensureParentDir } from './upload.js';
 import { backupFile } from './conflict.js';
 import { threeWayMerge } from '../algo/merge.js';
 import { retryWithBackoff } from '../api/retry.js';
+import { getFileContentFromGit } from '../git.js';
 
 const MERGEABLE_EXTS = new Set(['.md', '.txt']);
 
@@ -22,10 +23,16 @@ export interface SyncStats {
   errors: number;
   moved: number;
   merged: number;
+  readonly changedPaths: string[];
+  readonly failedMoves: Array<{ oldPath: string; newPath: string; fileId: FileId; domain: number }>;
+  readonly uploadedPaths: Set<string>;
 }
 
 export function emptyStats(): SyncStats {
-  return { downloaded: 0, uploaded: 0, skipped: 0, conflicts: 0, errors: 0, moved: 0, merged: 0 };
+  return {
+    downloaded: 0, uploaded: 0, skipped: 0, conflicts: 0, errors: 0, moved: 0, merged: 0,
+    changedPaths: [], failedMoves: [], uploadedPaths: new Set(),
+  };
 }
 
 export interface ExecuteContext {
@@ -119,11 +126,30 @@ async function executeSingle(
         action: 'download',
         direction: 'pull',
       });
+
+      // Save base for diff3 merge (domain=0 = note XML format)
+      if (cloudFile.domain === 0 && result.contentHash && result.rawData) {
+        meta.saveBaseContent(relPath, Buffer.from(result.rawData), result.contentHash);
+      }
+
       stats.downloaded++;
+      stats.changedPaths.push(localPath);
       break;
     }
 
     case 'upload': {
+      // Skip upload if same content already exists in cloud (dedup)
+      const uploadHash = ctx.hashFn
+        ? ctx.hashFn(readFileSync(localPath), localPath)
+        : null;
+      if (uploadHash) {
+        const existing = meta.findCloudFileByHash(uploadHash, relPath);
+        if (existing) {
+          stats.skipped++;
+          break;
+        }
+      }
+
       const existingFileId = metaRecord?.fileId as FileId | undefined;
       const ulOpts: { existingFileId?: FileId; hashFn?: (data: Uint8Array, path: string) => ContentHash | null } = {};
       if (existingFileId) ulOpts.existingFileId = existingFileId;
@@ -133,10 +159,13 @@ async function executeSingle(
         fileId: result.fileId,
         cloudMtime: result.cloudMtime,
         localMtime: Math.floor(Date.now() / 1000),
+        contentHash: uploadHash,
         action: 'upload',
         direction: 'push',
       });
       stats.uploaded++;
+      stats.changedPaths.push(localPath);
+      stats.uploadedPaths.add(relPath);
       break;
     }
 
@@ -190,8 +219,12 @@ async function executeSingle(
             await retryWithBackoff(() => api.renameFile(oldFileId, newName, cloudFile.domain));
           }
         } catch {
-          // Cloud move failed — fallback: just rename in metadata.
-          // The file will be uploaded as new + old deleted on next sync.
+          stats.failedMoves.push({
+            oldPath: oldPath,
+            newPath: relPath,
+            fileId: oldFileId,
+            domain: cloudFile.domain,
+          });
         }
       }
 
@@ -234,10 +267,15 @@ async function tryDiff3Merge(
   if (!MERGEABLE_EXTS.has(ext)) return false;
   if (!existsSync(localPath)) return false;
 
-  const { api, meta, rootDirId } = ctx;
+  const { api, meta, rootDirId, localDir } = ctx;
 
-  const baseRecord = meta.getBaseContent(relPath);
-  if (!baseRecord) return false;
+  // Try git history first, then file_base table (matches Python _try_diff3_merge)
+  let baseBytes: Buffer | null = getFileContentFromGit(localDir, relPath);
+  if (!baseBytes) {
+    const baseRecord = meta.getBaseContent(relPath);
+    if (!baseRecord) return false;
+    baseBytes = baseRecord.content;
+  }
 
   let theirs: string;
   try {
@@ -247,7 +285,7 @@ async function tryDiff3Merge(
     return false;
   }
 
-  const base = baseRecord.content.toString('utf-8');
+  const base = baseBytes.toString('utf-8');
   const ours = readFileSync(localPath, 'utf-8');
 
   const result = threeWayMerge(base, ours, theirs);
@@ -283,4 +321,24 @@ async function tryDiff3Merge(
   }
 
   return true;
+}
+
+/**
+ * Fallback for failed cloud moves: delete old cloud files if the new path was uploaded.
+ * Matches Python _fallback_delete_old_files.
+ */
+export async function fallbackDeleteOldFiles(
+  stats: SyncStats,
+  api: { deleteFile(fileId: FileId): Promise<unknown> },
+  meta: MetadataStore,
+): Promise<void> {
+  for (const fm of stats.failedMoves) {
+    if (!stats.uploadedPaths.has(fm.newPath)) continue;
+    try {
+      await api.deleteFile(fm.fileId);
+      meta.removeFileInfo(fm.oldPath);
+    } catch {
+      // best-effort cleanup
+    }
+  }
 }

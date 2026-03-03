@@ -72,7 +72,7 @@ export function detectMoves(
   detectCrossDirectory(
     cloudDeletedPaths, cloudNewPaths,
     localDeletedPaths, localNewPaths,
-    classified, result,
+    classified, meta, result,
   );
 
   return result;
@@ -111,20 +111,19 @@ function detectByFileId(
     cloudNewPaths.delete(cloudNewPath);
   }
 
-  // Case B: cloud-only file has file_id in metadata → local moved it
+  // Case B: cloud-deleted file has file_id in metadata;
+  // if that file_id now maps to a localNew path, this is a local-side move.
   for (const cloudPath of [...cloudDeletedPaths]) {
-    const metaPath = meta.findByFileId(
-      (classified.get(cloudPath) as ClassifiedEntry & { state: { fileId?: FileId } })
-        ?.state as unknown as FileId,
-    );
-    // This case is less common; the primary case is above.
-    // Skip if already matched.
-    if (metaPath && localNewPaths.has(metaPath)) {
-      result.set(metaPath, { kind: 'moved', oldPath: cloudPath });
-      result.set(cloudPath, { kind: 'gone' });
-      cloudDeletedPaths.delete(cloudPath);
-      localNewPaths.delete(metaPath);
-    }
+    const record = meta.getFileInfo(cloudPath);
+    if (!record?.fileId) continue;
+
+    const localPath = meta.findByFileId(record.fileId);
+    if (!localPath || !localNewPaths.has(localPath)) continue;
+
+    result.set(localPath, { kind: 'moved', oldPath: cloudPath });
+    result.set(cloudPath, { kind: 'gone' });
+    cloudDeletedPaths.delete(cloudPath);
+    localNewPaths.delete(localPath);
   }
 }
 
@@ -181,16 +180,18 @@ function detectCrossDirectory(
   localDeletedPaths: Set<string>,
   localNewPaths: Set<string>,
   classified: ReadonlyMap<string, ClassifiedEntry>,
+  meta: MetadataStore | undefined,
   result: Map<string, FileState>,
 ): void {
-  crossDirMatch(cloudDeletedPaths, cloudNewPaths, classified, result);
-  crossDirMatch(localDeletedPaths, localNewPaths, classified, result);
+  crossDirMatch(cloudDeletedPaths, cloudNewPaths, classified, meta, result);
+  crossDirMatch(localDeletedPaths, localNewPaths, classified, meta, result);
 }
 
 function crossDirMatch(
   deletedPaths: Set<string>,
   newPaths: Set<string>,
   classified: ReadonlyMap<string, ClassifiedEntry>,
+  meta: MetadataStore | undefined,
   result: Map<string, FileState>,
 ): void {
   if (deletedPaths.size === 0 || newPaths.size === 0) return;
@@ -252,6 +253,14 @@ function crossDirMatch(
     }
 
     if (bestPath && bestDepth >= 1) {
+      const dpHash = classified.get(dp)?.hash;
+      const bpHash = classified.get(bestPath)?.hash;
+      if (dpHash && bpHash && dpHash !== bpHash) {
+        // Content differs — only pair if the cloud file was previously synced (has file_id),
+        // indicating "moved + edited" rather than two unrelated files with the same name.
+        const dpMeta = meta?.getFileInfo(dp);
+        if (!dpMeta?.fileId) continue;
+      }
       result.set(bestPath, { kind: 'moved', oldPath: dp });
       result.set(dp, { kind: 'gone' });
       deletedPaths.delete(dp);

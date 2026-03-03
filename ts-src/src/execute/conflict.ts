@@ -15,8 +15,9 @@ export function backupFile(filePath: string): string | null {
     String(now.getDate()).padStart(2, '0') + '_' +
     String(now.getHours()).padStart(2, '0') +
     String(now.getMinutes()).padStart(2, '0') +
-    String(now.getSeconds()).padStart(2, '0') +
-    String(now.getMilliseconds()).padStart(3, '0');
+    String(now.getSeconds()).padStart(2, '0') + '_' +
+    String(now.getMilliseconds()).padStart(3, '0') +
+    String(Math.floor(Math.random() * 1000)).padStart(3, '0');
 
   const ext = extname(filePath);
   const base = filePath.slice(0, -ext.length || undefined);

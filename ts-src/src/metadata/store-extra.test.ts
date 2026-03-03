@@ -109,3 +109,58 @@ describe('batch', () => {
     expect(meta.getFileInfo('c.md')).toBeNull();
   });
 });
+
+describe('findCloudFileByHash', () => {
+  it('finds cloud file with matching hash', () => {
+    meta.setFileInfo('a.md', { fileId: 'WEB1' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc123' as ContentHash });
+    expect(meta.findCloudFileByHash('abc123' as ContentHash)).toBe('a.md');
+  });
+
+  it('returns null when no match', () => {
+    meta.setFileInfo('a.md', { fileId: 'WEB1' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc' as ContentHash });
+    expect(meta.findCloudFileByHash('zzz' as ContentHash)).toBeNull();
+  });
+
+  it('excludes self', () => {
+    meta.setFileInfo('a.md', { fileId: 'WEB1' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc' as ContentHash });
+    expect(meta.findCloudFileByHash('abc' as ContentHash, 'a.md')).toBeNull();
+  });
+
+  it('excludes self but returns other match', () => {
+    meta.setFileInfo('a.md', { fileId: 'WEB1' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc' as ContentHash });
+    meta.setFileInfo('b.md', { fileId: 'WEB2' as FileId, cloudMtime: 2, localMtime: 2, contentHash: 'abc' as ContentHash });
+    const result = meta.findCloudFileByHash('abc' as ContentHash, 'a.md');
+    expect(result).toBe('b.md');
+  });
+
+  it('ignores files without file_id', () => {
+    meta.setFileInfo('local.md', { fileId: '' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc' as ContentHash });
+    expect(meta.findCloudFileByHash('abc' as ContentHash)).toBeNull();
+  });
+
+  it('returns null for null hash', () => {
+    expect(meta.findCloudFileByHash(null as unknown as ContentHash)).toBeNull();
+  });
+});
+
+describe('file_refs', () => {
+  it('roundtrip set and get', () => {
+    meta.setFileRefs('doc.md', ['img/a.png', 'img/b.jpg']);
+    const refs = meta.getFileRefs('doc.md');
+    expect(refs.sort()).toEqual(['img/a.png', 'img/b.jpg']);
+  });
+
+  it('replace refs', () => {
+    meta.setFileRefs('doc.md', ['old.png']);
+    meta.setFileRefs('doc.md', ['new.png']);
+    expect(meta.getFileRefs('doc.md')).toEqual(['new.png']);
+  });
+
+  it('getAllFileRefs', () => {
+    meta.setFileRefs('a.md', ['x.png']);
+    meta.setFileRefs('b.md', ['y.png', 'z.png']);
+    const all = meta.getAllFileRefs();
+    expect(all.has('a.md')).toBe(true);
+    expect(all.get('b.md')?.length).toBe(2);
+  });
+});

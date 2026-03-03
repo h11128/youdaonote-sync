@@ -74,7 +74,10 @@ export function createCli(): Command {
         console.log(`\nSync complete: ↓${s.downloaded} ↑${s.uploaded} ⚡${s.conflicts} →${s.moved} (${s.skipped} skipped, ${s.errors} errors)`);
 
         if (opts.git && !opts.dryRun) {
-          gitAutoCommit(config.local_dir);
+          gitAutoCommit(config.local_dir, {
+            changedPaths: [...s.changedPaths],
+            stats: { downloaded: s.downloaded, uploaded: s.uploaded, conflicts: s.conflicts },
+          });
         }
       } finally {
         engine.close();

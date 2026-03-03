@@ -10,4 +10,7 @@ export {
   getBaseContent,
   removeBaseContent,
   getAllBaseContentPaths,
+  getFileRefs,
+  setFileRefs,
+  getAllFileRefs,
 } from './store-file-base.js';

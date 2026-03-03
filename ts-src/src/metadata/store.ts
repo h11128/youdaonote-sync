@@ -177,6 +177,10 @@ export class MetadataStore {
     return storeFiles.findByFileId(this.db, fileId);
   }
 
+  findCloudFileByHash(contentHash: ContentHash, excludePath?: string): string | null {
+    return storeFiles.findCloudFileByHash(this.db, contentHash, excludePath ? this.normalizePath(excludePath) : undefined);
+  }
+
   findByDirId(dirId: DirId): string | null {
     return storeDirs.findByDirId(this.db, dirId);
   }
@@ -227,6 +231,18 @@ export class MetadataStore {
 
   removeBaseContent(localPath: string): void {
     storeState.removeBaseContent(this.db, this.normalizePath(localPath));
+  }
+
+  getFileRefs(sourcePath: string): string[] {
+    return storeState.getFileRefs(this.db, this.normalizePath(sourcePath));
+  }
+
+  setFileRefs(sourcePath: string, refs: string[]): void {
+    storeState.setFileRefs(this.db, this.normalizePath(sourcePath), refs);
+  }
+
+  getAllFileRefs(): Map<string, string[]> {
+    return storeState.getAllFileRefs(this.db);
   }
 
   // ========== Batch operations ==========

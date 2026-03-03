@@ -7,7 +7,7 @@
 import type { MetadataStore } from '../metadata/store.js';
 import type { CloudFile } from '../types/scan.js';
 import type { LocalFile } from '../types/scan.js';
-import type { ContentHash, FileId } from '../types/common.js';
+import type { ContentHash, DirId, FileId } from '../types/common.js';
 import { computeContentHashFromFile } from '../hash.js';
 
 export function calibrateMetadata(
@@ -22,7 +22,7 @@ export function calibrateMetadata(
     for (const [relPath, cloudFile] of cloudSnap) {
       if (cloudFile.isDir) {
         if (!meta.getDirId(relPath) && cloudFile.id) {
-          meta.setDirInfo(relPath, cloudFile.parentId, cloudFile.parentId);
+          meta.setDirInfo(relPath, cloudFile.id as unknown as DirId, cloudFile.parentId);
           calibrated++;
         }
         continue;

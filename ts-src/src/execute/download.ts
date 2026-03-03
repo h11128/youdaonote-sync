@@ -1,5 +1,5 @@
-import { writeFileSync, mkdirSync, utimesSync } from 'node:fs';
-import { dirname, extname } from 'node:path';
+import { writeFileSync, mkdirSync, utimesSync, renameSync, unlinkSync } from 'node:fs';
+import { dirname, extname, join } from 'node:path';
 import type { YoudaoNoteApi } from '../api/client.js';
 import type { FileId, ContentHash } from '../types/common.js';
 import { xmlBytesToMarkdown } from '../convert/xml-to-md.js';
@@ -40,6 +40,7 @@ export interface DownloadResult {
   readonly localPath: string;
   readonly fileType: FileType;
   readonly contentHash: ContentHash | null;
+  readonly rawData: Uint8Array;
 }
 
 /**
@@ -68,12 +69,21 @@ export async function downloadFile(
   const fileType = detectFileType(data, ext);
   const markdown = convertToMarkdown(data, fileType);
 
-  mkdirSync(dirname(localPath), { recursive: true });
+  const dir = dirname(localPath);
+  mkdirSync(dir, { recursive: true });
 
-  if (markdown !== null) {
-    writeFileSync(localPath, markdown, 'utf-8');
-  } else {
-    writeFileSync(localPath, data);
+  // Atomic write: tmp file → rename, so interrupted downloads don't leave partial files
+  const tmpPath = join(dir, `.dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp`);
+  try {
+    if (markdown !== null) {
+      writeFileSync(tmpPath, markdown, 'utf-8');
+    } else {
+      writeFileSync(tmpPath, data);
+    }
+    renameSync(tmpPath, localPath);
+  } catch (err) {
+    try { unlinkSync(tmpPath); } catch { /* cleanup best-effort */ }
+    throw err;
   }
 
   if (opts?.cloudMtime && opts.cloudMtime > 0) {
@@ -88,5 +98,5 @@ export async function downloadFile(
     : data;
   const contentHash = opts?.hashFn?.(contentBytes, localPath) ?? null;
 
-  return { localPath, fileType, contentHash };
+  return { localPath, fileType, contentHash, rawData: data };
 }

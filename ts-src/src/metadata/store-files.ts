@@ -140,6 +140,18 @@ export function findByFileId(db: Database.Database, fileId: FileId): string | nu
   return row?.path ?? null;
 }
 
+export function findCloudFileByHash(
+  db: Database.Database,
+  contentHash: ContentHash,
+  excludePath?: string,
+): string | null {
+  if (!contentHash) return null;
+  const row = db.prepare(
+    "SELECT path FROM files WHERE content_hash = ? AND file_id != '' AND path != ? LIMIT 1",
+  ).get(contentHash, excludePath ?? '') as { path: string } | undefined;
+  return row?.path ?? null;
+}
+
 export function updateContentHash(db: Database.Database, path: string, contentHash: ContentHash): void {
   db.prepare('UPDATE files SET content_hash = ? WHERE path = ?').run(contentHash || '', path);
 }

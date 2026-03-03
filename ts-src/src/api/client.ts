@@ -87,7 +87,7 @@ export class YoudaoNoteApi {
 
     let resp = await fetch(url, fetchOpts);
 
-    if (this.isAuthError(resp) && this.refreshSession()) {
+    if (await this.isAuthError(resp) && this.refreshSession()) {
       url = this.refreshUrl(url);
       if (body instanceof URLSearchParams && body.has('cstk') && this.cstk) {
         body.set('cstk', this.cstk);
@@ -112,7 +112,7 @@ export class YoudaoNoteApi {
 
     let resp = await fetch(url, { headers });
 
-    if (this.isAuthError(resp) && this.refreshSession()) {
+    if (await this.isAuthError(resp) && this.refreshSession()) {
       url = this.refreshUrl(url);
       headers['Cookie'] = this.cookieHeader;
       resp = await fetch(url, { headers });
@@ -124,8 +124,14 @@ export class YoudaoNoteApi {
     return resp;
   }
 
-  private isAuthError(resp: Response): boolean {
+  private async isAuthError(resp: Response): Promise<boolean> {
     if (resp.status === 401 || resp.status === 403) return true;
+    if (resp.status === 500) {
+      try {
+        const body = await resp.clone().text();
+        if (body.includes('error=207') || body.includes('AUTHENTICATION_FAILURE')) return true;
+      } catch { /* ignore read errors */ }
+    }
     return false;
   }
 

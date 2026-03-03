@@ -3,7 +3,7 @@ export type { SyncEngineConfig, SyncResult } from './engine.js';
 export { SyncWatcher } from './watcher.js';
 export { createCli } from './cli.js';
 export { gitAutoCommit, gitInit } from './git.js';
-export { findDuplicates, removeDuplicateMetadata } from './dedup.js';
+export { findDuplicates, removeDuplicateMetadata } from './dedup/index.js';
 export { computeContentHashFromBytes, computeContentHashFromFile } from './hash.js';
 
 // Algorithm modules

@@ -258,3 +258,308 @@ Review 的 checklist 全是结构性的，没有"功能对等性"这一维度。
 - listRecent API 端点
 
 防止再次发生的 10 项改进措施已全部执行——不靠记忆，靠清单。
+
+---
+
+## 八、二次审查：第一次复盘本身的遗漏（2026-03-03）
+
+> 触发事件：对全部 14 个 ahead commit（ca4e19c → 684808a）做逐函数级 Python↔TS 对比，发现第一次复盘声称"所有遗漏功能已全部移植完成"，实际仍存在 7 个实质性功能差距。
+
+### 8.1 仍然缺失的功能
+
+#### P0 — 影响数据安全
+
+| # | 差距 | Python 实现 | TS 现状 | 影响 |
+|---|------|------------|---------|------|
+| 1 | **去重数据源不同** | `build_all_indexes()` 扫描文件系统、计算真实文件哈希，同时接受 `hash_cache` 和 `local_files` 参数 | `buildHashIndex(meta)` 只从 metadata 已有的 `content_hash` 字段构建索引 | 本地独有文件、新增未同步文件、移动产生的孤立副本——全部无法被去重发现 |
+| 2 | **Markdown 引用保护正则不完整** | `_MD_REF_RE = r'!?\[...\]\((...)\)'` 匹配图片 `![]()`  **和** 链接 `[]()` | `MD_REF_RE = /!\[...\]\((...)\)/` 只匹配图片 `![]()` | 去重时可能删掉 `[文本](本地文件.md)` 引用的文件，造成断链 |
+| 3 | **上传前内容去重缺失** | `engine.py` 上传前调用 `metadata.find_cloud_file_by_hash()`，发现云端已有相同内容则跳过上传 | 无此检查，每次都上传 | 冗余上传 + 可能在云端产生内容重复的文件 |
+
+#### P1 — 影响合并能力
+
+| # | 差距 | Python 实现 | TS 现状 | 影响 |
+|---|------|------------|---------|------|
+| 4 | **diff3 合并缺少 git 回退** | `_try_diff3_merge()` 先查 `git.get_file_content(rel_path, "HEAD")`，找不到再查 `file_base` 表 | 只查 `meta.getBaseContent()` | 文件从未下载过（无 file_base 记录）时无法做三方合并，直接回退到 backup+download |
+| 5 | **下载时不保存 base** | domain=0 下载后 `_save_base(metadata, rel_path, raw, content_hash)` 存入 `file_base` 表 | 下载后不保存 base | 减少了后续能做 diff3 的场景 |
+
+#### P2 — 影响功能完整性
+
+| # | 差距 | Python 实现 | TS 现状 | 影响 |
+|---|------|------------|---------|------|
+| 6 | **云端移动失败回退缺失** | `_fallback_delete_old_files()` 记录 `_failed_moves`；上传新文件后删除旧云端文件 | move 失败只更新 metadata，不做 upload+delete 回退 | move API 失败时旧云端文件残留 |
+| 7 | **git commit 粒度过粗** | `commit_sync()` 只 `git add --` 本次变更文件 + `git add -u` 去重删除文件，附 `--no-verify` | `git add -A` 提交仓库内所有变更 | 可能把用户手动修改的无关文件也一起提交 |
+
+#### 其他差异（P3，可后续处理）
+
+| 差距 | 说明 |
+|------|------|
+| `get_file_refs` / `set_file_refs` 缺失 | Python 在 metadata 中缓存 md 文件的引用关系做增量去重（避免每次重新解析），TS 每次全量扫描 |
+| `diagnose_dryrun()` 缺失 | Python 在 dry-run 结束时检测可疑 UPLOAD（metadata 有记录但 file_id 为空等），TS 无此诊断 |
+| `find_cloud_file_by_hash()` metadata 方法缺失 | Python metadata 有按 content_hash 反查云端文件的方法（10 个测试覆盖），TS MetadataStore 无此方法 |
+| 备份文件名缺少微秒 | Python `backup_file()` 时间戳含 `_%f`（微秒），TS 不含，快速连续备份可能覆盖 |
+| CLI 参数不完整 | Python 有 `--dir`、`--push`、`--pull`、`--no-dedup`；TS 只能通过 config 控制 |
+| CLI 子命令不完整 | Python 有 `pull`、`list`、`search`、`download`、`gui`；TS 只有 `sync` + `watch` |
+
+### 8.2 为什么第一次复盘没有发现这些
+
+第一次复盘（本文 §1–§7）确实发现并修复了一批严重遗漏（refine 未接入、merge 未调用、heal 未调用、哈希算法不一致等），但 **它的审查方法本身有盲区**，导致第二层遗漏漏网。
+
+#### 盲区 1：审查粒度停在"模块是否被调用"，没有深入到"调用时行为是否等价"
+
+第一次复盘的核心发现模式是：
+
+> "TS 有 refine.ts 但 engine 没调用"——接线遗漏
+
+修复方式是：在 engine 中加调用。但修复后没有逐行对比 Python engine 中 **同一个步骤周围的辅助逻辑**。例如：
+
+- Python 的 `_process_download_item()` 在下载后有一段 `if raw and item.domain == 0: _save_base(...)` ——这不是一个独立模块，而是嵌在下载流程中的 3 行代码。第一次复盘只关注"download 被调用了吗？"，没有关注"download 之后做了哪些附加操作？"
+- Python 的 `_process_upload_item()` 在上传前有 `find_cloud_file_by_hash()` 去重——同样是嵌在上传流程中的 5 行代码。
+
+**根本问题：** 复盘的检查清单是模块级的（"heal 调用了吗？refine 调用了吗？"），而遗漏发生在函数内部的分支级别。
+
+#### 盲区 2：去重模块被标记为"✅ 已完成"但只对齐了接口签名，没有对齐数据来源
+
+第一次复盘 §4 写道：
+
+> "完整去重 | autoDedup: 云端删除 + 碰撞检测(size) + 资源引用保护 + 评分保留最佳版本 | ✅ 已完成"
+
+这些功能确实都实现了。但 `autoDedup` 的输入来源完全不同：
+
+- Python：`build_all_indexes(root, metadata, hash_cache, local_files)` → 扫描文件系统 + 使用同步时已计算的 hash cache
+- TS：`buildHashIndex(meta)` → 只读 metadata 表
+
+功能点的 checklist 只检查"有没有云端删除 / 碰撞检测 / 引用保护 / 评分"，没有检查"去重用的文件索引从哪来、覆盖范围是否一致"。
+
+#### 盲区 3：正则表达式这类细节不在任何 checklist 中
+
+`_MD_REF_RE` 中 `!?` 和 `!` 的区别，是一个字符的差异。第一次复盘的 §5.3 功能对等性 checklist 写的是：
+
+> "哈希/加密算法与旧系统一致，或有文档说明为什么不同"
+
+但没有一条是"正则表达式与旧系统一致"。这类"看起来正确但语义有微妙差别"的代码，只有逐行对比才能发现。
+
+#### 盲区 4：git helper 被当作"工具"而不是"功能"
+
+Python 的 `GitHelper` 有两个能力：`commit_sync`（选择性暂存）和 `get_file_content`（从 git 历史取 base）。TS 的 `git.ts` 只实现了 `gitAutoCommit`（`git add -A`）。
+
+第一次复盘的移植矩阵关注的是同步核心流程（heal → scan → classify → refine → execute），git helper 被归类为"辅助工具"没有出现在矩阵中。但 `get_file_content` 是 diff3 合并链路的关键一环，`commit_sync` 的选择性暂存直接影响用户数据。
+
+### 8.3 为什么改进措施没有阻止这些遗漏
+
+第一次复盘制定了 5 项改进措施（§5.1–§5.5），全部标记为"✅ 已执行"。逐项检查为什么它们没能拦住第二批遗漏：
+
+| 措施 | 设计意图 | 为什么没生效 |
+|------|---------|-------------|
+| §5.1 功能移植清单 | 列出所有 Python 功能 | 清单是模块/函数级的，嵌在函数内部的 3-5 行分支逻辑不会作为独立条目出现 |
+| §5.2 逐功能提交 | 每个 commit 包含完整链路 | 确实让"模块未被调用"不再发生，但没有验证"调用后的行为是否一致" |
+| §5.3 功能对等性 checklist | Review 时检查旧系统功能 | Checklist 的 4 条全部是模块/步骤级别，没有"对比函数内部的分支和边界处理" |
+| §5.4 集成冒烟测试 | 验证调用链完整性 | 只验证"函数被调用了"，不验证"函数的行为和 Python 一致" |
+| §5.5 临时方案 TODO | 防止临时代码被遗忘 | 本次遗漏不是临时方案，是"以为已经实现但其实少了一半" |
+
+**总结：所有改进措施的防御层级都是"模块/函数是否存在且被调用"，而遗漏发生在"函数内部的行为是否完整"这个更细的层级。**
+
+### 8.4 根本原因
+
+第一次复盘的根本原因总结是正确的：
+
+> "重写被当作'写新代码'而不是'移植旧功能'来执行。"
+
+但第一次复盘的修复方式也重复了同样的思维模式：**修复是面向"我们缺少哪些模块"而不是面向"每一行 Python 代码在 TS 中有没有对应"。** 复盘检查了模块是否存在、是否被调用、是否有测试，但没有做 **逐函数的行为等价性对比**。
+
+换一种说法：
+
+- 第一次遗漏的模式是 **"模块写了但没接线"** → 修复方式是检查接线
+- 第二次遗漏的模式是 **"接线了但行为不完整"** → 需要的是逐行对比
+
+每次修复只向下深入一层，而不是一次性做到最底层。
+
+### 8.5 如何确保不再遗漏
+
+以下措施针对 §8.3 暴露的防御盲区，补充到更细的粒度。
+
+#### 8.5.1 逐函数行为对比（替代模块级清单）
+
+**规则：** 移植/重写项目的验收标准不是"功能模块存在且被调用"，而是 **对 Python 的每一个公开函数和 engine 中的每一个私有方法（`_` 前缀），在 TS 中找到对应实现并逐行确认行为等价**。
+
+具体做法——对每个 Python 函数：
+
+1. 列出函数的所有分支（if/else/try-except/for 中的 continue/break）
+2. 对每个分支，确认 TS 中有对应处理
+3. 对每个正则表达式、魔法常量、阈值，确认 TS 中的值相同
+4. 对每个辅助调用（如 `_save_base`、`find_cloud_file_by_hash`），确认 TS 中也有调用
+
+产出物是一个**分支级对照表**，不是模块级矩阵：
+
+```markdown
+## 分支级对照：_process_download_item
+
+| Python 分支 | 行号 | TS 对应 | 状态 |
+|------------|------|---------|------|
+| 正常下载并写文件 | 905-908 | executor.ts download case | ✅ |
+| domain=0 时保存 base | 911-914 | — | ☐ 缺失 |
+| 下载后更新 content_hash | 916-920 | executor.ts recordSync | ✅ |
+```
+
+#### 8.5.2 自动化 diff 检测（替代人工 review）
+
+人工对比在函数多、分支多时不可靠。添加一个检查脚本，基于以下逻辑：
+
+1. 提取 Python 所有 `def` 和 `class` 定义
+2. 提取 TS 所有 `export function` 和 `export class` 定义
+3. 对比两个列表，标记 Python 有但 TS 没有的条目
+4. 对标记为"已实现"的条目，对比函数体的关键特征（调用的子函数、正则表达式、常量值）
+
+这不能替代人工审查，但能作为第一道筛网，把明显的缺失提前暴露。
+
+#### 8.5.3 正则和常量单独对比
+
+**规则：** 所有正则表达式和硬编码常量必须单独列一张对照表：
+
+```markdown
+| Python 正则/常量 | 位置 | TS 对应 | 是否一致 |
+|-----------------|------|---------|---------|
+| `_MD_REF_RE = r'!?\[...'` | dedup.py:44 | `MD_REF_RE = /!\[.../` | ❌ 缺少 `?` |
+| `_GENERIC_NAMES` | moves.py:12 | `GENERIC_NAMES` | ✅ |
+```
+
+#### 8.5.4 集成测试不只检查"是否被调用"，还检查"调用参数和副作用"
+
+当前的集成冒烟测试只用 spy 验证"heal/scan/classify/refine/execute 被调用了"。需要增加：
+
+- download 后 `saveBaseContent` 被调用（验证 §8.1 #5）
+- upload 前检查 `findCloudFileByHash`（验证 §8.1 #3）
+- move 失败后 upload+delete 回退被触发（验证 §8.1 #6）
+- dedup 的 `buildRefIndex` 正则匹配 `[text](file.md)` 格式（验证 §8.1 #2）
+
+#### 8.5.5 复盘的复盘——两周后 independent review
+
+**规则：** 重写项目的复盘文档本身，必须在两周内由一个独立的审查者（或独立的 AI 会话，不携带前一次的上下文）做二次审查。审查的问题不是"复盘写的对不对"，而是"复盘声称已修复的功能，实际行为和 Python 一致吗？"
+
+本次遗漏的根本原因就是：复盘者和实现者是同一个上下文，会不自觉地共享"这个应该已经做了"的假设。独立审查打破这个假设。
+
+### 8.6 遗留项修复跟踪
+
+| # | 项目 | 优先级 | 状态 |
+|---|------|--------|------|
+| 1 | 去重数据源：`buildHashIndex` 改为扫描文件系统 + hash_cache + local_files | P0 | ✅ 已修复 |
+| 2 | MD 引用正则：`!\[` → `!?\[` 保护 markdown 链接引用 | P0 | ✅ 已修复 |
+| 3 | 上传前内容去重：`findCloudFileByHash()` + executor 上传前检查 | P0 | ✅ 已修复 |
+| 4 | diff3 git 回退：`getFileContentFromGit()` + executor 合并时回退 | P1 | ✅ 已修复 |
+| 5 | 下载时保存 base：domain=0 下载后 `saveBaseContent()` | P1 | ✅ 已修复 |
+| 6 | 云端移动回退：`failedMoves` 跟踪 + `fallbackDeleteOldFiles` 兜底 | P2 | ✅ 已修复 |
+| 7 | git commit 粒度：选择性 add changedPaths + --no-verify | P2 | ✅ 已修复 |
+| 8 | 引用缓存：`get/setFileRefs` + `getAllFileRefs` + 增量 `buildRefIndex` | P3 | ✅ 已修复 |
+| 9 | diagnose_dryrun：移植可疑 UPLOAD 诊断到 engine.ts | P3 | ✅ 已修复 |
+| 10 | 备份文件名微秒：时间戳增加毫秒+随机数避免覆盖 | P3 | ✅ 已修复 |
+
+### 8.7 本节总结
+
+第一次复盘解决了"模块没接线"这一层问题，但检查方法本身只停留在模块粒度，无法发现函数内部的行为差异。**每一次 review 只能发现它的 checklist 覆盖的层级的问题**——如果 checklist 是模块级的，函数内部的遗漏就是盲区。
+
+教训：
+1. **"已完成"不等于"行为等价"**——标记 ✅ 之前，必须有分支级的对比证据，不能只看接口签名。
+2. **复盘者不能是实现者的同一个上下文**——共享上下文会继承"这个应该做了"的假设，需要独立审查打破。
+3. **防御措施的粒度必须和遗漏的粒度匹配**——模块级的防御挡不住函数内部的遗漏，正则级的差异需要正则级的对比。
+
+**修复验证（2026-03-03）：** 10 项遗留全部修复完成。`tsc --noEmit` 通过，243 测试全绿（新增 10 测试）。
+
+---
+
+## 九、第三次审查：逐行参数与条件对比（2026-03-03）
+
+### 9.1 审查方法
+
+前两次审查的盲区：模块级和函数级对比只能发现"缺了什么函数"，无法发现参数顺序错误、类型强转掩盖的逻辑错误、条件表达式的语义差异。
+
+本次采用**逐行参数对比法**：对每个共有函数，将 Python 和 TS 的具体参数、条件运算符、分支结构逐行摆在一起比对。同时用 4 个并行审查代理分别扫描 scan、classify、executor、metadata/API 四个模块。
+
+### 9.2 P0 — 确认的代码 bug
+
+#### 9.2.1 `calibrate.ts:25` — setDirInfo 传错参数
+
+Python: `metadata.set_dir_info(rel, DirId(cloud["id"]), cloud["parent_id"])`
+TS: `meta.setDirInfo(relPath, cloudFile.parentId, cloudFile.parentId)`
+
+第二个参数应该是目录自身的 ID（`cloud["id"]`），TS 错误地传了 `parentId`。所有校准过的目录 ID 都会被写错，后续 `findByDirId` 全部失败。
+
+#### 9.2.2 `moves.ts:116-118` — Case B fileId 来源错误（死代码）
+
+```typescript
+const metaPath = meta.findByFileId(
+  (classified.get(cloudPath) as ClassifiedEntry & { state: { fileId?: FileId } })
+    ?.state as unknown as FileId,
+);
+```
+
+`state` 是 `{ kind: 'cloudDeleted' }` 类型的 FileState，强制 cast 成 FileId 永远不会匹配。
+Python 版本: `fmeta = metadata.get_file_info(local_rel)` → `fid = fmeta["file_id"]`。
+Case B（"云端文件的 file_id 在 metadata 中找到对应本地路径"）完全不工作。
+
+### 9.3 P1 — 同步决策语义差异
+
+#### 9.3.1 `previouslySynced` 缺少 fileId 检查
+
+Python: `bool(meta["file_id"]) and meta.get("last_sync_at", 0) > 0`
+TS: `meta !== null && meta.lastSyncAt > 0`
+
+缺少 `fileId` 检查。`lastSyncAt > 0` 但 `fileId` 为空时，Python 认为未同步 → 上传/下载，TS 认为已同步 → 可能跳过。
+
+#### 9.3.2 `cloudMtimeChanged` 用 `!==` 而非 `>`
+
+Python: `cloud_mtime > meta_cloud_mtime`（只有更新才算变化）
+TS: `cloud.mtime !== meta.cloudMtime`（任何不同都算变化）
+
+时钟回拨时 Python 不触发下载，TS 会。
+
+#### 9.3.3 `localMtimeChanged` 无 meta 时返回 null 而非 true
+
+Python: `meta_local_mtime is None → local_changed = True`
+TS: `meta.localMtime === 0 → null`
+
+Python 无基线 = 认为改过（倾向上传），TS 无基线 = 未知（可能跳过）。
+
+#### 9.3.4 跨目录文件名匹配缺少内容校验
+
+Python 在文件名+祖先深度匹配后，还检查内容 hash：hash 不同且云端无 file_id → 跳过（防止同名不同文件误判为移动）。TS 的 `crossDirMatch` 没有这个保护。
+
+### 9.4 P2 — 缺失功能
+
+| # | 缺失功能 | Python 位置 | 影响 |
+|---|---------|------------|------|
+| 1 | 下载原子写入（tmp→rename） | `executor.py:_atomic_write` | 中断留半成品 |
+| 2 | git commit 不含 dedup 删除路径和统计 | `git_helper.py:commit_sync` | dedup 删除不被 git 记录 |
+| 3 | 500+body 的 auth 错误检测 | `api.py:is_auth_error` | 有道返回 500+error=207 时不提示重新登录 |
+
+### 9.5 P3 — 已知但暂不修复
+
+| # | 项目 | 原因 |
+|---|------|------|
+| 1 | 二进制文件上传 API | 需要新增 multipart API，当前用户场景为笔记同步 |
+| 2 | 下载后图片 URL 迁移 | 需要图片服务端配合 |
+| 3 | 并发执行（10 下载 / 5 上传） | 性能优化，不影响正确性 |
+| 4 | metadata 增量保存（每 200 条） | 性能优化，不影响正确性 |
+| 5 | tree_hash API | schema 有列但未使用，等 Merkle tree 功能启用时再加 |
+| 6 | noteJsonToMarkdown 反向转换 | 当前不需要反向转换 |
+| 7 | JSON metadata 迁移 | 旧格式用户可用 Python 版迁移 |
+
+### 9.6 遗留项修复跟踪
+
+| # | 项目 | 优先级 | 状态 |
+|---|------|--------|------|
+| 1 | calibrate.ts setDirInfo 参数修正 | P0 | ✅ 已修复 |
+| 2 | moves.ts Case B fileId 来源修正 | P0 | ✅ 已修复 |
+| 3 | conditions.ts previouslySynced 加 fileId 检查 | P1 | ✅ 已修复 |
+| 4 | conditions.ts cloudMtimeChanged 改为严格大于 | P1 | ✅ 已修复 |
+| 5 | conditions.ts localMtimeChanged 无 meta 时返回 true | P1 | ✅ 已修复 |
+| 6 | moves.ts 跨目录文件名匹配增加内容校验 | P1 | ✅ 已修复 |
+| 7 | executor download 原子写入 | P2 | ✅ 已修复 |
+| 8 | git commit 包含 dedup 删除路径和统计 | P2 | ✅ 已修复 |
+| 9 | API isAuthError 增加 500+body 检测 | P2 | ✅ 已修复 |
+
+### 9.7 本节总结
+
+第三次审查从"逐行参数对比"的角度发现了 2 个确认 bug、4 个语义差异、3 个缺失功能，全部已修复。
+
+教训：**参数顺序和运算符语义是最容易被"看起来差不多"掩盖的错误类型**。类型系统可以防 API 不存在，但挡不住"参数传反"或"`!==` vs `>`"——这些只有逐行摆在一起看才能发现。
+
+**修复验证（2026-03-03）：** 9 项遗留全部修复完成。`tsc --noEmit` 通过，243 测试全绿。同时完成了 `dedup.ts`（585 行）→ `dedup/` 目录拆分（9 文件，最大 144 行）。
