@@ -1,14 +1,16 @@
-import { createHash } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { extname } from 'node:path';
 import type { ContentHash } from './types/common.js';
 import { asContentHash } from './types/common.js';
+import { initXxhash, xxh128, createXxh64 } from './algo/xxhash.js';
 
 const TEXT_EXTENSIONS = new Set([
   '.md', '.txt', '.note', '.clip', '.json', '.xml', '.html', '.htm',
   '.css', '.js', '.ts', '.py', '.sh', '.yaml', '.yml', '.toml', '.ini',
   '.cfg', '.csv', '.log', '.rst', '.tex', '.bib', '.org',
 ]);
+
+const MD_NORMALIZABLE_EXTENSIONS = new Set(['.md', '.txt']);
 
 const CHUNK_SIZE = 256 * 1024; // 256 KB
 const SMALL_FILE_THRESHOLD = 1024 * 1024; // 1 MB
@@ -17,52 +19,123 @@ function isTextFile(filePath: string): boolean {
   return TEXT_EXTENSIONS.has(extname(filePath).toLowerCase());
 }
 
+function isMdNormalizable(filePath: string): boolean {
+  return MD_NORMALIZABLE_EXTENSIONS.has(extname(filePath).toLowerCase());
+}
+
 /**
- * Compute content hash (MD5) from raw bytes.
+ * Normalize Markdown formatting to eliminate insignificant editor differences.
  *
- * For text content: normalizes CRLF → LF, strips BOM.
+ * Used before content hashing so that the same document saved by different
+ * editors (Youdao reformats Markdown) produces an identical hash.
+ */
+export function normalizeMdFormatting(text: string): string {
+  const bq = '(?:>\\s*)*'; // optional nested blockquote prefix
+  const result: string[] = [];
+  for (const rawLine of text.split('\n')) {
+    let s = rawLine.replace(/\s+$/, '');
+    if (!s) continue;
+    // empty blockquote lines
+    if (/^\s*>[\s>]*$/.test(s)) continue;
+    // code fence lines
+    if (/^\s*```\w*\s*$/.test(s)) continue;
+    // horizontal rules
+    if (/^[\s]*(\*\s*\*\s*\*[\s*]*|-\s*-\s*-[\s-]*)$/.test(s)) {
+      s = '---';
+    }
+    // table separator: | --- | --- |
+    if (/^\|[\s:|-]+\|$/.test(s)) {
+      const cells = s.split('|');
+      s = cells
+        .map((c) => {
+          const t = c.trim();
+          return t && [...t].every((ch) => '-: '.includes(ch)) ? '---' : t;
+        })
+        .join('|');
+    }
+    // unordered list marker: > * / * → > - / -
+    s = s.replace(new RegExp(`^(\\s*${bq})\\*(\\s+)`), '$1-$2');
+    // extra spaces after list markers
+    s = s.replace(new RegExp(`^(\\s*${bq}\\d+\\.)\\s{2,}`), '$1 ');
+    s = s.replace(new RegExp(`^(\\s*${bq}-)\\s{2,}`), '$1 ');
+    // strip leading whitespace
+    s = s.replace(/^\s+/, '');
+    // table cell padding normalization
+    if (s.startsWith('|')) {
+      s = s.replace(/\s*\|\s*/g, '|');
+    }
+    // collapse internal consecutive spaces
+    s = s.replace(/ {2,}/g, ' ');
+    // backslash escapes
+    s = s.replace(/\\([_$~&*#{}|.!\[\]()])/g, '$1');
+    // angle-bracket links: <https://...> → https://...
+    s = s.replace(/<(https?:\/\/[^>]+)>/g, '$1');
+    // remove inline code backticks
+    s = s.replaceAll('`', '');
+    result.push(s);
+  }
+  return result.join('\n');
+}
+
+function normalizeTextContent(buf: Buffer, filePath: string): string {
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+    buf = buf.subarray(3);
+  }
+  let text = buf.toString('utf-8').replace(/\r\n/g, '\n');
+  if (isMdNormalizable(filePath)) {
+    text = normalizeMdFormatting(text);
+  }
+  return text;
+}
+
+/**
+ * Compute content hash (xxHash-128) from raw bytes.
+ *
+ * For text content: normalizes CRLF → LF, strips BOM, normalizes MD formatting.
  * For binary content: hashes raw bytes as-is.
  */
 export function computeContentHashFromBytes(data: Uint8Array, filePath: string): ContentHash | null {
   try {
-    const h = createHash('md5');
     if (isTextFile(filePath)) {
-      let buf = Buffer.from(data);
-      if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
-        buf = buf.subarray(3);
-      }
-      const normalized = buf.toString('utf-8').replace(/\r\n/g, '\n');
-      h.update(normalized, 'utf-8');
-    } else {
-      h.update(data);
+      const text = normalizeTextContent(Buffer.from(data), filePath);
+      return asContentHash(xxh128(text));
     }
-    return asContentHash(h.digest('hex'));
+    // Binary: hash two h64 passes to produce 128-bit
+    const h0 = createXxh64(0n);
+    const h1 = createXxh64(0x9e3779b97f4a7c15n);
+    h0.update(data);
+    h1.update(data);
+    const hi = h0.digest().toString(16).padStart(16, '0');
+    const lo = h1.digest().toString(16).padStart(16, '0');
+    return asContentHash(hi + lo);
   } catch {
     return null;
   }
 }
 
 /**
- * Compute content hash (MD5) from a file on disk.
+ * Compute content hash (xxHash-128) from a file on disk.
  *
  * Small files (≤ 1MB): read all at once.
- * Large files (> 1MB): chunk-based reading with CRLF boundary handling.
- * Binary files: raw hash, no normalization.
+ * Large text files (> 1MB): chunk-based with CRLF boundary handling.
+ * Binary files: streaming hash, no normalization.
+ * .md/.txt files: always fully read for normalization (rarely > 1MB).
  */
 export function computeContentHashFromFile(filePath: string): ContentHash | null {
   try {
     const st = statSync(filePath);
     const isText = isTextFile(filePath);
 
-    if (st.size <= SMALL_FILE_THRESHOLD || !isText) {
+    // .md/.txt always need full read for normalization
+    if (isMdNormalizable(filePath) || st.size <= SMALL_FILE_THRESHOLD || !isText) {
       const data = readFileSync(filePath);
       return computeContentHashFromBytes(data, filePath);
     }
 
-    // Large text file: chunk-based with CRLF handling
-    const { openSync, readSync, closeSync } = require('node:fs') as typeof import('node:fs');
+    // Large text file (non-md): chunk-based with CRLF handling
     const fd = openSync(filePath, 'r');
-    const h = createHash('md5');
+    const h0 = createXxh64(0n);
+    const h1 = createXxh64(0x9e3779b97f4a7c15n);
     const chunk = Buffer.alloc(CHUNK_SIZE);
     let firstChunk = true;
     let prevEndsWithCr = false;
@@ -91,14 +164,20 @@ export function computeContentHashFromFile(filePath: string): ContentHash | null
           str = str.slice(0, -1) + '\n';
         }
 
-        h.update(str, 'utf-8');
+        h0.update(str);
+        h1.update(str);
       }
     } finally {
       closeSync(fd);
     }
 
-    return asContentHash(h.digest('hex'));
+    const hi = h0.digest().toString(16).padStart(16, '0');
+    const lo = h1.digest().toString(16).padStart(16, '0');
+    return asContentHash(hi + lo);
   } catch {
     return null;
   }
 }
+
+/** Ensure xxhash WASM is loaded. Must be called once before hashing. */
+export { initXxhash };

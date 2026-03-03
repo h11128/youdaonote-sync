@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { extname } from 'node:path';
 import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import type { YoudaoNoteApi } from '../api/client.js';
@@ -7,6 +9,9 @@ import type { CloudFile } from '../types/scan.js';
 import { downloadFile } from './download.js';
 import { uploadFile } from './upload.js';
 import { backupFile } from './conflict.js';
+import { threeWayMerge } from '../algo/merge.js';
+
+const MERGEABLE_EXTS = new Set(['.md', '.txt']);
 
 export interface SyncStats {
   downloaded: number;
@@ -15,10 +20,11 @@ export interface SyncStats {
   conflicts: number;
   errors: number;
   moved: number;
+  merged: number;
 }
 
 export function emptyStats(): SyncStats {
-  return { downloaded: 0, uploaded: 0, skipped: 0, conflicts: 0, errors: 0, moved: 0 };
+  return { downloaded: 0, uploaded: 0, skipped: 0, conflicts: 0, errors: 0, moved: 0, merged: 0 };
 }
 
 export interface ExecuteContext {
@@ -37,7 +43,7 @@ export interface ExecuteContext {
  * 1. Directories first (create parent dirs)
  * 2. Downloads
  * 3. Uploads
- * 4. Conflicts (backup + download)
+ * 4. Conflicts (try diff3 merge for .md/.txt, fallback to backup + download)
  * 5. Moves
  */
 export async function executeAll(
@@ -61,8 +67,7 @@ export async function executeAll(
     }
 
     try {
-      await executeSingle(relPath, state, action, cloud, ctx);
-      countAction(stats, action);
+      await executeSingle(relPath, state, action, cloud, ctx, stats);
     } catch (e: unknown) {
       stats.errors++;
       console.error(`Error processing ${relPath}: ${e}`);
@@ -87,6 +92,7 @@ async function executeSingle(
   action: SyncAction,
   cloud: ReadonlyMap<string, CloudFile>,
   ctx: ExecuteContext,
+  stats: SyncStats,
 ): Promise<void> {
   const { api, meta, rootDirId, localDir } = ctx;
   const localPath = `${localDir}/${relPath}`;
@@ -112,6 +118,7 @@ async function executeSingle(
         action: 'download',
         direction: 'pull',
       });
+      stats.downloaded++;
       break;
     }
 
@@ -128,10 +135,20 @@ async function executeSingle(
         action: 'upload',
         direction: 'push',
       });
+      stats.uploaded++;
       break;
     }
 
     case 'conflict': {
+      if (cloudFile) {
+        const merged = await tryDiff3Merge(relPath, localPath, cloudFile, ctx);
+        if (merged) {
+          stats.merged++;
+          break;
+        }
+      }
+
+      // Fallback: backup local + download cloud
       backupFile(localPath);
       if (cloudFile) {
         const conflictDlOpts: { cloudMtime?: number; hashFn?: (data: Uint8Array, path: string) => ContentHash | null } = {
@@ -150,6 +167,7 @@ async function executeSingle(
           direction: 'pull',
         });
       }
+      stats.conflicts++;
       break;
     }
 
@@ -157,7 +175,76 @@ async function executeSingle(
       if (state.kind !== 'moved') return;
       const oldPath = state.oldPath;
       meta.renamePath(oldPath, relPath);
+      stats.moved++;
       break;
     }
   }
+}
+
+/**
+ * Attempt a diff3 three-way merge for .md/.txt conflict files.
+ *
+ * Needs: base content (from metadata file_base), local content, cloud content.
+ * If merge succeeds without conflicts, writes merged result locally and uploads.
+ * Returns true if merge was performed, false to fall back to backup+download.
+ */
+async function tryDiff3Merge(
+  relPath: string,
+  localPath: string,
+  cloudFile: CloudFile,
+  ctx: ExecuteContext,
+): Promise<boolean> {
+  const ext = extname(relPath).toLowerCase();
+  if (!MERGEABLE_EXTS.has(ext)) return false;
+  if (!existsSync(localPath)) return false;
+
+  const { api, meta, rootDirId } = ctx;
+
+  const baseRecord = meta.getBaseContent(relPath);
+  if (!baseRecord) return false;
+
+  let theirs: string;
+  try {
+    const rawData = await api.getFileById(cloudFile.id as FileId);
+    theirs = Buffer.from(rawData).toString('utf-8');
+  } catch {
+    return false;
+  }
+
+  const base = baseRecord.content.toString('utf-8');
+  const ours = readFileSync(localPath, 'utf-8');
+
+  const result = threeWayMerge(base, ours, theirs);
+  if (result.hasConflicts) return false;
+
+  backupFile(localPath);
+  writeFileSync(localPath, result.mergedText, 'utf-8');
+
+  const contentHash = ctx.hashFn
+    ? ctx.hashFn(new TextEncoder().encode(result.mergedText), localPath)
+    : null;
+
+  if (contentHash) {
+    meta.saveBaseContent(relPath, Buffer.from(result.mergedText, 'utf-8'), contentHash);
+  }
+
+  try {
+    const ulOpts: { existingFileId?: FileId; hashFn?: (data: Uint8Array, path: string) => ContentHash | null } = {
+      existingFileId: cloudFile.id as FileId,
+    };
+    if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
+    const ulResult = await uploadFile(api, meta, localPath, relPath, rootDirId, ulOpts);
+    meta.recordSync(relPath, {
+      fileId: ulResult.fileId,
+      cloudMtime: ulResult.cloudMtime,
+      localMtime: Math.floor(Date.now() / 1000),
+      contentHash,
+      action: 'merge-upload',
+      direction: 'push',
+    });
+  } catch {
+    return false;
+  }
+
+  return true;
 }

@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
+import { xxh64Raw } from './xxhash.js';
 
 const MAX_BITS = 2 ** 31 - 1;
+const encoder = new TextEncoder();
 
 function optimalM(n: number, p: number): number {
   return Math.min(MAX_BITS, Math.max(1, Math.floor(-n * Math.log(p) / (Math.log(2) ** 2))));
@@ -10,9 +11,8 @@ function optimalK(m: number, n: number): number {
   return Math.max(1, Math.floor(m * Math.log(2) / n));
 }
 
-function hash64(data: string, seed: number): bigint {
-  const h = createHash('sha256').update(`${seed}:${data}`).digest();
-  return h.readBigUInt64LE(0);
+function hash64(data: string, seed: bigint): bigint {
+  return xxh64Raw(encoder.encode(data), seed);
 }
 
 /**
@@ -36,8 +36,8 @@ export class BloomFilter {
   }
 
   private hashes(item: string): number[] {
-    const h1 = hash64(item, 0);
-    const h2 = hash64(item, 0x9e37);
+    const h1 = hash64(item, 0n);
+    const h2 = hash64(item, 0x9e3779b97f4a7c15n);
     const result: number[] = [];
     const bigM = BigInt(this.m);
     for (let i = 0; i < this.k; i++) {

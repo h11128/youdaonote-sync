@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { computeContentHashFromBytes, computeContentHashFromFile } from './hash.js';
+import { computeContentHashFromBytes, computeContentHashFromFile, normalizeMdFormatting } from './hash.js';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -37,10 +37,26 @@ describe('computeContentHashFromBytes', () => {
     expect(hashBom).not.toBe(hashNoBom);
   });
 
-  it('returns a non-null hex string', () => {
+  it('returns a non-null 32-char hex string (xxHash-128)', () => {
     const hash = computeContentHashFromBytes(new TextEncoder().encode('test'), 'file.md');
     expect(hash).not.toBeNull();
     expect(hash!).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('applies MD normalization for .md files', () => {
+    const stars = new TextEncoder().encode('* item\n***\n');
+    const dashes = new TextEncoder().encode('- item\n---\n');
+    const hashStars = computeContentHashFromBytes(stars, 'test.md');
+    const hashDashes = computeContentHashFromBytes(dashes, 'test.md');
+    expect(hashStars).toBe(hashDashes);
+  });
+
+  it('does NOT apply MD normalization for .json files', () => {
+    const a = new TextEncoder().encode('* item');
+    const b = new TextEncoder().encode('- item');
+    const hashA = computeContentHashFromBytes(a, 'test.json');
+    const hashB = computeContentHashFromBytes(b, 'test.json');
+    expect(hashA).not.toBe(hashB);
   });
 });
 
@@ -82,5 +98,56 @@ describe('computeContentHashFromFile', () => {
     writeFileSync(p, '');
     const hash = computeContentHashFromFile(p);
     expect(hash).not.toBeNull();
+  });
+});
+
+describe('normalizeMdFormatting', () => {
+  it('strips trailing whitespace', () => {
+    expect(normalizeMdFormatting('hello   \nworld  ')).toBe('hello\nworld');
+  });
+
+  it('skips empty lines', () => {
+    expect(normalizeMdFormatting('a\n\n\nb')).toBe('a\nb');
+  });
+
+  it('normalizes *** to ---', () => {
+    expect(normalizeMdFormatting('***')).toBe('---');
+    expect(normalizeMdFormatting('* * *')).toBe('---');
+  });
+
+  it('normalizes * list to - list', () => {
+    expect(normalizeMdFormatting('* item')).toBe('- item');
+  });
+
+  it('normalizes table separator', () => {
+    expect(normalizeMdFormatting('| --- | --- |')).toBe('|---|---|');
+  });
+
+  it('collapses internal spaces', () => {
+    expect(normalizeMdFormatting('a  b   c')).toBe('a b c');
+  });
+
+  it('removes backslash escapes', () => {
+    expect(normalizeMdFormatting('hello\\_world')).toBe('hello_world');
+  });
+
+  it('removes angle-bracket links', () => {
+    expect(normalizeMdFormatting('<https://example.com>')).toBe('https://example.com');
+  });
+
+  it('removes backticks', () => {
+    expect(normalizeMdFormatting('use `foo` here')).toBe('use foo here');
+  });
+
+  it('skips code fence lines', () => {
+    expect(normalizeMdFormatting('```python\ncode\n```')).toBe('code');
+  });
+
+  it('strips leading whitespace', () => {
+    expect(normalizeMdFormatting('  indented')).toBe('indented');
+  });
+
+  it('normalizes table cell padding', () => {
+    expect(normalizeMdFormatting('| a | b |')).toBe('|a|b|');
   });
 });

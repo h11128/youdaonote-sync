@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     root: '.',
     include: ['src/**/*.test.ts'],
+    setupFiles: ['src/test-setup.ts'],
     coverage: {
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.test.ts'],

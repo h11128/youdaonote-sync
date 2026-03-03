@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { xxh128 } from './xxhash.js';
 import type { ContentHash } from '../types/common.js';
 import type { LocalFile } from '../types/scan.js';
 
@@ -6,8 +6,7 @@ export type TreeHash = string & { readonly __brand: 'TreeHash' };
 
 export type HashFn = (data: string) => string;
 
-const defaultHash: HashFn = (data) =>
-  createHash('md5').update(data, 'utf-8').digest('hex');
+const defaultHash: HashFn = (data) => xxh128(data);
 
 /**
  * Build a Merkle tree from local files.
@@ -15,7 +14,7 @@ const defaultHash: HashFn = (data) =>
  * Each directory's hash is computed from sorted child name:hash pairs.
  * Any file change propagates up to all ancestor directories.
  *
- * @param hashFn Optional hash function override (default: MD5). Pass xxhash for speed.
+ * @param hashFn Optional hash function override (default: xxHash-128).
  * @returns Map of directory relative path → tree hash ("" = root)
  */
 export function buildTree(

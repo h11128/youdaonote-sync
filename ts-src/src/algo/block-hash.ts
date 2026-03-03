@@ -1,5 +1,5 @@
 import { readFileSync, openSync, readSync, closeSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { xxh64Raw } from './xxhash.js';
 
 export interface BlockHashEntry {
   readonly offset: number;
@@ -28,7 +28,7 @@ export function computeBlockHashes(filePath: string, blockSize = DEFAULT_BLOCK_S
   try {
     let bytesRead: number;
     while ((bytesRead = readSync(fd, chunk, 0, blockSize, null)) > 0) {
-      const hash = createHash('md5').update(chunk.subarray(0, bytesRead)).digest('hex');
+      const hash = xxh64Raw(chunk.subarray(0, bytesRead)).toString(16).padStart(16, '0');
       result.push({ offset, length: bytesRead, hash });
       offset += bytesRead;
     }

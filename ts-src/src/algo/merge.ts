@@ -158,7 +158,7 @@ function bsRight(arr: number[], val: number): number {
 
 function splitLines(text: string): string[] {
   if (!text) return [];
-  return text.split(/\n/).map((l, i, a) => i < a.length - 1 ? l + '\n' : l);
+  return text.split(/\r\n|\r|\n/).map((l, i, a) => i < a.length - 1 ? l + '\n' : l);
 }
 
 /**
