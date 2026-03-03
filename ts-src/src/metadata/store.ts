@@ -149,6 +149,10 @@ export class MetadataStore {
     return storeFiles.getAllFiles(this.db);
   }
 
+  getCloudFileSummaries(): Map<string, storeFiles.CloudFileSummary> {
+    return storeFiles.getCloudFileSummaries(this.db);
+  }
+
   // ========== Directory methods (delegate to store-dirs) ==========
 
   getDirId(localPath: string): DirId | null {
@@ -262,6 +266,14 @@ export class MetadataStore {
 
   updateLocalMtime(localPath: string, mtime: number): void {
     storeFiles.updateLocalMtime(this.db, this.normalizePath(localPath), mtime);
+  }
+
+  getStaleCloudPaths(activePaths: ReadonlySet<string>): string[] {
+    return storeFiles.getStaleCloudPaths(this.db, activePaths);
+  }
+
+  clearCloudId(localPath: string): void {
+    storeFiles.clearCloudId(this.db, this.normalizePath(localPath));
   }
 
   /**

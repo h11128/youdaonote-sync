@@ -17,6 +17,8 @@ export const PUSH_URL =
   '_cityCode=&_cityName=&_product=YNote-Web&_version=&sev=j1&sec=v1&keyfrom=web&cstk={cstk}';
 export const DELETE_URL =
   'https://note.youdao.com/yws/api/personal/file/{file_id}?method=delete&keyfrom=web&cstk={cstk}';
+export const LIST_RECENT_URL =
+  'https://note.youdao.com/yws/api/personal/file?method=listRecent&keyfrom=web&cstk={cstk}';
 
 export const DIR_PAGE_SIZE = 9999;
 

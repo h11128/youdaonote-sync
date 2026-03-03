@@ -1,4 +1,4 @@
-import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { readFileSync, statSync, openSync, readSync, closeSync, fstatSync } from 'node:fs';
 import { extname } from 'node:path';
 import type { ContentHash } from './types/common.js';
 import { asContentHash } from './types/common.js';
@@ -113,12 +113,14 @@ export function computeContentHashFromBytes(data: Uint8Array, filePath: string):
   }
 }
 
+const LARGE_BINARY_CHUNK = 1024 * 1024; // 1 MB chunks for streaming binary hash
+
 /**
  * Compute content hash (xxHash-128) from a file on disk.
  *
  * Small files (≤ 1MB): read all at once.
  * Large text files (> 1MB): chunk-based with CRLF boundary handling.
- * Binary files: streaming hash, no normalization.
+ * Large binary files (> 1MB): streaming chunk-based hash (zero-copy equivalent).
  * .md/.txt files: always fully read for normalization (rarely > 1MB).
  */
 export function computeContentHashFromFile(filePath: string): ContentHash | null {
@@ -127,9 +129,14 @@ export function computeContentHashFromFile(filePath: string): ContentHash | null
     const isText = isTextFile(filePath);
 
     // .md/.txt always need full read for normalization
-    if (isMdNormalizable(filePath) || st.size <= SMALL_FILE_THRESHOLD || !isText) {
+    if (isMdNormalizable(filePath) || st.size <= SMALL_FILE_THRESHOLD) {
       const data = readFileSync(filePath);
       return computeContentHashFromBytes(data, filePath);
+    }
+
+    // Large binary file: streaming chunk-based hash
+    if (!isText) {
+      return hashLargeBinaryFile(filePath);
     }
 
     // Large text file (non-md): chunk-based with CRLF handling
@@ -176,6 +183,33 @@ export function computeContentHashFromFile(filePath: string): ContentHash | null
     return asContentHash(hi + lo);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Hash a large binary file using streaming chunks.
+ * Avoids loading the entire file into memory at once.
+ * Equivalent to Python's mmap-based approach for binary files.
+ */
+function hashLargeBinaryFile(filePath: string): ContentHash | null {
+  const fd = openSync(filePath, 'r');
+  try {
+    const h0 = createXxh64(0n);
+    const h1 = createXxh64(0x9e3779b97f4a7c15n);
+    const chunk = Buffer.alloc(LARGE_BINARY_CHUNK);
+    let bytesRead: number;
+
+    while ((bytesRead = readSync(fd, chunk, 0, LARGE_BINARY_CHUNK, null)) > 0) {
+      const slice = bytesRead === LARGE_BINARY_CHUNK ? chunk : chunk.subarray(0, bytesRead);
+      h0.update(slice);
+      h1.update(slice);
+    }
+
+    const hi = h0.digest().toString(16).padStart(16, '0');
+    const lo = h1.digest().toString(16).padStart(16, '0');
+    return asContentHash(hi + lo);
+  } finally {
+    closeSync(fd);
   }
 }
 

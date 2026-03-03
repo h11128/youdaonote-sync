@@ -4,7 +4,7 @@ import { loadCookies, loadFromDesktop, saveCookies } from './cookies.js';
 import type { DirId, FileId } from '../types/common.js';
 import type { DirInfoByIdResponse } from '../types/dir.js';
 import { NoteDomain } from '../types/common.js';
-import { ROOT_ID_URL, FILE_URL, tpl, BASE_HEADERS } from './constants.js';
+import { ROOT_ID_URL, FILE_URL, LIST_RECENT_URL, tpl, BASE_HEADERS } from './constants.js';
 import { safeJson } from './request.js';
 import { fetchDirList } from './dir.js';
 import * as fileApi from './file-api.js';
@@ -222,6 +222,22 @@ export class YoudaoNoteApi {
 
   async renameFile(fileId: FileId, newName: string, domain = 1): Promise<Record<string, unknown>> {
     return fileApi.renameFile(this.asFileApiContext(), fileId, newName, domain);
+  }
+
+  /**
+   * Fetch recently modified files (ordered by modify time, descending).
+   * API maximum is 30 items per call.
+   */
+  async listRecent(limit = 30): Promise<Array<Record<string, unknown>>> {
+    this.requireAuth();
+    const url = tpl(LIST_RECENT_URL, { cstk: this.cstk! });
+    const params = new URLSearchParams({
+      offset: '0',
+      limit: String(Math.min(limit, 30)),
+    });
+    const resp = await this.httpPost(url, params);
+    const json = await safeJson(resp);
+    return Array.isArray(json) ? json : [];
   }
 
   private asFileApiContext(): fileApi.FileApiContext {

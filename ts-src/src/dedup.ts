@@ -404,6 +404,60 @@ export function findDuplicates(meta: MetadataStore): Map<ContentHash, string[]> 
 }
 
 /**
+ * Discard orphan local duplicates before sync.
+ *
+ * Matches Python moves.py:discard_orphan_duplicates.
+ * If a local-only file has the same content as a file that exists on both sides,
+ * it's an orphan left from a cloud rename — skip uploading it.
+ *
+ * Returns the set of local-only paths to skip.
+ */
+export function discardOrphanDuplicates(
+  cloudSnap: ReadonlyMap<string, { isDir: boolean }>,
+  localSnap: ReadonlyMap<string, { isDir: boolean; path: string }>,
+  localHashes: ReadonlyMap<string, ContentHash | null>,
+): Set<string> {
+  const skipped = new Set<string>();
+
+  const onlyLocalPaths = new Set<string>();
+  const bothPaths = new Set<string>();
+  for (const [p, info] of localSnap) {
+    if (info.isDir) continue;
+    if (cloudSnap.has(p)) bothPaths.add(p);
+    else onlyLocalPaths.add(p);
+  }
+
+  if (onlyLocalPaths.size === 0 || bothPaths.size === 0) return skipped;
+
+  const bothByName = new Map<string, string[]>();
+  for (const bp of bothPaths) {
+    const norm = basename(bp).toLowerCase();
+    const list = bothByName.get(norm) ?? [];
+    list.push(bp);
+    bothByName.set(norm, list);
+  }
+
+  for (const lp of onlyLocalPaths) {
+    const norm = basename(lp).toLowerCase();
+    const candidates = bothByName.get(norm);
+    if (!candidates) continue;
+
+    const lpHash = localHashes.get(lp);
+    if (!lpHash) continue;
+
+    for (const bp of candidates) {
+      const bpHash = localHashes.get(bp);
+      if (lpHash === bpHash) {
+        skipped.add(lp);
+        break;
+      }
+    }
+  }
+
+  return skipped;
+}
+
+/**
  * Remove duplicate files from metadata (backward compat, metadata-only).
  */
 export function removeDuplicateMetadata(meta: MetadataStore): { total: number; duplicates: number; deleted: number } {

@@ -44,6 +44,9 @@ function buildMockApi(cloudEntries: Record<string, unknown>[], cloudFiles: Map<s
     pushFile: async () => ({ entry: { id: 'new-id', modifyTimeForSort: Date.now() / 1000 } }),
     createDir: async () => ({ fileEntry: { id: 'new-dir-id' } }),
     deleteFile: async () => ({}),
+    moveFile: async () => ({}),
+    renameFile: async () => ({}),
+    listRecent: async () => [],
   } as unknown as YoudaoNoteApi;
 }
 

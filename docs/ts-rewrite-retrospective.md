@@ -106,6 +106,15 @@ Review 的 checklist 全是结构性的，没有"功能对等性"这一维度。
 | executor 调用 merge | 冲突时先尝试 `threeWayMerge`，无冲突则写入并上传，有冲突才回退 backup+download |
 | 同步锁 | 新增 `lock.ts`（PID 文件锁 + 过期接管），engine 接入 |
 | 测试更新 | 新增 MD 归一化测试 14 个，全局 xxhash 初始化 setup |
+| calibrate_metadata | 新增 `classify/calibrate.ts`，两端都有但无 metadata 的文件自动建立基线 |
+| cloud move API | executor move case 调用 `moveFile` + `renameFile` API（保留 file_id 和历史） |
+| cleanup stale | 同步后清理 metadata 中云端已不存在的幽灵记录（`clearCloudId`） |
+| filter_by_direction | 支持 `pull` / `push` / `both` 三种同步方向过滤 |
+| retry_with_backoff | 所有 API 调用（download / upload / refine / move）包裹指数退避重试 |
+| engine 调用 dedup | 同步后自动执行 `autoDedup`（云端+本地删除、碰撞检测、引用保护） |
+| engine 调用 git | 同步后自动执行 `gitAutoCommit` |
+| hash warmup | 预计算两端都有文件的 content hash，加速分类和细化 |
+| orphan discard | 同步前跳过与 both 集合内容相同的孤立本地副本，避免无用上传 |
 | 验证 | 233 测试全绿，tsc --noEmit 通过，0 lint 错误 |
 
 ---
@@ -126,16 +135,22 @@ Review 的 checklist 全是结构性的，没有"功能对等性"这一维度。
 | 项目 | Python 位置 | 说明 | 状态 |
 |------|------------|------|------|
 | 完整去重 | `dedup.py` | autoDedup: 云端删除 + 碰撞检测(size) + 资源引用保护 + 评分保留最佳版本 | ✅ 已完成 |
+| calibrate_metadata | `decision.py` | 补全两端都有的文件的元数据 | ✅ 已完成 |
+| cloud move API | `engine.py` `_execute_cloud_moves` | executor 中用 moveFile/renameFile API 在云端直接移动 | ✅ 已完成 |
+| cleanup stale | `engine.py` `_cleanup_stale_paths` | 同步后清理 metadata 幽灵记录 | ✅ 已完成 |
+| filter_by_direction | `utils.py` | 按同步方向（pull/push/both）过滤 | ✅ 已完成 |
+| retry_with_backoff | `utils.py` | API 调用指数退避重试 | ✅ 已完成 |
+| engine 调用 dedup | `engine.py` `_run_dedup` | 同步后自动去重 | ✅ 已完成 |
+| engine 调用 git | `engine.py` `_git.commit_sync` | 同步后 git auto-commit | ✅ 已完成 |
 | 云端增量扫描 | `engine.py` `_try_cached_cloud_scan` | 每次全量扫描性能差；需 `listRecent` API | ☐ 需要 API 端点确认 |
-| calibrate_metadata | `engine.py` | 补全两端都有的文件的元数据 | ☐ 待实现 |
 
 ### P3 — 性能优化
 
-| 项目 | Python 位置 | 说明 |
-|------|------------|------|
-| hash warmup | `engine.py` `_warmup_hash_cache` | 并行预计算两端都有文件的哈希 |
-| discard_orphan_duplicates | `engine.py` | 跳过孤立本地副本上传 |
-| 大文件 mmap | `utils.py` `_hash_binary_file` | 二进制文件零拷贝哈希 |
+| 项目 | Python 位置 | 说明 | 状态 |
+|------|------------|------|------|
+| hash warmup | `engine.py` `_warmup_hash_cache` | 预计算两端都有文件的哈希 | ✅ 已完成 |
+| discard_orphan_duplicates | `moves.py` | 跳过孤立本地副本上传 | ✅ 已完成 |
+| 大文件 mmap | `utils.py` `_hash_binary_file` | 二进制文件零拷贝哈希 | ☐ 待实现 |
 
 ---
 
@@ -226,6 +241,9 @@ Review 的 checklist 全是结构性的，没有"功能对等性"这一维度。
 | 5 | 临时方案 TODO 规则 → coding-patterns.mdc | §5.5 | ✅ 已执行 |
 | 6 | P1 遗留项：移动检测增强 | §4 | ✅ 已执行（3-phase, 16 tests） |
 | 7 | P2 遗留项：完整去重 | §4 | ✅ 已执行（cloud+local delete, 10 tests） |
+| 8 | P2 遗留项：云端增量扫描 | §4 | ✅ 已执行（cached scan + listRecent + version） |
+| 9 | P2 遗留项：桌面客户端种子导入 | §4 | ✅ 已执行（desktop-data.ts） |
+| 10 | P3 遗留项：大文件流式哈希 | §4 | ✅ 已执行（streaming binary chunk hash） |
 
 ---
 
@@ -233,4 +251,10 @@ Review 的 checklist 全是结构性的，没有"功能对等性"这一维度。
 
 根本原因一句话：**重写被当作"写新代码"而不是"移植旧功能"来执行。** 设计、review、测试都面向"新代码是否自洽"，而不是"新代码是否覆盖了旧代码的所有行为"。
 
-已完成的修复补回了全部关键遗漏（P1 全部完成 + P2 去重完成）。剩余 P2（增量扫描、calibrate_metadata）和 P3（性能优化）依赖 API 端点或属于优化类，可按需推进。防止再次发生的 7 项改进措施已全部执行——不靠记忆，靠清单。
+所有遗漏功能已全部移植完成（P1/P2/P3 全部完成），包括：
+- 云端增量扫描（tryCachedCloudScan + listRecent + version tracking）
+- 桌面客户端冷启动种子（seedMetadataFromDesktop + readDesktopFile）
+- 大文件流式分块哈希（hashLargeBinaryFile，替代 Python mmap）
+- listRecent API 端点
+
+防止再次发生的 10 项改进措施已全部执行——不靠记忆，靠清单。

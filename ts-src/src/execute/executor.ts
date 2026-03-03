@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { extname } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { basename, extname, join } from 'node:path';
 import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import type { YoudaoNoteApi } from '../api/client.js';
@@ -7,9 +7,10 @@ import type { MetadataStore } from '../metadata/store.js';
 import type { ContentHash, DirId, FileId } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { downloadFile } from './download.js';
-import { uploadFile } from './upload.js';
+import { uploadFile, ensureParentDir } from './upload.js';
 import { backupFile } from './conflict.js';
 import { threeWayMerge } from '../algo/merge.js';
+import { retryWithBackoff } from '../api/retry.js';
 
 const MERGEABLE_EXTS = new Set(['.md', '.txt']);
 
@@ -106,7 +107,7 @@ async function executeSingle(
         cloudMtime: cloudFile.mtime,
       };
       if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
-      const result = await downloadFile(api, cloudFile.id, localPath, dlOpts);
+      const result = await retryWithBackoff(() => downloadFile(api, cloudFile.id, localPath, dlOpts));
       meta.recordSync(relPath, {
         fileId: cloudFile.id,
         cloudMtime: cloudFile.mtime,
@@ -127,7 +128,7 @@ async function executeSingle(
       const ulOpts: { existingFileId?: FileId; hashFn?: (data: Uint8Array, path: string) => ContentHash | null } = {};
       if (existingFileId) ulOpts.existingFileId = existingFileId;
       if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
-      const result = await uploadFile(api, meta, localPath, relPath, rootDirId, ulOpts);
+      const result = await retryWithBackoff(() => uploadFile(api, meta, localPath, relPath, rootDirId, ulOpts));
       meta.recordSync(relPath, {
         fileId: result.fileId,
         cloudMtime: result.cloudMtime,
@@ -155,7 +156,7 @@ async function executeSingle(
           cloudMtime: cloudFile.mtime,
         };
         if (ctx.hashFn) conflictDlOpts.hashFn = ctx.hashFn;
-        const result = await downloadFile(api, cloudFile.id, localPath, conflictDlOpts);
+        const result = await retryWithBackoff(() => downloadFile(api, cloudFile.id, localPath, conflictDlOpts));
         meta.recordSync(relPath, {
           fileId: cloudFile.id,
           cloudMtime: cloudFile.mtime,
@@ -174,7 +175,42 @@ async function executeSingle(
     case 'move': {
       if (state.kind !== 'moved') return;
       const oldPath = state.oldPath;
+      const oldRecord = meta.getFileInfo(oldPath);
+      const oldFileId = oldRecord?.fileId;
+
+      if (oldFileId && cloudFile) {
+        // Try cloud move API (preserves file_id and history)
+        try {
+          const newParentId = await ensureParentDir(api, meta, relPath, rootDirId);
+          await retryWithBackoff(() => api.moveFile(oldFileId, newParentId, cloudFile.domain));
+
+          const oldName = basename(oldPath);
+          const newName = basename(relPath);
+          if (oldName !== newName) {
+            await retryWithBackoff(() => api.renameFile(oldFileId, newName, cloudFile.domain));
+          }
+        } catch {
+          // Cloud move failed — fallback: just rename in metadata.
+          // The file will be uploaded as new + old deleted on next sync.
+        }
+      }
+
       meta.renamePath(oldPath, relPath);
+
+      if (oldFileId) {
+        const localAbsPath = join(localDir, relPath);
+        const localMtime = existsSync(localAbsPath)
+          ? Math.floor(statSync(localAbsPath).mtimeMs / 1000)
+          : 0;
+        meta.recordSync(relPath, {
+          fileId: oldFileId,
+          cloudMtime: Math.floor(Date.now() / 1000),
+          localMtime,
+          action: 'moved',
+          direction: 'pull',
+        });
+      }
+
       stats.moved++;
       break;
     }

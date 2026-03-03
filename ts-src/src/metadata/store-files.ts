@@ -167,3 +167,47 @@ export function updateOriginalDomain(db: Database.Database, path: string, domain
     'UPDATE files SET original_domain = ? WHERE path = ? AND original_domain IS NULL',
   ).run(domain, path);
 }
+
+export interface CloudFileSummary {
+  fileId: FileId;
+  cloudMtime: number;
+  parentId: string;
+  domain: number;
+  createTime: number;
+}
+
+/**
+ * Return all file records that have a non-empty file_id (for scan cache rebuild).
+ */
+export function getCloudFileSummaries(db: Database.Database): Map<string, CloudFileSummary> {
+  const rows = db.prepare(
+    "SELECT path, file_id, cloud_mtime, parent_id, domain, create_time FROM files WHERE file_id != ''",
+  ).all() as Array<Record<string, unknown>>;
+  const result = new Map<string, CloudFileSummary>();
+  for (const row of rows) {
+    result.set(row['path'] as string, {
+      fileId: (row['file_id'] as string || '') as FileId,
+      cloudMtime: (row['cloud_mtime'] as number) || 0,
+      parentId: (row['parent_id'] as string) || '',
+      domain: (row['domain'] as number) || 0,
+      createTime: (row['create_time'] as number) || 0,
+    });
+  }
+  return result;
+}
+
+/**
+ * Return paths that have a non-empty file_id but are not in activePaths.
+ * Used to clean up metadata for files that no longer exist in cloud.
+ */
+export function getStaleCloudPaths(db: Database.Database, activePaths: ReadonlySet<string>): string[] {
+  const rows = db.prepare("SELECT path FROM files WHERE file_id != ''").all() as Array<{ path: string }>;
+  return rows.filter((r) => !activePaths.has(r.path)).map((r) => r.path);
+}
+
+/**
+ * Clear the cloud file_id for a path (mark as local-only record).
+ */
+export function clearCloudId(db: Database.Database, path: string): void {
+  db.prepare("UPDATE files SET file_id = '' WHERE path = ?").run(path);
+}
