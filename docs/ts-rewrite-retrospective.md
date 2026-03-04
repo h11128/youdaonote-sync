@@ -629,3 +629,50 @@ Python 在文件名+祖先深度匹配后，还检查内容 hash：hash 不同�
 | 13 | MetadataRecord 增加 createTime | P2 | ✅ |
 
 **修复验证：** `tsc --noEmit` 通过，243 测试全绿，0 lint 错误。
+
+---
+
+## 十一、第五次审查：4 代理并行全模块逐函数对比（2026-03-03）
+
+### 11.1 审查方法
+
+用 4 个并行审查代理分别对比：engine、executor/download/upload、dedup/moves/scanner/utils、metadata/api/git/merge。每个代理独立读取完整的 Python 和 TS 源码，逐函数逐分支对照。
+
+### 11.2 发现与修复
+
+#### P0 — 影响数据安全
+
+| # | 差距 | Python 行为 | TS 原状 | 修复 |
+|---|------|------------|---------|------|
+| 1 | 去重资产组处理逻辑不同 | `_resolve_cloud_group`: 有引用+无引用 → 保留所有引用，删除所有无引用；全引用 → 跳过 | 只取最高分保留，删其余（忽略引用状态） | `resolve.ts` 新增 `resolveCloudGroup` 匹配 Python 三分支逻辑 |
+| 2 | `discardOrphanDuplicates` 缺少文件名净化 | `normalize_filename(basename(bp)).lower()` | `basename(bp).toLowerCase()`（未净化） | `orphan.ts` 加入 `sanitizeFilename` |
+
+#### P1 — 影响功能正确性
+
+| # | 差距 | Python 行为 | TS 原状 | 修复 |
+|---|------|------------|---------|------|
+| 3 | 云端快照未过滤 `.conflict.` 文件 | `".conflict." not in basename(k)` | 无此过滤 | `engine.ts` 加入 `.conflict.` 过滤 |
+| 4 | Phase 2 名称匹配多了 `.toLowerCase()` | `normalize_filename(b)` 大小写敏感 | `sanitizeFilename(b).toLowerCase()` 大小写不敏感 | `moves.ts` 去掉 `.toLowerCase()` |
+| 5 | 目录 download/upload 当文件处理 | `_execute_dir`: 下载=makedirs，上传=ensure_cloud_dir | 目录走 downloadFile/uploadFile → 失败 | `executor.ts` 新增 `executeDir` 分离处理 |
+
+#### P2 — 功能完善
+
+| # | 差距 | 修复 |
+|---|------|------|
+| 6 | `buildRefIndex` walk 路径不缓存 `file_refs` | `refs.ts` walk 路径也调用 `meta.setFileRefs` |
+| 7 | 去重 dry-run 无输出 | `execute.ts` dry-run 时打印将删除的文件和原因 |
+| 8 | GC 不清理孤立 `file_refs` | `health.ts` gc 中增加 `file_refs` 清理 |
+
+### 11.3 为什么前四次没发现
+
+| 盲区 | 原因 |
+|------|------|
+| 资产组去重 | 前次审查验证了"有引用的资产被跳过"，没验证"多引用+多无引用时的分组策略" |
+| 文件名净化 | orphan 函数是后加的，审查时只检查了"hash 匹配逻辑"没检查"name 匹配用了什么" |
+| `.conflict.` 过滤 | Python 在收集阶段过滤，不在 scan 阶段——前次只比较了 scan 和 classify |
+| 大小写敏感性 | Python 的 `normalize_filename` 不做 lower()，差异隐藏在一个缺少的 `.toLowerCase()` 调用中 |
+| 目录处理 | 前次审查只验证了"file 操作"，Python 的 `_execute_dir` 作为独立方法没被对照 |
+
+### 11.4 修复验证
+
+`tsc --noEmit` 通过，254 测试全绿（+11 新测试），0 lint 错误。

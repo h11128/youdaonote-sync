@@ -1,5 +1,6 @@
 import { basename } from 'node:path';
 import type { ContentHash } from '../types/common.js';
+import { sanitizeFilename } from '../util/path.js';
 
 /**
  * Discard orphan local duplicates before sync (matches Python discard_orphan_duplicates).
@@ -25,7 +26,7 @@ export function discardOrphanDuplicates(
 
   const bothByName = new Map<string, string[]>();
   for (const bp of both) {
-    const norm = basename(bp).toLowerCase();
+    const norm = sanitizeFilename(basename(bp)).toLowerCase();
     const list = bothByName.get(norm) ?? [];
     list.push(bp);
     bothByName.set(norm, list);
@@ -35,7 +36,7 @@ export function discardOrphanDuplicates(
     const lpHash = localHashes.get(lp);
     if (!lpHash) continue;
 
-    const candidates = bothByName.get(basename(lp).toLowerCase());
+    const candidates = bothByName.get(sanitizeFilename(basename(lp)).toLowerCase());
     if (!candidates) continue;
 
     if (candidates.some(bp => localHashes.get(bp) === lpHash)) {

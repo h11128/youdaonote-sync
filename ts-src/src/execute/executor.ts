@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
@@ -66,14 +66,27 @@ export async function executeAll(
 ): Promise<SyncStats> {
   const stats = emptyStats();
 
+  // Separate dirs and files (matches Python _execute_dir / _execute_file)
+  const dirEntries: Array<[string, FileState, SyncAction]> = [];
+  const fileEntries: Array<[string, FileState, SyncAction]> = [];
+
   for (const [relPath, state] of classified) {
     const action = stateToAction(state);
+    if (action === 'skip') { stats.skipped++; continue; }
 
-    if (action === 'skip') {
-      stats.skipped++;
-      continue;
-    }
+    const cf = cloud.get(relPath);
+    const isDir = cf?.isDir ?? false;
+    (isDir ? dirEntries : fileEntries).push([relPath, state, action]);
+  }
 
+  // Process dirs first (create parent dirs before files)
+  for (const [relPath, _state, action] of dirEntries) {
+    try {
+      await executeDir(relPath, action, ctx, stats);
+    } catch { stats.errors++; }
+  }
+
+  for (const [relPath, state, action] of fileEntries) {
     try {
       await executeSingle(relPath, state, action, cloud, ctx, stats, direction);
     } catch (e: unknown) {
@@ -83,6 +96,27 @@ export async function executeAll(
   }
 
   return Object.freeze(stats) as Readonly<SyncStats>;
+}
+
+/**
+ * Handle directory sync: download → create local dir, upload → create cloud dir.
+ * Matches Python _execute_dir.
+ */
+async function executeDir(
+  relPath: string,
+  action: SyncAction,
+  ctx: ExecuteContext,
+  stats: SyncStats,
+): Promise<void> {
+  if (action === 'download') {
+    mkdirSync(join(ctx.localDir, relPath), { recursive: true });
+    stats.downloaded++;
+  } else if (action === 'upload') {
+    await ensureParentDir(ctx.api, ctx.meta, relPath + '/_placeholder', ctx.rootDirId);
+    stats.uploaded++;
+  } else {
+    stats.skipped++;
+  }
 }
 
 async function executeSingle(

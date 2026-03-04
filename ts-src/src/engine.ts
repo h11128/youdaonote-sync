@@ -120,6 +120,12 @@ export class SyncEngine {
       filterCloudSnap(cloudSnap, scanOpts);
     }
 
+    // Filter out .conflict. backup files from cloud snapshot (matches Python)
+    for (const [path] of [...cloudSnap]) {
+      const name = path.split('/').pop() ?? '';
+      if (name.includes('.conflict.')) cloudSnap.delete(path);
+    }
+
     const localSnap = scanLocal(localDir, '', scanOpts);
 
     // 1b. Calibrate metadata for files present on both sides

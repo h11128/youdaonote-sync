@@ -56,9 +56,9 @@ export function buildRefIndex(
   } else {
     walkFiles(root, root, (entry) => {
       if (!entry.isMd) return;
-      for (const ref of extractRefsFromFile(entry.absPath, dirname(entry.absPath), root)) {
-        referenced.add(ref);
-      }
+      const newRefs = extractRefsFromFile(entry.absPath, dirname(entry.absPath), root);
+      for (const ref of newRefs) referenced.add(ref);
+      if (meta) meta.setFileRefs(entry.rel, [...newRefs]);
     });
   }
 

@@ -33,8 +33,13 @@ async function executeRemovals(
 ): Promise<string[]> {
   const deleted: string[] = [];
 
-  for (const { removePath, cloudFileId } of actions) {
-    if (dryRun) continue;
+  for (const { removePath, cloudFileId, keepPath, reason } of actions) {
+    if (dryRun) {
+      const cloudTag = cloudFileId ? ' + 云端' : '';
+      console.log(`  [去重] 删除${cloudTag} ${removePath}`);
+      console.log(`         ${reason ?? `keep ${keepPath}`}`);
+      continue;
+    }
 
     const full = join(root, removePath);
     try {

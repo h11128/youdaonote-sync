@@ -150,12 +150,12 @@ function matchByNormalizedName(
 ): void {
   const normIndex = new Map<string, string>();
   for (const np of newPaths) {
-    const key = dirname(np) + '/' + sanitizeFilename(basename(np)).toLowerCase();
+    const key = dirname(np) + '/' + sanitizeFilename(basename(np));
     normIndex.set(key, np);
   }
 
   for (const dp of [...deletedPaths]) {
-    const key = dirname(dp) + '/' + sanitizeFilename(basename(dp)).toLowerCase();
+    const key = dirname(dp) + '/' + sanitizeFilename(basename(dp));
     const match = normIndex.get(key);
     if (!match || !newPaths.has(match)) continue;
 

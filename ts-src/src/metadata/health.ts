@@ -85,6 +85,7 @@ export interface GcStats {
   readonly dirs: number;
   readonly logs: number;
   readonly bases: number;
+  readonly refs: number;
 }
 
 type MutableGcStats = { -readonly [K in keyof GcStats]: GcStats[K] };
@@ -105,7 +106,7 @@ export function gc(
   if (!localDir || typeof localDir !== 'string') {
     throw new Error('gc: localDir must be a non-empty string');
   }
-  const stats: MutableGcStats = { files: 0, dirs: 0, logs: 0, bases: 0 };
+  const stats: MutableGcStats = { files: 0, dirs: 0, logs: 0, bases: 0, refs: 0 };
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - 30 * 86400;
   const logCutoff = now - maxLogAgeDays * 86400;
@@ -131,6 +132,13 @@ export function gc(
       if (!existsSync(join(localDir, path))) {
         meta.removeBaseContent(path);
         stats.bases++;
+      }
+    }
+
+    for (const sourcePath of meta.getAllFileRefs().keys()) {
+      if (!existsSync(join(localDir, sourcePath))) {
+        meta.setFileRefs(sourcePath, []);
+        stats.refs++;
       }
     }
   });

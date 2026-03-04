@@ -130,20 +130,52 @@ function resolveAllCloud(
   root: string,
   stats: DedupStats,
 ): DedupAction[] {
-  const sorted = [...cloudPaths].sort((a, b) =>
-    compareScores(cloudScore(a, meta, root), cloudScore(b, meta, root)));
-  const keep = sorted[0]!;
-  const toRemove = sorted.slice(1);
-  const actions: DedupAction[] = [];
+  const [keepPaths, removePaths] = resolveCloudGroup(cloudPaths, meta, referenced, root, stats);
+  if (!removePaths) return [];
 
-  for (const r of toRemove) {
-    if (isAsset(r) && referenced.has(r)) { stats.protectedRefs++; continue; }
+  const actions: DedupAction[] = [];
+  for (const r of removePaths) {
     const fid = meta.getFileInfo(r)?.fileId ?? null;
-    actions.push({ removePath: r, cloudFileId: fid, keepPath: keep, reason: `keep ${keep}, delete cloud duplicate` });
+    actions.push({ removePath: r, cloudFileId: fid, keepPath: keepPaths[0]!, reason: `keep ${keepPaths[0]!}, delete cloud duplicate` });
   }
 
-  stats.kept++;
-  stats.deleted += actions.length;
-  stats.cloudDeleted += actions.length;
+  stats.kept += keepPaths.length;
+  stats.deleted += removePaths.length;
+  stats.cloudDeleted += removePaths.length;
   return actions;
+}
+
+/**
+ * All-cloud group resolution with asset-aware logic (matches Python _resolve_cloud_group).
+ *
+ * When any path is an asset:
+ * - If both referenced and unreferenced exist → keep all referenced, remove all unreferenced
+ * - If none are referenced → sort by score, keep best, remove rest
+ * - If all are referenced → skip the group
+ */
+function resolveCloudGroup(
+  cloudPaths: string[],
+  meta: MetadataStore,
+  referenced: Set<string>,
+  root: string,
+  stats: DedupStats,
+): [string[], string[] | null] {
+  if (cloudPaths.some(p => isAsset(p))) {
+    const ref = cloudPaths.filter(p => referenced.has(p));
+    const unref = cloudPaths.filter(p => !referenced.has(p));
+    if (ref.length > 0 && unref.length > 0) {
+      return [ref, unref];
+    } else if (ref.length === 0) {
+      const sorted = [...cloudPaths].sort((a, b) =>
+        compareScores(cloudScore(a, meta, root), cloudScore(b, meta, root)));
+      return [[sorted[0]!], sorted.slice(1)];
+    } else {
+      stats.skipped++;
+      return [cloudPaths, null];
+    }
+  }
+
+  const sorted = [...cloudPaths].sort((a, b) =>
+    compareScores(cloudScore(a, meta, root), cloudScore(b, meta, root)));
+  return [[sorted[0]!], sorted.slice(1)];
 }
