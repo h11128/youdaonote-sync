@@ -1,7 +1,8 @@
 /**
  * Youdao Note API: URL templates and request constants (headers, page size).
  */
-export const ROOT_ID_URL = 'https://note.youdao.com/yws/api/personal/file?method=getByPath&keyfrom=web&cstk={cstk}';
+export const ROOT_ID_URL =
+  'https://note.youdao.com/yws/api/personal/file?method=getByPath&keyfrom=web&cstk={cstk}';
 export const DIR_MES_URL =
   'https://note.youdao.com/yws/api/personal/file/{dir_id}?all=true&f=true&len={page_size}&sort=1' +
   '&isReverse=false&method=listPageByParentId&keyfrom=web&cstk={cstk}';

@@ -8,7 +8,7 @@
  * Matches Python desktop_data.py.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join } from 'node:path';
 import { platform, env } from 'node:process';
 import { homedir } from 'node:os';
 import Database from 'better-sqlite3';
@@ -19,7 +19,7 @@ import { mapCloudName } from './scan/name.js';
 export function findDesktopDataDir(): string | null {
   let base: string;
   if (platform === 'win32') {
-    base = env['APPDATA'] ?? '';
+    base = env.APPDATA ?? '';
   } else if (platform === 'darwin') {
     base = join(homedir(), 'Library', 'Application Support');
   } else {
@@ -53,14 +53,14 @@ export function findDesktopDb(dataDir: string): string | null {
 }
 
 function buildPathMap(conn: Database.Database): Map<string, string> {
-  const hasTable = conn.prepare(
-    "SELECT name FROM sqlite_master WHERE type='table' AND name='note_book'",
-  ).get();
+  const hasTable = conn
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='note_book'")
+    .get();
   if (!hasTable) return new Map();
 
-  const rows = conn.prepare(
-    "SELECT fileId, title, parentId FROM note_book WHERE del = 0 OR del IS NULL",
-  ).all() as Array<{ fileId: string; title: string; parentId: string }>;
+  const rows = conn
+    .prepare('SELECT fileId, title, parentId FROM note_book WHERE del = 0 OR del IS NULL')
+    .all() as { fileId: string; title: string; parentId: string }[];
 
   const folders = new Map<string, { title: string; parentId: string }>();
   for (const row of rows) {
@@ -70,9 +70,11 @@ function buildPathMap(conn: Database.Database): Map<string, string> {
   const cache = new Map<string, string>();
 
   function resolve(fid: string, depth: number): string {
-    if (cache.has(fid)) return cache.get(fid)!;
+    const cached = cache.get(fid);
+    if (cached !== undefined) return cached;
     if (depth > 50 || !folders.has(fid)) return '';
-    const info = folders.get(fid)!;
+    const info = folders.get(fid);
+    if (!info) return '';
     const pid = info.parentId;
     if (!pid || pid === fid) {
       cache.set(fid, '');
@@ -91,6 +93,63 @@ function buildPathMap(conn: Database.Database): Map<string, string> {
   return cache;
 }
 
+function normalizeTimestamp(ts: number): number {
+  if (!ts) return 0;
+  return ts > 1_000_000_000_000 ? Math.floor(ts / 1000) : ts;
+}
+
+function importDirs(
+  conn: Database.Database,
+  folderPaths: Map<string, string>,
+  meta: MetadataStore,
+): number {
+  let count = 0;
+  for (const [fid, path] of folderPaths) {
+    if (!path) continue;
+    const row = conn.prepare('SELECT parentId FROM note_book WHERE fileId = ?').get(fid) as
+      | { parentId: string }
+      | undefined;
+    meta.setDirInfo(path, fid as DirId, (row?.parentId ?? '') as DirId);
+    count++;
+  }
+  return count;
+}
+
+function importNotes(
+  conn: Database.Database,
+  folderPaths: Map<string, string>,
+  meta: MetadataStore,
+): number {
+  const noteRows = conn
+    .prepare(
+      'SELECT fileId, title, parentId, modifyTime, createTime, domain FROM note WHERE del = 0 AND dir = 0',
+    )
+    .all() as {
+    fileId: string;
+    title: string;
+    parentId: string;
+    modifyTime: number;
+    createTime: number;
+    domain: number;
+  }[];
+  let count = 0;
+  for (const row of noteRows) {
+    const folderPath = folderPaths.get(row.parentId || '') ?? '';
+    const localName = mapCloudName(row.title || '');
+    const relPath = folderPath ? `${folderPath}/${localName}` : localName;
+    meta.setFileInfo(relPath, {
+      fileId: row.fileId as FileId,
+      cloudMtime: normalizeTimestamp(row.modifyTime),
+      localMtime: 0,
+      parentId: row.parentId as DirId,
+      domain: row.domain,
+      createTime: normalizeTimestamp(row.createTime),
+    });
+    count++;
+  }
+  return count;
+}
+
 /**
  * Seed sync metadata from the desktop client's local DB (cold-start).
  * Returns the number of imported entries.
@@ -98,7 +157,6 @@ function buildPathMap(conn: Database.Database): Map<string, string> {
 export function seedMetadataFromDesktop(meta: MetadataStore, dataDir?: string): number {
   const dir = dataDir ?? findDesktopDataDir();
   if (!dir) return 0;
-
   const dbPath = findDesktopDb(dir);
   if (!dbPath) return 0;
 
@@ -112,59 +170,17 @@ export function seedMetadataFromDesktop(meta: MetadataStore, dataDir?: string): 
   try {
     const folderPaths = buildPathMap(conn);
     let count = 0;
-
     meta.batch(() => {
-      for (const [fid, path] of folderPaths) {
-        if (!path) continue;
-        const row = conn.prepare(
-          'SELECT parentId FROM note_book WHERE fileId = ?',
-        ).get(fid) as { parentId: string } | undefined;
-        const parentId = row?.parentId ?? '';
-        meta.setDirInfo(path, fid as DirId, parentId as DirId);
-        count++;
-      }
-
-      const noteRows = conn.prepare(
-        "SELECT fileId, title, parentId, modifyTime, createTime, domain, version FROM note WHERE del = 0 AND dir = 0",
-      ).all() as Array<{
-        fileId: string; title: string; parentId: string;
-        modifyTime: number; createTime: number; domain: number; version: number;
-      }>;
-
-      for (const row of noteRows) {
-        const parentId = row.parentId || '';
-        const folderPath = folderPaths.get(parentId) ?? '';
-        const title = row.title || '';
-        const localName = mapCloudName(title);
-        const relPath = folderPath ? `${folderPath}/${localName}` : localName;
-
-        let mtime = row.modifyTime || 0;
-        if (mtime > 1_000_000_000_000) mtime = Math.floor(mtime / 1000);
-
-        let ctime = row.createTime || 0;
-        if (ctime > 1_000_000_000_000) ctime = Math.floor(ctime / 1000);
-
-        meta.setFileInfo(relPath, {
-          fileId: row.fileId as FileId,
-          cloudMtime: mtime,
-          localMtime: 0,
-          parentId: parentId as DirId,
-          domain: row.domain,
-          createTime: ctime,
-        });
-        count++;
-      }
-
+      count += importDirs(conn, folderPaths, meta);
+      count += importNotes(conn, folderPaths, meta);
       if (count > 0) {
-        let maxVersion = 0;
-        const vRow = conn.prepare(
-          'SELECT MAX(version) as mv FROM note WHERE del = 0',
-        ).get() as { mv: number | null } | undefined;
-        if (vRow?.mv) maxVersion = vRow.mv;
+        const vRow = conn.prepare('SELECT MAX(version) as mv FROM note WHERE del = 0').get() as
+          | { mv: number | null }
+          | undefined;
+        const maxVersion = vRow?.mv ?? 0;
         meta.setState('last_cloud_version', String(maxVersion));
       }
     });
-
     meta.save();
     return count;
   } catch {
@@ -183,7 +199,8 @@ export function readDesktopFile(fileId: FileId, dataDir?: string): Buffer | null
   const dir = dataDir ?? findDesktopDataDir();
   if (!dir) return null;
 
-  const bucket = fileId[0]!.toLowerCase();
+  const first = fileId[0];
+  const bucket = first ? first.toLowerCase() : 'x';
   const path = join(dir, 'file', bucket, fileId);
   if (!existsSync(path)) return null;
 

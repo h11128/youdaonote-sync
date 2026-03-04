@@ -6,12 +6,14 @@
  * flow will be implemented when the CLI layer is built.
  */
 
-export async function browserLogin(): Promise<string | null> {
+export function browserLogin(): Promise<string | null> {
   // Placeholder: Playwright persistent context login
   // Implementation deferred to Phase 5 (CLI layer)
-  throw new Error(
-    'Browser login not yet implemented in TypeScript. ' +
-    'Use the Python CLI (python -m src login) to obtain cookies, ' +
-    'then the TS engine can use the shared cookies.json.',
+  return Promise.reject(
+    new Error(
+      'Browser login not yet implemented in TypeScript. ' +
+        'Use the Python CLI (python -m src login) to obtain cookies, ' +
+        'then the TS engine can use the shared cookies.json.',
+    ),
   );
 }

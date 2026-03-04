@@ -18,6 +18,7 @@ function makeMeta(overrides: Partial<MetadataRecord> = {}): MetadataRecord {
     domain: NoteDomain.MARKDOWN,
     lastSyncAt: 900,
     originalDomain: null,
+    createTime: 800,
     ...overrides,
   };
 }
@@ -76,7 +77,7 @@ describe('Refine rules completeness', () => {
         localHashChanged: localChanged,
         cloudHashEqualMeta: cloudEqMeta,
       };
-      const matches = REFINE_RULES.filter(r => matchesRule(cond, r.when));
+      const matches = REFINE_RULES.filter((r) => matchesRule(cond, r.when));
       expect(matches.length).toBe(1);
     },
   );

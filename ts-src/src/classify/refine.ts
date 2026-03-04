@@ -20,12 +20,9 @@ export function refineCloudModified(
 ): FileState {
   const cond: RefineConditions = {
     cloudHashEqualLocal: cloudHash === localHash,
-    localHashChanged: meta?.contentHash != null
-      ? localHash !== meta.contentHash
-      : false,
-    cloudHashEqualMeta: meta?.cloudContentHash != null
-      ? cloudHash === meta.cloudContentHash
-      : false,
+    localHashChanged: meta?.contentHash != null ? localHash !== meta.contentHash : false,
+    cloudHashEqualMeta:
+      meta?.cloudContentHash != null ? cloudHash === meta.cloudContentHash : false,
   };
 
   for (const rule of REFINE_RULES) {

@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
-import type { ContentHash } from '../types/common.js';
+import type { ContentHash, FileId } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { DedupAction, DedupStats, FileDeleter } from './types.js';
 import { emptyDedupStats } from './types.js';
@@ -19,49 +19,202 @@ function removeEmptyParents(filePath: string, root: string): void {
       } else {
         break;
       }
-    } catch { break; }
+    } catch {
+      break;
+    }
   }
 }
 
-async function executeRemovals(
-  actions: DedupAction[],
-  root: string,
-  meta: MetadataStore,
-  api: FileDeleter | null,
-  dryRun: boolean,
+interface ExecuteRemovalsOpts {
+  actions: DedupAction[];
+  root: string;
+  meta: MetadataStore;
+  api: FileDeleter | null;
+  dryRun: boolean;
+  stats: DedupStats;
+}
+
+function handleDryRunAction(
+  removePath: string,
+  cloudFileId: string | undefined,
+  reason: string,
+): void {
+  const cloudTag = cloudFileId ? ' + 云端' : '';
+  console.log(`  [去重] 删除${cloudTag} ${removePath}`);
+  console.log(`         ${reason}`);
+}
+
+interface LocalRemovalResult {
+  ok: true;
+  fullPath: string;
+  didDelete: boolean;
+}
+
+interface ProcessLocalRemovalOpts {
+  root: string;
+  removePath: string;
+  cloudFileId: string | null;
+  meta: MetadataStore;
+  stats: DedupStats;
+}
+
+function processLocalRemoval(opts: ProcessLocalRemovalOpts): LocalRemovalResult | null {
+  const { root, removePath, cloudFileId, meta, stats } = opts;
+  const full = join(root, removePath);
+  try {
+    meta.removeFileInfo(removePath);
+    if (existsSync(full)) {
+      unlinkSync(full);
+      removeEmptyParents(full, root);
+      return { ok: true, fullPath: full, didDelete: true };
+    }
+  } catch {
+    stats.deleted--;
+    if (cloudFileId) stats.cloudDeleted--;
+    return null;
+  }
+  return { ok: true, fullPath: full, didDelete: false };
+}
+
+async function deleteCloudFile(
+  cloudFileId: FileId,
+  api: FileDeleter,
   stats: DedupStats,
-): Promise<string[]> {
+): Promise<void> {
+  try {
+    await api.deleteFile(cloudFileId);
+  } catch {
+    stats.cloudDeleted--;
+  }
+}
+
+interface ExecuteSingleRemovalCtx {
+  root: string;
+  meta: MetadataStore;
+  api: FileDeleter | null;
+  stats: DedupStats;
+}
+
+async function executeSingleRemoval(
+  action: DedupAction,
+  ctx: ExecuteSingleRemovalCtx,
+): Promise<string | null> {
+  const { root, meta, api, stats } = ctx;
+  const result = processLocalRemoval({
+    root,
+    removePath: action.removePath,
+    cloudFileId: action.cloudFileId,
+    meta,
+    stats,
+  });
+  if (!result) return null;
+
+  if (action.cloudFileId && api) {
+    await deleteCloudFile(action.cloudFileId, api, stats);
+  }
+  return result.didDelete ? result.fullPath : null;
+}
+
+async function executeRemovals(opts: ExecuteRemovalsOpts): Promise<string[]> {
+  const { actions, root, meta, api, dryRun, stats } = opts;
   const deleted: string[] = [];
+  const ctx: ExecuteSingleRemovalCtx = { root, meta, api, stats };
 
-  for (const { removePath, cloudFileId, keepPath, reason } of actions) {
+  for (const action of actions) {
     if (dryRun) {
-      const cloudTag = cloudFileId ? ' + 云端' : '';
-      console.log(`  [去重] 删除${cloudTag} ${removePath}`);
-      console.log(`         ${reason ?? `keep ${keepPath}`}`);
+      handleDryRunAction(action.removePath, action.cloudFileId ?? undefined, action.reason);
       continue;
     }
-
-    const full = join(root, removePath);
-    try {
-      meta.removeFileInfo(removePath);
-      if (existsSync(full)) {
-        unlinkSync(full);
-        deleted.push(full);
-        removeEmptyParents(full, root);
-      }
-    } catch {
-      stats.deleted--;
-      if (cloudFileId) stats.cloudDeleted--;
-      continue;
-    }
-
-    if (cloudFileId && api) {
-      try { await api.deleteFile(cloudFileId); }
-      catch { stats.cloudDeleted--; }
-    }
+    const delPath = await executeSingleRemoval(action, ctx);
+    if (delPath) deleted.push(delPath);
   }
 
   return deleted;
+}
+
+function buildRawDuplicates(hashIndex: Map<ContentHash, string[]>): Map<ContentHash, string[]> {
+  const rawDups = new Map<ContentHash, string[]>();
+  for (const [hash, paths] of hashIndex) {
+    if (paths.length > 1) rawDups.set(hash, paths);
+  }
+  return rawDups;
+}
+
+function shouldSkipEmptyFile(root: string, firstPath: string): boolean {
+  try {
+    return statSync(join(root, firstPath)).size === 0;
+  } catch {
+    return true;
+  }
+}
+
+interface CollectDedupActionsInput {
+  dupGroups: Map<string, string[]>;
+  root: string;
+  meta: MetadataStore;
+  referenced: Set<string>;
+  stats: DedupStats;
+}
+
+function collectDedupActions(input: CollectDedupActionsInput): DedupAction[] {
+  const { dupGroups, root, meta, referenced, stats } = input;
+  const allActions: DedupAction[] = [];
+  for (const key of [...dupGroups.keys()].sort()) {
+    const paths = dupGroups.get(key);
+    if (!paths || paths.length === 0) continue;
+    stats.groups++;
+    const firstPath = paths[0];
+    if (!firstPath || shouldSkipEmptyFile(root, firstPath)) {
+      stats.skipped++;
+      continue;
+    }
+    allActions.push(...resolveGroup({ paths, meta, referenced, root, stats }));
+  }
+  return allActions;
+}
+
+interface AutoDedupOpts {
+  api?: FileDeleter;
+  dryRun?: boolean;
+  hashCache?: Map<string, ContentHash>;
+  localFiles?: Map<string, { path: string; mtime: number; isDir: boolean }>;
+}
+
+function runAutoDedupPipeline(
+  root: string,
+  meta: MetadataStore,
+  opts: AutoDedupOpts,
+): Promise<DedupResult> {
+  const stats = emptyDedupStats();
+  const indexOpts: BuildIndexOpts = { hashCache: opts.hashCache, localFiles: opts.localFiles };
+  const hashIndex = buildHashIndex(root, meta, indexOpts);
+  const referenced = buildRefIndex(root, opts.localFiles, meta);
+  const rawDups = buildRawDuplicates(hashIndex);
+
+  if (rawDups.size === 0) return Promise.resolve({ stats, deletedPaths: [] });
+
+  const dupGroups = classifyDuplicates(rawDups, root, stats);
+  const allActions = collectDedupActions({
+    dupGroups,
+    root,
+    meta,
+    referenced,
+    stats,
+  });
+
+  if (allActions.length === 0) return Promise.resolve({ stats, deletedPaths: [] });
+
+  return executeRemovals({
+    actions: allActions,
+    root,
+    meta,
+    api: opts.api ?? null,
+    dryRun: opts.dryRun ?? false,
+    stats,
+  }).then((deletedPaths) => {
+    if (!opts.dryRun) meta.save();
+    return { stats, deletedPaths };
+  });
 }
 
 /**
@@ -74,51 +227,12 @@ async function executeRemovals(
 export async function autoDedup(
   root: string,
   meta: MetadataStore,
-  opts?: {
-    api?: FileDeleter;
-    dryRun?: boolean;
-    hashCache?: Map<string, ContentHash>;
-    localFiles?: Map<string, { path: string; mtime: number; isDir: boolean }>;
-  },
+  opts?: AutoDedupOpts,
 ): Promise<DedupResult> {
   if (!root || typeof root !== 'string') {
     throw new Error('autoDedup: root must be a non-empty string');
   }
-  const stats = emptyDedupStats();
-
-  const indexOpts: BuildIndexOpts = {
-    hashCache: opts?.hashCache,
-    localFiles: opts?.localFiles,
-  };
-  const hashIndex = buildHashIndex(root, meta, indexOpts);
-  const referenced = buildRefIndex(root, opts?.localFiles, meta);
-
-  const rawDups = new Map<ContentHash, string[]>();
-  for (const [hash, paths] of hashIndex) {
-    if (paths.length > 1) rawDups.set(hash, paths);
-  }
-  if (rawDups.size === 0) return { stats, deletedPaths: [] };
-
-  const dupGroups = classifyDuplicates(rawDups, root, stats);
-  const allActions: DedupAction[] = [];
-
-  for (const key of [...dupGroups.keys()].sort()) {
-    const paths = dupGroups.get(key)!;
-    stats.groups++;
-
-    try {
-      if (statSync(join(root, paths[0]!)).size === 0) { stats.skipped++; continue; }
-    } catch { stats.skipped++; continue; }
-
-    allActions.push(...resolveGroup(paths, meta, referenced, root, stats));
-  }
-
-  if (allActions.length === 0) return { stats, deletedPaths: [] };
-
-  const deletedPaths = await executeRemovals(allActions, root, meta, opts?.api ?? null, opts?.dryRun ?? false, stats);
-  if (!opts?.dryRun) meta.save();
-
-  return { stats, deletedPaths };
+  return runAutoDedupPipeline(root, meta, opts ?? {});
 }
 
 export interface DedupResult {

@@ -15,32 +15,17 @@ export interface VerifyIssue {
   readonly detail: string;
 }
 
-/**
- * Verify metadata consistency against local files.
- *
- * Checks:
- * - Files in metadata but not on disk (orphans)
- * - content_hash mismatch between metadata and actual file
- * - Directories in metadata but not on disk
- *
- * @param autoFix When true, auto-repairs hash mismatches and removes orphan dirs.
- */
-export function verify(
-  meta: MetadataStore,
-  localDir: string,
-  autoFix = false,
-): VerifyIssue[] {
-  if (!localDir || typeof localDir !== 'string') {
-    throw new Error('verify: localDir must be a non-empty string');
-  }
+function verifyFileIssues(meta: MetadataStore, localDir: string): VerifyIssue[] {
   const issues: VerifyIssue[] = [];
-
-  const allFiles = meta.getAllFiles();
-  for (const [path, record] of allFiles) {
+  for (const [path, record] of meta.getAllFiles()) {
     const full = join(localDir, path);
     if (!existsSync(full)) {
       if (record.fileId) {
-        issues.push({ path, type: VerifyIssueType.ORPHAN, detail: 'local file missing but has file_id' });
+        issues.push({
+          path,
+          type: VerifyIssueType.ORPHAN,
+          detail: 'local file missing but has file_id',
+        });
       }
       continue;
     }
@@ -55,28 +40,49 @@ export function verify(
       }
     }
   }
+  return issues;
+}
 
-  const allDirs = meta.getAllDirs();
-  for (const [path] of allDirs) {
+function verifyDirIssues(meta: MetadataStore, localDir: string): VerifyIssue[] {
+  const issues: VerifyIssue[] = [];
+  for (const [path] of meta.getAllDirs()) {
     const full = join(localDir, path);
     if (!existsSync(full)) {
       issues.push({ path, type: VerifyIssueType.ORPHAN_DIR, detail: 'local directory missing' });
     }
   }
+  return issues;
+}
 
-  if (autoFix && issues.length > 0) {
-    meta.batch(() => {
-      for (const issue of issues) {
-        if (issue.type === VerifyIssueType.HASH_MISMATCH) {
-          const actual = computeContentHashFromFile(join(localDir, issue.path));
-          if (actual) meta.updateContentHash(issue.path, actual);
-        } else if (issue.type === VerifyIssueType.ORPHAN_DIR) {
-          meta.removeDir(issue.path);
-        }
+function applyVerifyFixes(meta: MetadataStore, localDir: string, issues: VerifyIssue[]): void {
+  meta.batch(() => {
+    for (const issue of issues) {
+      if (issue.type === VerifyIssueType.HASH_MISMATCH) {
+        const actual = computeContentHashFromFile(join(localDir, issue.path));
+        if (actual) meta.updateContentHash(issue.path, actual);
+      } else if (issue.type === VerifyIssueType.ORPHAN_DIR) {
+        meta.removeDir(issue.path);
       }
-    });
-  }
+    }
+  });
+}
 
+/**
+ * Verify metadata consistency against local files.
+ *
+ * Checks:
+ * - Files in metadata but not on disk (orphans)
+ * - content_hash mismatch between metadata and actual file
+ * - Directories in metadata but not on disk
+ *
+ * @param autoFix When true, auto-repairs hash mismatches and removes orphan dirs.
+ */
+export function verify(meta: MetadataStore, localDir: string, autoFix = false): VerifyIssue[] {
+  if (!localDir || typeof localDir !== 'string') {
+    throw new Error('verify: localDir must be a non-empty string');
+  }
+  const issues = [...verifyFileIssues(meta, localDir), ...verifyDirIssues(meta, localDir)];
+  if (autoFix && issues.length > 0) applyVerifyFixes(meta, localDir, issues);
   return issues;
 }
 
@@ -98,11 +104,7 @@ type MutableGcStats = { -readonly [K in keyof GcStats]: GcStats[K] };
  * - logs: sync_log entries older than maxLogAgeDays
  * - bases: file_base entries whose local file no longer exists
  */
-export function gc(
-  meta: MetadataStore,
-  localDir: string,
-  maxLogAgeDays = 90,
-): GcStats {
+export function gc(meta: MetadataStore, localDir: string, maxLogAgeDays = 90): GcStats {
   if (!localDir || typeof localDir !== 'string') {
     throw new Error('gc: localDir must be a non-empty string');
   }
@@ -155,6 +157,73 @@ export interface HealStats {
 
 type MutableHealStats = { -readonly [K in keyof HealStats]: HealStats[K] };
 
+function healOrphanRecords(
+  meta: MetadataStore,
+  localDir: string,
+  stats: MutableHealStats,
+  autoFix: boolean,
+): void {
+  for (const [path, record] of meta.getAllFiles()) {
+    const exists = existsSync(join(localDir, path));
+    if (!exists && !record.fileId) {
+      stats.orphan++;
+      if (autoFix) meta.removeFileInfo(path);
+    }
+  }
+}
+
+function countZeroCloud(meta: MetadataStore): number {
+  let count = 0;
+  for (const [, record] of meta.getAllFiles()) {
+    if (record.cloudMtime === 0 && record.fileId) count++;
+  }
+  return count;
+}
+
+function healMtimeDrift(
+  meta: MetadataStore,
+  localDir: string,
+  stats: MutableHealStats,
+  autoFix: boolean,
+): void {
+  for (const [path, record] of meta.getAllFiles()) {
+    const full = join(localDir, path);
+    if (!existsSync(full)) continue;
+    if (!record.localMtime || !record.contentHash) continue;
+
+    const actualMtime = Math.floor(statSync(full).mtimeMs / 1000);
+    if (actualMtime === record.localMtime) continue;
+
+    const actualHash = computeContentHashFromFile(full);
+    if (actualHash && actualHash === record.contentHash) {
+      stats.mtimeDrift++;
+      if (autoFix) meta.updateLocalMtime(path, actualMtime);
+    }
+  }
+}
+
+function healHashBackfill(
+  meta: MetadataStore,
+  localDir: string,
+  stats: MutableHealStats,
+  autoFix: boolean,
+): void {
+  for (const [path, record] of meta.getAllFiles()) {
+    const full = join(localDir, path);
+    if (!existsSync(full)) continue;
+    if (record.contentHash || !record.fileId || !record.localMtime) continue;
+
+    const actualMtime = Math.floor(statSync(full).mtimeMs / 1000);
+    if (actualMtime !== record.localMtime) continue;
+
+    const actualHash = computeContentHashFromFile(full);
+    if (actualHash) {
+      stats.hashBackfill++;
+      if (autoFix) meta.updateContentHash(path, actualHash);
+    }
+  }
+}
+
 /**
  * Lightweight self-healing pass run before each sync.
  *
@@ -164,51 +233,16 @@ type MutableHealStats = { -readonly [K in keyof HealStats]: HealStats[K] };
  * 3. cloud_mtime = 0 (legacy migration leftover → log warning)
  * 4. content_hash missing (has file_id + local_mtime but no hash → backfill)
  */
-export function heal(
-  meta: MetadataStore,
-  localDir: string,
-  autoFix = false,
-): HealStats {
+export function heal(meta: MetadataStore, localDir: string, autoFix = false): HealStats {
   if (!localDir || typeof localDir !== 'string') {
     throw new Error('heal: localDir must be a non-empty string');
   }
   const stats: MutableHealStats = { mtimeDrift: 0, orphan: 0, zeroCloud: 0, hashBackfill: 0 };
-  const allFiles = meta.getAllFiles();
 
-  for (const [path, record] of allFiles) {
-    const full = join(localDir, path);
-    const exists = existsSync(full);
-
-    if (!exists && !record.fileId) {
-      stats.orphan++;
-      if (autoFix) meta.removeFileInfo(path);
-      continue;
-    }
-    if (!exists) continue;
-
-    const actualMtime = Math.floor(statSync(full).mtimeMs / 1000);
-
-    if (record.localMtime && actualMtime !== record.localMtime && record.contentHash) {
-      const actualHash = computeContentHashFromFile(full);
-      if (actualHash && actualHash === record.contentHash) {
-        stats.mtimeDrift++;
-        if (autoFix) meta.updateLocalMtime(path, actualMtime);
-      }
-    }
-
-    if (record.cloudMtime === 0 && record.fileId) {
-      stats.zeroCloud++;
-    }
-
-    if (!record.contentHash && record.fileId && record.localMtime > 0
-      && actualMtime === record.localMtime) {
-      const actualHash = computeContentHashFromFile(full);
-      if (actualHash) {
-        stats.hashBackfill++;
-        if (autoFix) meta.updateContentHash(path, actualHash);
-      }
-    }
-  }
+  healOrphanRecords(meta, localDir, stats, autoFix);
+  stats.zeroCloud = countZeroCloud(meta);
+  healMtimeDrift(meta, localDir, stats, autoFix);
+  healHashBackfill(meta, localDir, stats, autoFix);
 
   if (autoFix) meta.save();
   return stats;

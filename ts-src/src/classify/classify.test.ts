@@ -5,7 +5,6 @@ import { extractConditions } from './conditions.js';
 import type { ClassifyInput, Conditions } from './conditions.js';
 import { RULES } from './rules.js';
 import { asContentHash, asDirId, asFileId, NoteDomain } from '../types/common.js';
-import type { ContentHash } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { MetadataRecord } from '../types/metadata.js';
 
@@ -44,13 +43,14 @@ function makeMeta(overrides: Partial<MetadataRecord> = {}): MetadataRecord {
     domain: NoteDomain.MARKDOWN,
     lastSyncAt: 900,
     originalDomain: null,
+    createTime: 800,
     ...overrides,
   };
 }
 
 // --- 14 FileState kind tests ---
 
-describe('classify: each FileState kind', () => {
+describe('classify: sync and new states', () => {
   it('synced — both exist, nothing changed', () => {
     const result = classify({
       local: makeLocal(),
@@ -80,7 +80,9 @@ describe('classify: each FileState kind', () => {
     });
     expect(result.kind).toBe('cloudNew');
   });
+});
 
+describe('classify: deleted states', () => {
   it('localDeleted — local gone, cloud unchanged since last sync', () => {
     const result = classify({
       local: null,
@@ -120,7 +122,9 @@ describe('classify: each FileState kind', () => {
     });
     expect(result.kind).toBe('cloudDeletedLocalModified');
   });
+});
 
+describe('classify: modified states', () => {
   it('localModified — both exist, only local hash changed', () => {
     const result = classify({
       local: makeLocal(),
@@ -226,7 +230,7 @@ describe('Decision Table completeness', () => {
         localMtimeChanged: lmc,
       };
 
-      const matches = RULES.filter(r => matchesRule(cond, r.when));
+      const matches = RULES.filter((r) => matchesRule(cond, r.when));
       expect(matches.length).toBe(1);
     },
   );
@@ -274,7 +278,9 @@ describe('matchesRule', () => {
 
 describe('classify preconditions', () => {
   it('classify throws when input is null', () => {
-    expect(() => classify(null as unknown as ClassifyInput)).toThrow(/classify input must not be null/);
+    expect(() => classify(null as unknown as ClassifyInput)).toThrow(
+      /classify input must not be null/,
+    );
   });
 
   it('classifyAll throws when any map is null', () => {
@@ -282,9 +288,17 @@ describe('classify preconditions', () => {
     const local = new Map();
     const meta = new Map();
     const hashes = new Map();
-    expect(() => classifyAll(null as unknown as typeof cloud, local, meta, hashes)).toThrow(/must not be null/);
-    expect(() => classifyAll(cloud, null as unknown as typeof local, meta, hashes)).toThrow(/must not be null/);
-    expect(() => classifyAll(cloud, local, null as unknown as typeof meta, hashes)).toThrow(/must not be null/);
-    expect(() => classifyAll(cloud, local, meta, null as unknown as typeof hashes)).toThrow(/must not be null/);
+    expect(() => classifyAll(null as unknown as typeof cloud, local, meta, hashes)).toThrow(
+      /must not be null/,
+    );
+    expect(() => classifyAll(cloud, null as unknown as typeof local, meta, hashes)).toThrow(
+      /must not be null/,
+    );
+    expect(() => classifyAll(cloud, local, null as unknown as typeof meta, hashes)).toThrow(
+      /must not be null/,
+    );
+    expect(() => classifyAll(cloud, local, meta, null as unknown as typeof hashes)).toThrow(
+      /must not be null/,
+    );
   });
 });

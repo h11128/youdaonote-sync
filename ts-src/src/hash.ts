@@ -1,13 +1,34 @@
-import { readFileSync, statSync, openSync, readSync, closeSync, fstatSync } from 'node:fs';
+import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { extname } from 'node:path';
 import type { ContentHash } from './types/common.js';
 import { asContentHash } from './types/common.js';
 import { initXxhash, xxh128, createXxh64 } from './algo/xxhash.js';
 
 const TEXT_EXTENSIONS = new Set([
-  '.md', '.txt', '.note', '.clip', '.json', '.xml', '.html', '.htm',
-  '.css', '.js', '.ts', '.py', '.sh', '.yaml', '.yml', '.toml', '.ini',
-  '.cfg', '.csv', '.log', '.rst', '.tex', '.bib', '.org',
+  '.md',
+  '.txt',
+  '.note',
+  '.clip',
+  '.json',
+  '.xml',
+  '.html',
+  '.htm',
+  '.css',
+  '.js',
+  '.ts',
+  '.py',
+  '.sh',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.cfg',
+  '.csv',
+  '.log',
+  '.rst',
+  '.tex',
+  '.bib',
+  '.org',
 ]);
 
 const MD_NORMALIZABLE_EXTENSIONS = new Set(['.md', '.txt']);
@@ -49,7 +70,7 @@ export function normalizeMdFormatting(text: string): string {
       s = cells
         .map((c) => {
           const t = c.trim();
-          return t && [...t].every((ch) => '-: '.includes(ch)) ? '---' : t;
+          return t && Array.from(t).every((ch) => '-: '.includes(ch)) ? '---' : t;
         })
         .join('|');
     }
@@ -67,7 +88,7 @@ export function normalizeMdFormatting(text: string): string {
     // collapse internal consecutive spaces
     s = s.replace(/ {2,}/g, ' ');
     // backslash escapes
-    s = s.replace(/\\([_$~&*#{}|.!\[\]()])/g, '$1');
+    s = s.replace(/\\([[_$~&*#{}|.!\]()])/g, '$1');
     // angle-bracket links: <https://...> → https://...
     s = s.replace(/<(https?:\/\/[^>]+)>/g, '$1');
     // remove inline code backticks
@@ -94,7 +115,10 @@ function normalizeTextContent(buf: Buffer, filePath: string): string {
  * For text content: normalizes CRLF → LF, strips BOM, normalizes MD formatting.
  * For binary content: hashes raw bytes as-is.
  */
-export function computeContentHashFromBytes(data: Uint8Array, filePath: string): ContentHash | null {
+export function computeContentHashFromBytes(
+  data: Uint8Array,
+  filePath: string,
+): ContentHash | null {
   try {
     if (isTextFile(filePath)) {
       const text = normalizeTextContent(Buffer.from(data), filePath);
@@ -116,6 +140,44 @@ export function computeContentHashFromBytes(data: Uint8Array, filePath: string):
 const LARGE_BINARY_CHUNK = 1024 * 1024; // 1 MB chunks for streaming binary hash
 
 /**
+ * Hash a large text file (non-.md/.txt) using chunk-based reads with CRLF handling.
+ */
+function hashLargeTextFile(filePath: string): ContentHash | null {
+  const fd = openSync(filePath, 'r');
+  const h0 = createXxh64(0n);
+  const h1 = createXxh64(0x9e3779b97f4a7c15n);
+  const chunk = Buffer.alloc(CHUNK_SIZE);
+  let firstChunk = true;
+  let prevEndsWithCr = false;
+  let bytesRead: number;
+
+  try {
+    while ((bytesRead = readSync(fd, chunk, 0, CHUNK_SIZE, null)) > 0) {
+      let slice = chunk.subarray(0, bytesRead);
+      if (firstChunk) {
+        if (slice.length >= 3 && slice[0] === 0xef && slice[1] === 0xbb && slice[2] === 0xbf) {
+          slice = slice.subarray(3);
+        }
+        firstChunk = false;
+      }
+      if (prevEndsWithCr && slice.length > 0 && slice[0] === 0x0a) {
+        slice = slice.subarray(1);
+      }
+      let str = slice.toString('utf-8').replace(/\r\n/g, '\n');
+      prevEndsWithCr = slice.length > 0 && slice[slice.length - 1] === 0x0d;
+      if (prevEndsWithCr) str = str.slice(0, -1) + '\n';
+      h0.update(str);
+      h1.update(str);
+    }
+    const hi = h0.digest().toString(16).padStart(16, '0');
+    const lo = h1.digest().toString(16).padStart(16, '0');
+    return asContentHash(hi + lo);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
  * Compute content hash (xxHash-128) from a file on disk.
  *
  * Small files (≤ 1MB): read all at once.
@@ -126,61 +188,12 @@ const LARGE_BINARY_CHUNK = 1024 * 1024; // 1 MB chunks for streaming binary hash
 export function computeContentHashFromFile(filePath: string): ContentHash | null {
   try {
     const st = statSync(filePath);
-    const isText = isTextFile(filePath);
-
-    // .md/.txt always need full read for normalization
     if (isMdNormalizable(filePath) || st.size <= SMALL_FILE_THRESHOLD) {
       const data = readFileSync(filePath);
       return computeContentHashFromBytes(data, filePath);
     }
-
-    // Large binary file: streaming chunk-based hash
-    if (!isText) {
-      return hashLargeBinaryFile(filePath);
-    }
-
-    // Large text file (non-md): chunk-based with CRLF handling
-    const fd = openSync(filePath, 'r');
-    const h0 = createXxh64(0n);
-    const h1 = createXxh64(0x9e3779b97f4a7c15n);
-    const chunk = Buffer.alloc(CHUNK_SIZE);
-    let firstChunk = true;
-    let prevEndsWithCr = false;
-    let bytesRead: number;
-
-    try {
-      while ((bytesRead = readSync(fd, chunk, 0, CHUNK_SIZE, null)) > 0) {
-        let slice = chunk.subarray(0, bytesRead);
-
-        if (firstChunk) {
-          if (slice.length >= 3 && slice[0] === 0xef && slice[1] === 0xbb && slice[2] === 0xbf) {
-            slice = slice.subarray(3);
-          }
-          firstChunk = false;
-        }
-
-        if (prevEndsWithCr && slice.length > 0 && slice[0] === 0x0a) {
-          slice = slice.subarray(1);
-        }
-
-        let str = slice.toString('utf-8');
-        str = str.replace(/\r\n/g, '\n');
-
-        prevEndsWithCr = slice.length > 0 && slice[slice.length - 1] === 0x0d;
-        if (prevEndsWithCr) {
-          str = str.slice(0, -1) + '\n';
-        }
-
-        h0.update(str);
-        h1.update(str);
-      }
-    } finally {
-      closeSync(fd);
-    }
-
-    const hi = h0.digest().toString(16).padStart(16, '0');
-    const lo = h1.digest().toString(16).padStart(16, '0');
-    return asContentHash(hi + lo);
+    if (!isTextFile(filePath)) return hashLargeBinaryFile(filePath);
+    return hashLargeTextFile(filePath);
   } catch {
     return null;
   }

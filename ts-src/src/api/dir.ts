@@ -8,11 +8,36 @@ export interface DirListContext {
   getCstk(): string;
 }
 
+function extractEntryId(fe: Record<string, unknown>): string {
+  const rawId = fe.id;
+  if (typeof rawId === 'string') return rawId;
+  if (typeof rawId === 'number') return String(rawId);
+  return '';
+}
+
+function processDirPage(
+  entries: Record<string, unknown>[],
+  seenIds: Set<string>,
+  allEntries: { fileEntry: DirFileEntry }[],
+): number {
+  let newCount = 0;
+  for (const entry of entries) {
+    const fe = (entry.fileEntry ?? {}) as Record<string, unknown>;
+    const eid = extractEntryId(fe);
+    if (eid && !seenIds.has(eid)) {
+      seenIds.add(eid);
+      allEntries.push({ fileEntry: fe as unknown as DirFileEntry });
+      newCount++;
+    }
+  }
+  return newCount;
+}
+
 export async function fetchDirList(
   ctx: DirListContext,
   dirId: DirId,
 ): Promise<DirInfoByIdResponse> {
-  const allEntries: Array<{ fileEntry: DirFileEntry }> = [];
+  const allEntries: { fileEntry: DirFileEntry }[] = [];
   const seenIds = new Set<string>();
   let offset = 0;
   const maxPages = 50;
@@ -26,21 +51,13 @@ export async function fetchDirList(
     if (offset > 0) url += `&startIndex=${offset}`;
 
     const data = await safeJson(await ctx.httpGet(url));
-    const entries = (data['entries'] as Array<Record<string, unknown>> | undefined) ?? [];
-    const total = (data['count'] as number | undefined) ?? 0;
+    const entries = Array.isArray(data.entries) ? (data.entries as Record<string, unknown>[]) : [];
 
     if (entries.length === 0) break;
 
-    let newCount = 0;
-    for (const entry of entries) {
-      const fe = (entry['fileEntry'] as Record<string, unknown>) ?? {};
-      const eid = String(fe['id'] ?? '');
-      if (eid && !seenIds.has(eid)) {
-        seenIds.add(eid);
-        allEntries.push({ fileEntry: fe as unknown as DirFileEntry });
-        newCount++;
-      }
-    }
+    const newCount = processDirPage(entries, seenIds, allEntries);
+    const countVal = data.count;
+    const total = typeof countVal === 'number' ? countVal : 0;
 
     offset += entries.length;
     if (newCount === 0 || allEntries.length >= total || entries.length < DIR_PAGE_SIZE) {

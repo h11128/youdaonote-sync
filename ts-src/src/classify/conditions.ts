@@ -18,36 +18,42 @@ export interface Conditions {
   readonly localMtimeChanged: boolean | null;
 }
 
+function computeLocalHashChanged(
+  localHash: ContentHash | null,
+  meta: MetadataRecord | null,
+): boolean | null {
+  if (!localHash || !meta?.contentHash) return null;
+  return localHash !== meta.contentHash;
+}
+
+function computeCloudMtimeChanged(
+  cloud: CloudFile | null,
+  meta: MetadataRecord | null,
+): boolean | null {
+  if (!cloud || !meta) return null;
+  if (meta.cloudMtime > 0) return cloud.mtime > meta.cloudMtime;
+  if (meta.cloudMtime === 0) return true;
+  return null;
+}
+
+function computeLocalMtimeChanged(
+  local: LocalFile | null,
+  meta: MetadataRecord | null,
+): boolean | null {
+  if (!local || !meta) return null;
+  if (meta.localMtime > 0) return local.mtime > meta.localMtime;
+  return true;
+}
+
 export function extractConditions(input: ClassifyInput): Conditions {
   const { local, cloud, meta, localHash } = input;
-
-  let localHashChanged: boolean | null = null;
-  if (localHash && meta?.contentHash) {
-    localHashChanged = localHash !== meta.contentHash;
-  }
-
-  // Python: cloud_mtime > meta_cloud_mtime (strictly greater, not just different)
-  let cloudMtimeChanged: boolean | null = null;
-  if (cloud && meta && meta.cloudMtime > 0) {
-    cloudMtimeChanged = cloud.mtime > meta.cloudMtime;
-  } else if (cloud && meta && meta.cloudMtime === 0) {
-    cloudMtimeChanged = true;
-  }
-
-  // Python: meta_local_mtime is None → local_changed = True
-  let localMtimeChanged: boolean | null = null;
-  if (local && meta && meta.localMtime > 0) {
-    localMtimeChanged = local.mtime > meta.localMtime;
-  } else if (local && meta) {
-    localMtimeChanged = true;
-  }
 
   return {
     localExists: local !== null,
     cloudExists: cloud !== null,
     previouslySynced: meta !== null && !!meta.fileId && meta.lastSyncAt > 0,
-    localHashChanged,
-    cloudMtimeChanged,
-    localMtimeChanged,
+    localHashChanged: computeLocalHashChanged(localHash, meta),
+    cloudMtimeChanged: computeCloudMtimeChanged(cloud, meta),
+    localMtimeChanged: computeLocalMtimeChanged(local, meta),
   };
 }

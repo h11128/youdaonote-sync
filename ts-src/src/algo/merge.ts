@@ -9,7 +9,7 @@ type Edit = [baseLo: number, baseHi: number, otherLo: number, otherHi: number, i
 function blocksToEdits(
   baseLen: number,
   otherLen: number,
-  matchingBlocks: Array<[number, number, number]>,
+  matchingBlocks: [number, number, number][],
 ): Edit[] {
   const edits: Edit[] = [];
   let prevI = 0;
@@ -34,42 +34,64 @@ function blocksToEdits(
  * Simple longest-common-subsequence matching blocks (line-level).
  * Returns array of [baseIdx, otherIdx, length] tuples + terminal [baseLen, otherLen, 0].
  */
-function getMatchingBlocks(base: string[], other: string[]): Array<[number, number, number]> {
+function getMatchingBlocks(base: string[], other: string[]): [number, number, number][] {
   const n = base.length;
   const m = other.length;
 
   // Build index: line → positions in other
   const otherIndex = new Map<string, number[]>();
   for (let j = 0; j < m; j++) {
-    const line = other[j]!;
+    const line = other[j];
+    if (line === undefined) throw new Error(`unreachable: other[${j}]`);
     let list = otherIndex.get(line);
-    if (!list) { list = []; otherIndex.set(line, list); }
+    if (!list) {
+      list = [];
+      otherIndex.set(line, list);
+    }
     list.push(j);
   }
 
-  const blocks: Array<[number, number, number]> = [];
-  findBlocks(base, other, otherIndex, 0, n, 0, m, blocks);
+  const blocks: [number, number, number][] = [];
+  findBlocks({ base, otherIndex, baseLo: 0, baseHi: n, otherLo: 0, otherHi: m, result: blocks });
   blocks.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   blocks.push([n, m, 0]);
   return blocks;
 }
 
-function findBlocks(
-  base: string[], other: string[],
-  otherIndex: Map<string, number[]>,
-  baseLo: number, baseHi: number,
-  otherLo: number, otherHi: number,
-  result: Array<[number, number, number]>,
-): void {
+interface FindBlocksParams {
+  base: string[];
+  otherIndex: Map<string, number[]>;
+  baseLo: number;
+  baseHi: number;
+  otherLo: number;
+  otherHi: number;
+  result: [number, number, number][];
+}
+
+interface FindLongestBlockParams {
+  base: string[];
+  otherIndex: Map<string, number[]>;
+  baseLo: number;
+  baseHi: number;
+  otherLo: number;
+  otherHi: number;
+}
+
+function findLongestBlock(params: FindLongestBlockParams): {
+  bestI: number;
+  bestJ: number;
+  bestLen: number;
+} {
+  const { base, otherIndex, baseLo, baseHi, otherLo, otherHi } = params;
   let bestI = baseLo;
   let bestJ = otherLo;
   let bestLen = 0;
-
-  // Find longest matching block in the given range
   const runLens = new Map<number, number>();
   for (let i = baseLo; i < baseHi; i++) {
+    const baseLine = base[i];
+    if (baseLine === undefined) throw new Error(`unreachable: base[${i}]`);
     const newRuns = new Map<number, number>();
-    for (const j of otherIndex.get(base[i]!) ?? []) {
+    for (const j of otherIndex.get(baseLine) ?? []) {
       if (j < otherLo || j >= otherHi) continue;
       const k = (runLens.get(j - 1) ?? 0) + 1;
       newRuns.set(j, k);
@@ -82,16 +104,34 @@ function findBlocks(
     runLens.clear();
     for (const [k, v] of newRuns) runLens.set(k, v);
   }
+  return { bestI, bestJ, bestLen };
+}
+
+function findBlocks(params: FindBlocksParams): void {
+  const { base, otherIndex, baseLo, baseHi, otherLo, otherHi, result } = params;
+  const { bestI, bestJ, bestLen } = findLongestBlock({
+    base,
+    otherIndex,
+    baseLo,
+    baseHi,
+    otherLo,
+    otherHi,
+  });
 
   if (bestLen === 0) return;
 
-  // Recurse on left and right sides
   if (baseLo < bestI && otherLo < bestJ) {
-    findBlocks(base, other, otherIndex, baseLo, bestI, otherLo, bestJ, result);
+    findBlocks({ ...params, baseLo, baseHi: bestI, otherLo, otherHi: bestJ });
   }
   result.push([bestI, bestJ, bestLen]);
   if (bestI + bestLen < baseHi && bestJ + bestLen < otherHi) {
-    findBlocks(base, other, otherIndex, bestI + bestLen, baseHi, bestJ + bestLen, otherHi, result);
+    findBlocks({
+      ...params,
+      baseLo: bestI + bestLen,
+      baseHi,
+      otherLo: bestJ + bestLen,
+      otherHi,
+    });
   }
 }
 
@@ -109,19 +149,25 @@ class EditIndex {
     return this.findRange(lo, hi);
   }
 
-  private findInsertionPoint(lo: number): { otherLo: number; otherHi: number; isSame: boolean } | null {
+  private findInsertionPoint(
+    lo: number,
+  ): { otherLo: number; otherHi: number; isSame: boolean } | null {
     const idx = bsRight(this.starts, lo) - 1;
     const from = Math.max(0, idx - 1);
     const to = Math.min(this.edits.length, idx + 3);
 
     for (let i = from; i < to; i++) {
-      const [bLo, bHi, oLo, oHi, same] = this.edits[i]!;
+      const edit = this.edits[i];
+      if (edit === undefined) continue;
+      const [bLo, bHi, oLo, oHi, same] = edit;
       if (bLo === lo && bHi === lo && !same) {
         return { otherLo: oLo, otherHi: oHi, isSame: false };
       }
     }
     for (let i = from; i < to; i++) {
-      const [bLo, bHi, oLo, , same] = this.edits[i]!;
+      const edit = this.edits[i];
+      if (edit === undefined) continue;
+      const [bLo, bHi, oLo, , same] = edit;
       if (bLo <= lo && lo <= bHi && same) {
         const mapped = oLo + (lo - bLo);
         return { otherLo: mapped, otherHi: mapped, isSame: true };
@@ -130,10 +176,15 @@ class EditIndex {
     return null;
   }
 
-  private findRange(lo: number, hi: number): { otherLo: number; otherHi: number; isSame: boolean } | null {
+  private findRange(
+    lo: number,
+    hi: number,
+  ): { otherLo: number; otherHi: number; isSame: boolean } | null {
     const idx = bsRight(this.starts, lo) - 1;
     for (let i = Math.max(0, idx - 1); i < Math.min(this.edits.length, idx + 3); i++) {
-      const [bLo, bHi, oLo, oHi, same] = this.edits[i]!;
+      const edit = this.edits[i];
+      if (edit === undefined) continue;
+      const [bLo, bHi, oLo, oHi, same] = edit;
       if (bLo <= lo && hi <= bHi) {
         if (same) {
           return { otherLo: oLo + (lo - bLo), otherHi: oLo + (hi - bLo), isSame: true };
@@ -150,7 +201,9 @@ function bsRight(arr: number[], val: number): number {
   let hi = arr.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (arr[mid]! <= val) lo = mid + 1;
+    const midVal = arr[mid];
+    if (midVal === undefined) throw new Error(`unreachable: arr[${mid}]`);
+    if (midVal <= val) lo = mid + 1;
     else hi = mid;
   }
   return lo;
@@ -158,7 +211,7 @@ function bsRight(arr: number[], val: number): number {
 
 function splitLines(text: string): string[] {
   if (!text) return [];
-  return text.split(/\r\n|\r|\n/).map((l, i, a) => i < a.length - 1 ? l + '\n' : l);
+  return text.split(/\r\n|\r|\n/).map((l, i, a) => (i < a.length - 1 ? l + '\n' : l));
 }
 
 /**
@@ -168,9 +221,6 @@ function splitLines(text: string): string[] {
  * auto-merges non-overlapping changes, marks conflicts with markers.
  */
 export function threeWayMerge(base: string, ours: string, theirs: string): MergeResult {
-  if (base == null || ours == null || theirs == null) {
-    throw new TypeError('base, ours, and theirs must be strings, not null/undefined');
-  }
   const baseLines = splitLines(base);
   const oursLines = splitLines(ours);
   const theirsLines = splitLines(theirs);
@@ -185,60 +235,123 @@ export function threeWayMerge(base: string, ours: string, theirs: string): Merge
   const idxTheirs = new EditIndex(editsTheirs);
 
   const breakPoints = new Set<number>([0, baseLines.length]);
-  for (const e of editsOurs) { breakPoints.add(e[0]); breakPoints.add(e[1]); }
-  for (const e of editsTheirs) { breakPoints.add(e[0]); breakPoints.add(e[1]); }
+  for (const e of editsOurs) {
+    breakPoints.add(e[0]);
+    breakPoints.add(e[1]);
+  }
+  for (const e of editsTheirs) {
+    breakPoints.add(e[0]);
+    breakPoints.add(e[1]);
+  }
   const pts = [...breakPoints].sort((a, b) => a - b);
 
-  const segments: Array<[number, number]> = [];
-  for (let i = 0; i < pts.length; i++) {
-    if (i + 1 < pts.length) {
-      segments.push([pts[i]!, pts[i]!]);
-      segments.push([pts[i]!, pts[i + 1]!]);
-    } else {
-      segments.push([pts[i]!, pts[i]!]);
-    }
-  }
-  if (segments.length === 0) segments.push([0, 0]);
-
-  const output: string[] = [];
-  let conflictCount = 0;
-
-  for (const [lo, hi] of segments) {
-    if (lo > hi) continue;
-    const oursInfo = idxOurs.find(lo, hi);
-    const theirsInfo = idxTheirs.find(lo, hi);
-
-    if (!oursInfo || !theirsInfo) {
-      output.push(...baseLines.slice(lo, hi));
-      continue;
-    }
-
-    const oursContent = oursLines.slice(oursInfo.otherLo, oursInfo.otherHi);
-    const theirsContent = theirsLines.slice(theirsInfo.otherLo, theirsInfo.otherHi);
-
-    if (oursInfo.isSame && theirsInfo.isSame) {
-      output.push(...baseLines.slice(lo, hi));
-    } else if (oursInfo.isSame && !theirsInfo.isSame) {
-      output.push(...theirsContent);
-    } else if (!oursInfo.isSame && theirsInfo.isSame) {
-      output.push(...oursContent);
-    } else {
-      if (oursContent.join('') === theirsContent.join('')) {
-        output.push(...oursContent);
-      } else {
-        conflictCount++;
-        output.push('<<<<<<< LOCAL\n');
-        output.push(...oursContent);
-        output.push('=======\n');
-        output.push(...theirsContent);
-        output.push('>>>>>>> CLOUD\n');
-      }
-    }
-  }
+  const segments = buildSegments(pts);
+  const mergeCtx = {
+    baseLines,
+    oursLines,
+    theirsLines,
+    idxOurs,
+    idxTheirs,
+  };
+  const { output, conflictCount } = mergeSegments(segments, mergeCtx);
 
   return {
     mergedText: output.join(''),
     hasConflicts: conflictCount > 0,
     conflictCount,
+  };
+}
+
+function buildSegments(pts: number[]): [number, number][] {
+  const segments: [number, number][] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p0 = pts[i];
+    if (p0 === undefined) throw new Error(`unreachable: pts[${i}]`);
+    if (i + 1 < pts.length) {
+      const p1 = pts[i + 1];
+      if (p1 === undefined) throw new Error(`unreachable: pts[${i + 1}]`);
+      segments.push([p0, p0]);
+      segments.push([p0, p1]);
+    } else {
+      segments.push([p0, p0]);
+    }
+  }
+  if (segments.length === 0) segments.push([0, 0]);
+  return segments;
+}
+
+interface MergeSegmentContext {
+  baseLines: string[];
+  oursLines: string[];
+  theirsLines: string[];
+  idxOurs: EditIndex;
+  idxTheirs: EditIndex;
+}
+
+function mergeSegments(
+  segments: [number, number][],
+  ctx: MergeSegmentContext,
+): { output: string[]; conflictCount: number } {
+  const output: string[] = [];
+  let conflictCount = 0;
+
+  for (const [lo, hi] of segments) {
+    if (lo > hi) continue;
+    const oursInfo = ctx.idxOurs.find(lo, hi);
+    const theirsInfo = ctx.idxTheirs.find(lo, hi);
+
+    if (!oursInfo || !theirsInfo) {
+      output.push(...ctx.baseLines.slice(lo, hi));
+      continue;
+    }
+
+    const oursContent = ctx.oursLines.slice(oursInfo.otherLo, oursInfo.otherHi);
+    const theirsContent = ctx.theirsLines.slice(theirsInfo.otherLo, theirsInfo.otherHi);
+    const merged = mergeSegmentContent({
+      lo,
+      hi,
+      oursInfo,
+      theirsInfo,
+      oursContent,
+      theirsContent,
+      baseLines: ctx.baseLines,
+    });
+    if (merged.conflict) conflictCount++;
+    output.push(...merged.lines);
+  }
+
+  return { output, conflictCount };
+}
+
+interface MergeSegmentContentParams {
+  lo: number;
+  hi: number;
+  oursInfo: { otherLo: number; otherHi: number; isSame: boolean };
+  theirsInfo: { otherLo: number; otherHi: number; isSame: boolean };
+  oursContent: string[];
+  theirsContent: string[];
+  baseLines: string[];
+}
+
+function mergeSegmentContent(params: MergeSegmentContentParams): {
+  lines: string[];
+  conflict: boolean;
+} {
+  const { lo, hi, oursInfo, theirsInfo, oursContent, theirsContent, baseLines } = params;
+  if (oursInfo.isSame && theirsInfo.isSame) {
+    return { lines: baseLines.slice(lo, hi), conflict: false };
+  }
+  if (oursInfo.isSame && !theirsInfo.isSame) {
+    return { lines: theirsContent, conflict: false };
+  }
+  if (!oursInfo.isSame && theirsInfo.isSame) {
+    return { lines: oursContent, conflict: false };
+  }
+  if (oursContent.join('') === theirsContent.join('')) {
+    return { lines: oursContent, conflict: false };
+  }
+  return {
+    lines: ['<<<<<<< LOCAL\n', ...oursContent, '=======\n', ...theirsContent, '>>>>>>> CLOUD\n'],
+    conflict: true,
   };
 }

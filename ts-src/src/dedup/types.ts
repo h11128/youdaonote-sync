@@ -1,5 +1,5 @@
 import { extname } from 'node:path';
-import type { ContentHash, FileId } from '../types/common.js';
+import type { FileId } from '../types/common.js';
 
 export interface DedupStats {
   groups: number;
@@ -26,8 +26,19 @@ export interface DedupAction {
 }
 
 export const ASSET_EXTS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico',
-  '.pdf', '.amr', '.mp3', '.mp4', '.wav',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.bmp',
+  '.webp',
+  '.svg',
+  '.ico',
+  '.pdf',
+  '.amr',
+  '.mp3',
+  '.mp4',
+  '.wav',
 ]);
 
 export function isAsset(path: string): boolean {

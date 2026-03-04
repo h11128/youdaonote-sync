@@ -20,9 +20,7 @@ export function hasRequiredCookies(cookieNames: string[]): boolean {
   return REQUIRED_COOKIES.every((r) => cookieNames.includes(r));
 }
 
-export function loadCookies(
-  cookiesPath: string,
-): { cookies: CookieEntry[]; error: string } {
+export function loadCookies(cookiesPath: string): { cookies: CookieEntry[]; error: string } {
   try {
     const raw = readFileSync(cookiesPath, 'utf-8');
     const data = JSON.parse(raw) as { cookies?: unknown[] };
@@ -53,7 +51,7 @@ export function loadCookies(
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
       return { cookies: [], error: `File not found: ${cookiesPath}` };
     }
-    return { cookies: [], error: `Failed to load cookies: ${e}` };
+    return { cookies: [], error: `Failed to load cookies: ${String(e)}` };
   }
 }
 
@@ -71,7 +69,7 @@ export function saveCookies(
     writeFileSync(cookiesPath, JSON.stringify(serialized, null, 4), 'utf-8');
     return { ok: true, error: '' };
   } catch (e: unknown) {
-    return { ok: false, error: `Failed to save cookies: ${e}` };
+    return { ok: false, error: `Failed to save cookies: ${String(e)}` };
   }
 }
 
@@ -89,16 +87,38 @@ export function backupCookies(cookiesPath: string): string | null {
   }
 }
 
-export function getDesktopSettingPath(): string | null {
-  const os = platform();
-  let base: string;
-  if (os === 'win32') {
-    base = env['APPDATA'] ?? '';
-  } else if (os === 'darwin') {
-    base = join(homedir(), 'Library', 'Application Support');
-  } else {
-    base = env['XDG_CONFIG_HOME'] ?? join(homedir(), '.config');
+function parseSingleCookie(c: unknown): CookieEntry | null {
+  if (typeof c !== 'object' || c === null) return null;
+  const obj = c as Record<string, unknown>;
+  const name = typeof obj.name === 'string' ? obj.name : '';
+  const value = typeof obj.value === 'string' ? obj.value : '';
+  if (!name || !value) return null;
+  return {
+    name,
+    value,
+    domain: typeof obj.domain === 'string' ? obj.domain : '.note.youdao.com',
+    path: typeof obj.path === 'string' ? obj.path : '/',
+  };
+}
+
+function parseDesktopCookieEntries(rawCookies: unknown[]): CookieEntry[] {
+  const result: CookieEntry[] = [];
+  for (const c of rawCookies) {
+    const entry = parseSingleCookie(c);
+    if (entry) result.push(entry);
   }
+  return result;
+}
+
+function getDesktopConfigBase(): string {
+  const os = platform();
+  if (os === 'win32') return env.APPDATA ?? '';
+  if (os === 'darwin') return join(homedir(), 'Library', 'Application Support');
+  return env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
+}
+
+export function getDesktopSettingPath(): string | null {
+  const base = getDesktopConfigBase();
   if (!base) return null;
   const p = join(base, 'ynote-desktop', 'setting.json');
   return existsSync(p) ? p : null;
@@ -119,21 +139,7 @@ export function loadFromDesktop(): { cookies: CookieEntry[]; error: string } {
       return { cookies: [], error: 'Desktop client setting.json has no cookies' };
     }
 
-    const result: CookieEntry[] = [];
-    for (const c of rawCookies) {
-      if (typeof c !== 'object' || c === null) continue;
-      const obj = c as Record<string, unknown>;
-      const name = String(obj['name'] ?? '');
-      const value = String(obj['value'] ?? '');
-      if (name && value) {
-        result.push({
-          name,
-          value,
-          domain: String(obj['domain'] ?? '.note.youdao.com'),
-          path: String(obj['path'] ?? '/'),
-        });
-      }
-    }
+    const result = parseDesktopCookieEntries(rawCookies);
 
     if (result.length === 0) {
       return { cookies: [], error: 'Desktop client cookies are empty' };
@@ -146,7 +152,7 @@ export function loadFromDesktop(): { cookies: CookieEntry[]; error: string } {
 
     return { cookies: result, error: '' };
   } catch (e: unknown) {
-    return { cookies: [], error: `Failed to read desktop setting.json: ${e}` };
+    return { cookies: [], error: `Failed to read desktop setting.json: ${String(e)}` };
   }
 }
 

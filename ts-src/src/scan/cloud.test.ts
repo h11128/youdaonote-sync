@@ -3,14 +3,23 @@ import { scanCloud } from './cloud.js';
 import type { DirBrowser } from './cloud.js';
 import { asDirId } from '../types/common.js';
 
-function mockApi(tree: Record<string, Array<{
-  id: string; name: string; dir?: boolean;
-  modifyTimeForSort?: number; createTimeForSort?: number; domain?: number;
-}>>): DirBrowser {
+function mockApi(
+  tree: Record<
+    string,
+    {
+      id: string;
+      name: string;
+      dir?: boolean;
+      modifyTimeForSort?: number;
+      createTimeForSort?: number;
+      domain?: number;
+    }[]
+  >,
+): DirBrowser {
   return {
-    async getDirInfoById(dirId) {
+    getDirInfoById(dirId) {
       const entries = tree[dirId] ?? [];
-      return {
+      return Promise.resolve({
         entries: entries.map((e) => ({
           fileEntry: {
             id: e.id,
@@ -21,7 +30,7 @@ function mockApi(tree: Record<string, Array<{
             domain: e.domain ?? 1,
           },
         })),
-      };
+      });
     },
   };
 }
@@ -48,9 +57,7 @@ describe('scanCloud', () => {
         { id: 'sub1', name: 'docs', dir: true },
         { id: 'f1', name: 'root.md' },
       ],
-      'sub1': [
-        { id: 'f2', name: 'nested.md' },
-      ],
+      sub1: [{ id: 'f2', name: 'nested.md' }],
     });
 
     const result = await scanCloud(api, asDirId('root-dir'));
@@ -81,9 +88,7 @@ describe('scanCloud', () => {
 
   it('handles API errors gracefully', async () => {
     const api: DirBrowser = {
-      async getDirInfoById() {
-        throw new Error('network error');
-      },
+      getDirInfoById: () => Promise.reject(new Error('network error')),
     };
 
     const result = await scanCloud(api, asDirId('root'));

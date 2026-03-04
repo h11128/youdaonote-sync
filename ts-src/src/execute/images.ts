@@ -44,7 +44,8 @@ export async function migrateImages(
 
   const imageMatches = [...content.matchAll(IMAGE_URL_RE)];
   for (const match of imageMatches) {
-    const url = match[1]!;
+    const url = match[1] ?? match[2];
+    if (!url) continue;
     const localPath = await downloadAsset(url, imagesDir, headers);
     if (localPath) {
       content = content.replace(url, localPath);
@@ -54,7 +55,8 @@ export async function migrateImages(
 
   const attachMatches = [...content.matchAll(ATTACH_URL_RE)];
   for (const match of attachMatches) {
-    const url = match[2]!;
+    const url = match[2] ?? match[1];
+    if (!url) continue;
     const localPath = await downloadAsset(url, attachDir, headers);
     if (localPath) {
       content = content.replace(url, localPath);

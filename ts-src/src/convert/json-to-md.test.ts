@@ -8,9 +8,7 @@ function encode(obj: unknown): Uint8Array {
 describe('jsonBytesToMarkdown', () => {
   it('converts plain text paragraph', () => {
     const data = encode({
-      '5': [
-        { '5': [{ '7': [{ '8': 'Hello world' }] }] },
-      ],
+      '5': [{ '5': [{ '7': [{ '8': 'Hello world' }] }] }],
     });
     expect(jsonBytesToMarkdown(data)).toBe('Hello world');
   });
@@ -32,9 +30,11 @@ describe('jsonBytesToMarkdown', () => {
     const data = encode({
       '5': [
         {
-          '5': [{
-            '7': [{ '8': 'bold', '9': [{ '2': 'b' }] }],
-          }],
+          '5': [
+            {
+              '7': [{ '8': 'bold', '9': [{ '2': 'b' }] }],
+            },
+          ],
         },
       ],
     });
@@ -43,9 +43,7 @@ describe('jsonBytesToMarkdown', () => {
 
   it('converts image', () => {
     const data = encode({
-      '5': [
-        { '4': { u: 'https://img.com/pic.png' }, '6': 'im' },
-      ],
+      '5': [{ '4': { u: 'https://img.com/pic.png' }, '6': 'im' }],
     });
     expect(jsonBytesToMarkdown(data)).toBe('![](https://img.com/pic.png)');
   });

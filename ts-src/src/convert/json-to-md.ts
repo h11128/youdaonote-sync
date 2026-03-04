@@ -13,16 +13,20 @@ function getCommonText(content: JsonNode): string {
   const children = content[F_CHILDREN] as JsonNode[] | undefined;
   if (!children?.length) return allText;
 
-  const spans = children[0]![F_SPANS] as JsonNode[] | undefined;
+  const firstChild = children[0];
+  if (!firstChild) return allText;
+  const spans = firstChild[F_SPANS] as JsonNode[] | undefined;
   if (!spans) return allText;
 
   for (const span of spans) {
-    let text = (span[F_TEXT] as string) ?? '';
+    const raw = span[F_TEXT];
+    const text = typeof raw === 'string' ? raw : '';
     const textAttrs = span[F_TEXT_ATTRS] as JsonNode[] | undefined;
     if (text && textAttrs) {
-      text = convertTextAttribute(text, textAttrs);
+      allText += convertTextAttribute(text, textAttrs);
+    } else {
+      allText += text;
     }
-    allText += text;
   }
   return allText;
 }
@@ -37,41 +41,54 @@ function convertTextAttribute(text: string, textAttrs: JsonNode[]): string {
   return text;
 }
 
+function extractTextFromSpans(spans: JsonNode[]): string {
+  let text = '';
+  for (const span of spans) {
+    const raw = span[F_TEXT];
+    const part = typeof raw === 'string' ? raw : '';
+    const textAttrs = span[F_TEXT_ATTRS] as JsonNode[] | undefined;
+    text += textAttrs ? convertTextAttribute(part, textAttrs) : part;
+  }
+  return text;
+}
+
 function convertText(content: JsonNode): string {
   let allText = '';
   const oneChildren = content[F_CHILDREN] as JsonNode[] | undefined;
   if (!oneChildren) return allText;
 
   for (const child of oneChildren) {
-    const twoChildren = child[F_CHILDREN] as JsonNode[] | undefined;
-    const textType = child[F_TYPE] as string | undefined;
-    const spans = child[F_SPANS] as JsonNode[] | undefined;
-    let text = '';
-
-    if (spans && !twoChildren) {
-      for (const span of spans) {
-        let raw = (span[F_TEXT] as string) ?? '';
-        const textAttrs = span[F_TEXT_ATTRS] as JsonNode[] | undefined;
-        if (raw && textAttrs) raw = convertTextAttribute(raw, textAttrs);
-        text += raw;
-      }
-    } else if (textType === 'li' && twoChildren) {
-      const sourceText = getCommonText(child);
-      const attrs = child[F_ATTRS] as JsonNode | undefined;
-      if (attrs) {
-        const hf = attrs['hf'] as string;
-        text = `[${sourceText}](${hf})`;
-      }
-    }
-
+    const text = convertChildToText(child);
     if (text) allText += text;
   }
   return allText;
 }
 
+function convertChildToText(child: JsonNode): string {
+  const twoChildren = child[F_CHILDREN] as JsonNode[] | undefined;
+  const textType = child[F_TYPE] as string | undefined;
+  const spans = child[F_SPANS] as JsonNode[] | undefined;
+
+  if (spans && !twoChildren) {
+    return extractTextFromSpans(spans);
+  }
+  if (textType === 'li' && twoChildren) {
+    const sourceText = getCommonText(child);
+    const attrs = child[F_ATTRS] as JsonNode | undefined;
+    if (attrs && typeof attrs.hf === 'string') {
+      return `[${sourceText}](${attrs.hf})`;
+    }
+  }
+  return '';
+}
+
+function safeStr(val: unknown): string {
+  return typeof val === 'string' ? val : '';
+}
+
 function convertHeading(content: JsonNode): string {
-  const attrs = (content[F_ATTRS] as JsonNode) ?? {};
-  const typeName = attrs['l'] as string | undefined;
+  const attrs = (content[F_ATTRS] as JsonNode | undefined) ?? {};
+  const typeName = attrs.l as string | undefined;
   let text = getCommonText(content);
   if (text && typeName) {
     const levelStr = typeName.replace('h', '');
@@ -82,19 +99,19 @@ function convertHeading(content: JsonNode): string {
 }
 
 function convertImage(content: JsonNode): string {
-  const attrs = (content[F_ATTRS] as JsonNode) ?? {};
-  return `![](${attrs['u'] ?? ''})`;
+  const attrs = (content[F_ATTRS] as JsonNode | undefined) ?? {};
+  return `![](${safeStr(attrs.u)})`;
 }
 
 function convertAttach(content: JsonNode): string {
-  const attrs = (content[F_ATTRS] as JsonNode) ?? {};
-  return `[${attrs['fn'] ?? ''}](${attrs['re'] ?? ''})`;
+  const attrs = (content[F_ATTRS] as JsonNode | undefined) ?? {};
+  return `[${safeStr(attrs.fn)}](${safeStr(attrs.re)})`;
 }
 
 function convertCode(content: JsonNode): string {
-  const attrs = (content[F_ATTRS] as JsonNode) ?? {};
-  const language = (attrs['la'] as string) ?? '';
-  const codes = (content[F_CHILDREN] as JsonNode[]) ?? [];
+  const attrs = (content[F_ATTRS] as JsonNode | undefined) ?? {};
+  const language = safeStr(attrs.la);
+  const codes = (content[F_CHILDREN] as JsonNode[] | undefined) ?? [];
   let codeBlock = '';
   for (const code of codes) {
     codeBlock += getCommonText(code) + '\n';
@@ -103,7 +120,7 @@ function convertCode(content: JsonNode): string {
 }
 
 function convertHighlight(content: JsonNode): string {
-  const lines = (content[F_CHILDREN] as JsonNode[]) ?? [];
+  const lines = (content[F_CHILDREN] as JsonNode[] | undefined) ?? [];
   let block = '';
   for (const line of lines) {
     block += getCommonText(line) + '\n';
@@ -112,7 +129,7 @@ function convertHighlight(content: JsonNode): string {
 }
 
 function convertQuote(content: JsonNode): string {
-  const qList = (content[F_CHILDREN] as JsonNode[]) ?? [];
+  const qList = (content[F_CHILDREN] as JsonNode[] | undefined) ?? [];
   let text = '';
   for (const q of qList) {
     const qt = getCommonText(q).replace(/\n/g, '');
@@ -123,35 +140,47 @@ function convertQuote(content: JsonNode): string {
 
 function convertList(content: JsonNode): string {
   const text = getCommonText(content);
-  const attrs = (content[F_ATTRS] as JsonNode) ?? {};
-  const isOrdered = (attrs['lt'] as string) ?? 'unordered';
+  const attrs = (content[F_ATTRS] as JsonNode | undefined) ?? {};
+  const isOrdered = safeStr(attrs.lt) || 'unordered';
   if (isOrdered === 'ordered') return `1. ${text}`;
-  const level = Number(attrs['ll'] ?? 1) || 1;
+  const levelVal = attrs.ll;
+  const level = Math.max(1, Number(levelVal) || 1);
   return '\t'.repeat(level - 1) + `- ${text}`;
 }
 
+function getTableCellText(cell: JsonNode): string {
+  try {
+    const children = (cell[F_CHILDREN] as JsonNode[] | undefined) ?? [{}];
+    const inner = children[0];
+    if (!inner) return ' ';
+    const innerChildren = (inner[F_CHILDREN] as JsonNode[] | undefined) ?? [{}];
+    const inner2 = innerChildren[0];
+    if (!inner2) return ' ';
+    const spans = inner2[F_SPANS] as JsonNode[] | undefined;
+    if (!spans?.length) return ' ';
+    const firstSpan = spans[0];
+    if (!firstSpan) return ' ';
+    const raw = firstSpan[F_TEXT];
+    return typeof raw === 'string' ? raw : ' ';
+  } catch {
+    return ' ';
+  }
+}
+
 function convertTable(content: JsonNode): string {
-  const trList = (content[F_CHILDREN] as JsonNode[]) ?? [];
+  const trList = (content[F_CHILDREN] as JsonNode[] | undefined) ?? [];
   if (!trList.length) return '';
   let tableLines = '';
 
   for (let index = 0; index < trList.length; index++) {
-    const tc = trList[index]!;
-    const cells = (tc[F_CHILDREN] as JsonNode[]) ?? [];
+    const tc = trList[index];
+    if (!tc) continue;
+    const cells = (tc[F_CHILDREN] as JsonNode[] | undefined) ?? [];
     const cellCount = cells.length;
-    let tableLine = index === 1
-      ? '| -- '.repeat(cellCount) + '|\n| '
-      : '| ';
+    let tableLine = index === 1 ? '| -- '.repeat(cellCount) + '|\n| ' : '| ';
 
     for (const cell of cells) {
-      let tableText = ' ';
-      try {
-        const inner = ((cell[F_CHILDREN] as JsonNode[]) ?? [{}])[0]!;
-        const inner2 = ((inner[F_CHILDREN] as JsonNode[]) ?? [{}])[0]!;
-        const spans = inner2[F_SPANS] as JsonNode[] | undefined;
-        if (spans?.length) tableText = (spans[0]![F_TEXT] as string) ?? ' ';
-      } catch { /* fallback to space */ }
-      tableLine += tableText + ' | ';
+      tableLine += getTableCellText(cell) + ' | ';
     }
     tableLines += tableLine + '\n';
   }
@@ -189,7 +218,7 @@ export function jsonBytesToMarkdown(data: Buffer | Uint8Array): string {
     const ctype = content[F_TYPE] as string | undefined;
     let lineContent: string;
     if (ctype && TYPE_CONVERTERS[ctype]) {
-      lineContent = TYPE_CONVERTERS[ctype]!(content);
+      lineContent = TYPE_CONVERTERS[ctype](content);
     } else {
       lineContent = convertText(content);
     }

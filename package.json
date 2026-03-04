@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "description": "Root package — git hooks only. App code lives in ts-src/.",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.0.0"
+  }
+}

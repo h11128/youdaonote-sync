@@ -8,14 +8,22 @@
 function isRetryable(err: unknown): boolean {
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
-    if (msg.includes('fetch') || msg.includes('network') || msg.includes('econnreset')
-        || msg.includes('etimedout') || msg.includes('socket') || msg.includes('abort')) {
+    if (
+      msg.includes('fetch') ||
+      msg.includes('network') ||
+      msg.includes('econnreset') ||
+      msg.includes('etimedout') ||
+      msg.includes('socket') ||
+      msg.includes('abort')
+    ) {
       return true;
     }
     // HTTP status-based: retry 5xx, don't retry 4xx
-    const statusMatch = msg.match(/status[: ]+(\d{3})/);
+    const statusMatch = /status[: ]+(\d{3})/.exec(msg);
     if (statusMatch) {
-      const status = parseInt(statusMatch[1]!, 10);
+      const cap = statusMatch[1];
+      if (cap === undefined) return false;
+      const status = parseInt(cap, 10);
       return status >= 500;
     }
   }
@@ -40,7 +48,7 @@ export async function retryWithBackoff<T>(
     } catch (e) {
       lastErr = e;
       if (!isRetryable(e) || attempt >= maxRetries) throw e;
-      const delay = baseDelay * (2 ** attempt);
+      const delay = baseDelay * 2 ** attempt;
       await sleep(delay);
     }
   }

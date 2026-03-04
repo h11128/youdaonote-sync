@@ -25,9 +25,9 @@ CREATE INDEX IF NOT EXISTS idx_dir_id ON directories(dir_id) WHERE dir_id != '';
 `;
 
 const MIGRATION_SQL: readonly string[] = [
-  "ALTER TABLE files ADD COLUMN last_sync_at INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE files ADD COLUMN cloud_content_hash TEXT",
-  "ALTER TABLE directories ADD COLUMN tree_hash TEXT",
+  'ALTER TABLE files ADD COLUMN last_sync_at INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE files ADD COLUMN cloud_content_hash TEXT',
+  'ALTER TABLE directories ADD COLUMN tree_hash TEXT',
   `CREATE TABLE IF NOT EXISTS sync_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       timestamp INTEGER NOT NULL,
@@ -39,8 +39,8 @@ const MIGRATION_SQL: readonly string[] = [
       cloud_id TEXT,
       detail TEXT
   )`,
-  "CREATE INDEX IF NOT EXISTS idx_sync_log_ts ON sync_log(timestamp)",
-  "CREATE INDEX IF NOT EXISTS idx_sync_log_path ON sync_log(path)",
+  'CREATE INDEX IF NOT EXISTS idx_sync_log_ts ON sync_log(timestamp)',
+  'CREATE INDEX IF NOT EXISTS idx_sync_log_path ON sync_log(path)',
   `CREATE TABLE IF NOT EXISTS file_refs (
       source_path TEXT NOT NULL,
       ref_path TEXT NOT NULL,
@@ -52,12 +52,12 @@ const MIGRATION_SQL: readonly string[] = [
       hash TEXT NOT NULL,
       saved_at INTEGER NOT NULL
   )`,
-  "UPDATE files SET content_hash = NULL WHERE content_hash IS NOT NULL",
+  'UPDATE files SET content_hash = NULL WHERE content_hash IS NOT NULL',
   `CREATE TABLE IF NOT EXISTS sync_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
   )`,
-  "ALTER TABLE files ADD COLUMN original_domain INTEGER",
+  'ALTER TABLE files ADD COLUMN original_domain INTEGER',
 ];
 
 export function initSchema(db: Database.Database): void {
@@ -66,29 +66,34 @@ export function initSchema(db: Database.Database): void {
 
 export function runMigrations(db: Database.Database): void {
   db.exec(
-    "CREATE TABLE IF NOT EXISTS _migrations " +
-    "(idx INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)",
+    'CREATE TABLE IF NOT EXISTS _migrations ' +
+      '(idx INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)',
   );
   const applied = new Set(
-    db.prepare("SELECT idx FROM _migrations").all()
+    db
+      .prepare('SELECT idx FROM _migrations')
+      .all()
       .map((r) => (r as { idx: number }).idx),
   );
 
-  const EXPECTED_ERRORS = ["duplicate column", "already exists"];
+  const EXPECTED_ERRORS = ['duplicate column', 'already exists'];
 
   for (let i = 0; i < MIGRATION_SQL.length; i++) {
     if (applied.has(i)) continue;
+    const sql = MIGRATION_SQL[i];
+    if (sql == null) continue;
     try {
-      db.exec(MIGRATION_SQL[i]!);
+      db.exec(sql);
     } catch (e: unknown) {
       const msg = String(e).toLowerCase();
       if (!EXPECTED_ERRORS.some((phrase) => msg.includes(phrase))) {
         throw e;
       }
     }
-    db.prepare(
-      "INSERT OR IGNORE INTO _migrations (idx, applied_at) VALUES (?, ?)",
-    ).run(i, Math.floor(Date.now() / 1000));
+    db.prepare('INSERT OR IGNORE INTO _migrations (idx, applied_at) VALUES (?, ?)').run(
+      i,
+      Math.floor(Date.now() / 1000),
+    );
   }
 }
 
@@ -97,40 +102,49 @@ export interface StateAccessor {
   setState(key: string, value: string): void;
 }
 
-export function normalizeStoredPaths(
+function computeNewPath(oldPath: string): string {
+  const slashIdx = oldPath.lastIndexOf('/');
+  const prefix = slashIdx >= 0 ? oldPath.slice(0, slashIdx + 1) : '';
+  const basename = slashIdx >= 0 ? oldPath.slice(slashIdx + 1) : oldPath;
+  const dotIdx = basename.lastIndexOf('.');
+  const stem = dotIdx >= 0 ? basename.slice(0, dotIdx) : basename;
+  const ext = dotIdx >= 0 ? basename.slice(dotIdx) : '';
+  const newStem = stem.trimEnd();
+  return prefix + newStem + ext;
+}
+
+function applyPathRename(
   db: Database.Database,
-  accessor: StateAccessor,
+  table: 'files' | 'directories',
+  oldPath: string,
+  newPath: string,
 ): void {
-  const FLAG = "paths_normalized_v1";
+  const existing = db.prepare(`SELECT 1 FROM ${table} WHERE path = ?`).get(newPath);
+  if (existing) {
+    db.prepare(`DELETE FROM ${table} WHERE path = ?`).run(oldPath);
+  } else {
+    db.prepare(`UPDATE ${table} SET path = ? WHERE path = ?`).run(newPath, oldPath);
+  }
+}
+
+export function normalizeStoredPaths(db: Database.Database, accessor: StateAccessor): void {
+  const FLAG = 'paths_normalized_v1';
   if (accessor.getState(FLAG)) return;
 
   let renamed = 0;
-  for (const table of ["files", "directories"] as const) {
-    const rows = db.prepare(`SELECT path FROM ${table}`).all() as Array<{ path: string }>;
+  for (const table of ['files', 'directories'] as const) {
+    const rows = db.prepare(`SELECT path FROM ${table}`).all() as { path: string }[];
     for (const { path: oldPath } of rows) {
-      const slashIdx = oldPath.lastIndexOf("/");
-      const prefix = slashIdx >= 0 ? oldPath.slice(0, slashIdx + 1) : "";
-      const basename = slashIdx >= 0 ? oldPath.slice(slashIdx + 1) : oldPath;
-      const dotIdx = basename.lastIndexOf(".");
-      const stem = dotIdx >= 0 ? basename.slice(0, dotIdx) : basename;
-      const ext = dotIdx >= 0 ? basename.slice(dotIdx) : "";
-      const newStem = stem.trimEnd();
-      if (newStem === stem) continue;
-
-      const newPath = prefix + newStem + ext;
-      const existing = db.prepare(`SELECT 1 FROM ${table} WHERE path = ?`).get(newPath);
-      if (existing) {
-        db.prepare(`DELETE FROM ${table} WHERE path = ?`).run(oldPath);
-      } else {
-        db.prepare(`UPDATE ${table} SET path = ? WHERE path = ?`).run(newPath, oldPath);
-      }
+      const newPath = computeNewPath(oldPath);
+      if (newPath === oldPath) continue;
+      applyPathRename(db, table, oldPath, newPath);
       renamed++;
     }
   }
 
-  accessor.setState(FLAG, "1");
+  accessor.setState(FLAG, '1');
   if (renamed > 0) {
-    accessor.setState("last_cloud_version", "0");
+    accessor.setState('last_cloud_version', '0');
   }
 }
 
@@ -139,33 +153,26 @@ export function normalizeStoredChars(
   accessor: StateAccessor,
   sanitize: (name: string) => string,
 ): void {
-  const FLAG = "paths_normalized_v2";
+  const FLAG = 'paths_normalized_v2';
   if (accessor.getState(FLAG)) return;
 
   let renamed = 0;
-  for (const table of ["files", "directories"] as const) {
-    const rows = db.prepare(`SELECT path FROM ${table}`).all() as Array<{ path: string }>;
+  for (const table of ['files', 'directories'] as const) {
+    const rows = db.prepare(`SELECT path FROM ${table}`).all() as { path: string }[];
     for (const { path: oldPath } of rows) {
-      const slashIdx = oldPath.lastIndexOf("/");
-      const prefix = slashIdx >= 0 ? oldPath.slice(0, slashIdx + 1) : "";
+      const slashIdx = oldPath.lastIndexOf('/');
+      const prefix = slashIdx >= 0 ? oldPath.slice(0, slashIdx + 1) : '';
       const basename = slashIdx >= 0 ? oldPath.slice(slashIdx + 1) : oldPath;
-      const newBasename = sanitize(basename);
-      if (newBasename === basename) continue;
-
-      const newPath = prefix + newBasename;
-      const existing = db.prepare(`SELECT 1 FROM ${table} WHERE path = ?`).get(newPath);
-      if (existing) {
-        db.prepare(`DELETE FROM ${table} WHERE path = ?`).run(oldPath);
-      } else {
-        db.prepare(`UPDATE ${table} SET path = ? WHERE path = ?`).run(newPath, oldPath);
-      }
+      const newPath = prefix + sanitize(basename);
+      if (newPath === oldPath) continue;
+      applyPathRename(db, table, oldPath, newPath);
       renamed++;
     }
   }
 
-  accessor.setState(FLAG, "1");
+  accessor.setState(FLAG, '1');
   if (renamed > 0) {
-    accessor.setState("last_cloud_version", "0");
+    accessor.setState('last_cloud_version', '0');
   }
 }
 

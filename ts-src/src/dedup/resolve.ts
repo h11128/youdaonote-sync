@@ -21,7 +21,10 @@ export function classifyDuplicates(
       try {
         const sz = statSync(join(root, p)).size;
         let list = bySize.get(sz);
-        if (!list) { list = []; bySize.set(sz, list); }
+        if (!list) {
+          list = [];
+          bySize.set(sz, list);
+        }
         list.push(p);
       } catch {
         stats.skipped++;
@@ -55,7 +58,11 @@ function cloudScore(path: string, meta: MetadataStore, root: string): [number, n
     if (ctime === 0) ctime = info.cloudMtime || info.localMtime || 0;
   }
   if (ctime === 0) {
-    try { ctime = Math.floor(statSync(join(root, path)).mtimeMs / 1000); } catch { /* */ }
+    try {
+      ctime = Math.floor(statSync(join(root, path)).mtimeMs / 1000);
+    } catch {
+      /* */
+    }
   }
 
   return [depth, nameClean, -ctime];
@@ -63,9 +70,31 @@ function cloudScore(path: string, meta: MetadataStore, root: string): [number, n
 
 function compareScores(a: [number, number, number], b: [number, number, number]): number {
   for (let i = 0; i < 3; i++) {
-    if (b[i]! !== a[i]!) return b[i]! - a[i]!;
+    const diff = (b[i] ?? 0) - (a[i] ?? 0);
+    if (diff !== 0) return diff;
   }
   return 0;
+}
+
+function splitCloudAndLocal(
+  paths: string[],
+  meta: MetadataStore,
+): { cloudPaths: string[]; localPaths: string[] } {
+  const cloudPaths: string[] = [];
+  const localPaths: string[] = [];
+  for (const p of paths) {
+    if (meta.getFileInfo(p)?.fileId) cloudPaths.push(p);
+    else localPaths.push(p);
+  }
+  return { cloudPaths, localPaths };
+}
+
+export interface ResolveGroupOpts {
+  paths: string[];
+  meta: MetadataStore;
+  referenced: Set<string>;
+  root: string;
+  stats: DedupStats;
 }
 
 /**
@@ -75,29 +104,23 @@ function compareScores(a: [number, number, number], b: [number, number, number])
  * Case B: all-cloud → keep best-scored, delete rest
  * Case C: all-local → don't touch
  */
-export function resolveGroup(
-  paths: string[],
-  meta: MetadataStore,
-  referenced: Set<string>,
-  root: string,
-  stats: DedupStats,
-): DedupAction[] {
-  const cloudPaths: string[] = [];
-  const localPaths: string[] = [];
-
-  for (const p of paths) {
-    if (meta.getFileInfo(p)?.fileId) cloudPaths.push(p);
-    else localPaths.push(p);
-  }
+export function resolveGroup(opts: ResolveGroupOpts): DedupAction[] {
+  const { paths, meta, referenced, stats } = opts;
+  const { cloudPaths, localPaths } = splitCloudAndLocal(paths, meta);
 
   if (cloudPaths.length > 0 && localPaths.length > 0) {
     return resolveMixed(cloudPaths, localPaths, referenced, stats);
   }
 
   if (cloudPaths.length > 1) {
-    return resolveAllCloud(cloudPaths, meta, referenced, root, stats);
+    return resolveAllCloud({
+      cloudPaths,
+      meta: opts.meta,
+      referenced: opts.referenced,
+      root: opts.root,
+      stats: opts.stats,
+    });
   }
-
   stats.skipped++;
   return [];
 }
@@ -108,35 +131,56 @@ function resolveMixed(
   referenced: Set<string>,
   stats: DedupStats,
 ): DedupAction[] {
-  const toRemove = localPaths.filter(lp => {
-    if (isAsset(lp) && referenced.has(lp)) { stats.protectedRefs++; return false; }
+  const toRemove = localPaths.filter((lp) => {
+    if (isAsset(lp) && referenced.has(lp)) {
+      stats.protectedRefs++;
+      return false;
+    }
     return true;
   });
 
-  if (toRemove.length === 0) { stats.skipped++; return []; }
+  if (toRemove.length === 0) {
+    stats.skipped++;
+    return [];
+  }
 
-  const keep = cloudPaths[0]!;
+  const keep = cloudPaths[0];
+  if (!keep) return [];
   stats.kept += cloudPaths.length;
   stats.deleted += toRemove.length;
-  return toRemove.map(r => ({
-    removePath: r, cloudFileId: null, keepPath: keep, reason: `cloud version at ${keep}`,
+  return toRemove.map((r) => ({
+    removePath: r,
+    cloudFileId: null,
+    keepPath: keep,
+    reason: `cloud version at ${keep}`,
   }));
 }
 
-function resolveAllCloud(
-  cloudPaths: string[],
-  meta: MetadataStore,
-  referenced: Set<string>,
-  root: string,
-  stats: DedupStats,
-): DedupAction[] {
-  const [keepPaths, removePaths] = resolveCloudGroup(cloudPaths, meta, referenced, root, stats);
+interface ResolveAllCloudOpts {
+  cloudPaths: string[];
+  meta: MetadataStore;
+  referenced: Set<string>;
+  root: string;
+  stats: DedupStats;
+}
+
+function resolveAllCloud(opts: ResolveAllCloudOpts): DedupAction[] {
+  const { meta, stats } = opts;
+  const [keepPaths, removePaths] = resolveCloudGroup(opts);
   if (!removePaths) return [];
+
+  const keepPath = keepPaths[0];
+  if (!keepPath) return [];
 
   const actions: DedupAction[] = [];
   for (const r of removePaths) {
     const fid = meta.getFileInfo(r)?.fileId ?? null;
-    actions.push({ removePath: r, cloudFileId: fid, keepPath: keepPaths[0]!, reason: `keep ${keepPaths[0]!}, delete cloud duplicate` });
+    actions.push({
+      removePath: r,
+      cloudFileId: fid,
+      keepPath,
+      reason: `keep ${keepPath}, delete cloud duplicate`,
+    });
   }
 
   stats.kept += keepPaths.length;
@@ -153,29 +197,28 @@ function resolveAllCloud(
  * - If none are referenced → sort by score, keep best, remove rest
  * - If all are referenced → skip the group
  */
-function resolveCloudGroup(
-  cloudPaths: string[],
-  meta: MetadataStore,
-  referenced: Set<string>,
-  root: string,
-  stats: DedupStats,
-): [string[], string[] | null] {
-  if (cloudPaths.some(p => isAsset(p))) {
-    const ref = cloudPaths.filter(p => referenced.has(p));
-    const unref = cloudPaths.filter(p => !referenced.has(p));
+function resolveCloudGroup(opts: ResolveAllCloudOpts): [string[], string[] | null] {
+  const { meta, stats } = opts;
+  if (opts.cloudPaths.some((p) => isAsset(p))) {
+    const ref = opts.cloudPaths.filter((p) => opts.referenced.has(p));
+    const unref = opts.cloudPaths.filter((p) => !opts.referenced.has(p));
     if (ref.length > 0 && unref.length > 0) {
       return [ref, unref];
     } else if (ref.length === 0) {
-      const sorted = [...cloudPaths].sort((a, b) =>
-        compareScores(cloudScore(a, meta, root), cloudScore(b, meta, root)));
-      return [[sorted[0]!], sorted.slice(1)];
+      const sorted = [...opts.cloudPaths].sort((a, b) =>
+        compareScores(cloudScore(a, meta, opts.root), cloudScore(b, meta, opts.root)),
+      );
+      const best = sorted[0];
+      return best ? [[best], sorted.slice(1)] : [opts.cloudPaths, null];
     } else {
       stats.skipped++;
-      return [cloudPaths, null];
+      return [opts.cloudPaths, null];
     }
   }
 
-  const sorted = [...cloudPaths].sort((a, b) =>
-    compareScores(cloudScore(a, meta, root), cloudScore(b, meta, root)));
-  return [[sorted[0]!], sorted.slice(1)];
+  const sorted = [...opts.cloudPaths].sort((a, b) =>
+    compareScores(cloudScore(a, meta, opts.root), cloudScore(b, meta, opts.root)),
+  );
+  const best = sorted[0];
+  return best ? [[best], sorted.slice(1)] : [opts.cloudPaths, null];
 }

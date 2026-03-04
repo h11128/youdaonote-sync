@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { extname } from 'node:path';
+import { basename, extname } from 'node:path';
 import { YoudaoNoteApi } from '../api/client.js';
 import type { DirId, FileId, ContentHash } from '../types/common.js';
 import { NoteDomain } from '../types/common.js';
@@ -38,8 +38,8 @@ export async function ensureParentDir(
     }
 
     const result = await api.createDir(parentId, part);
-    const fe = result['fileEntry'] as Record<string, unknown> | undefined;
-    const newId = (fe?.['id'] ?? '') as DirId;
+    const fe = result.fileEntry as Record<string, unknown> | undefined;
+    const newId = (fe?.id ?? '') as DirId;
     if (newId) {
       meta.setDirInfo(currentPath, newId, parentId);
       parentId = newId;
@@ -49,29 +49,32 @@ export async function ensureParentDir(
   return parentId;
 }
 
+export interface UploadFileOpts {
+  api: YoudaoNoteApi;
+  meta: MetadataStore;
+  localPath: string;
+  relPath: string;
+  rootDirId: DirId;
+  existingFileId?: FileId;
+  hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
+}
+
 /**
  * Upload a single local file to the cloud.
  *
  * - .md files: upload as Markdown (domain=1)
  * - Other text: try markdown push, fallback to binary
  */
-export async function uploadFile(
-  api: YoudaoNoteApi,
-  meta: MetadataStore,
-  localPath: string,
-  relPath: string,
-  rootDirId: DirId,
-  opts?: {
-    existingFileId?: FileId;
-    hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
-  },
-): Promise<UploadResult> {
+export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
+  const { api, meta, localPath, relPath, rootDirId } = opts;
   const parentId = await ensureParentDir(api, meta, relPath, rootDirId);
   const ext = extname(localPath).toLowerCase();
   const content = readFileSync(localPath, 'utf-8');
-  const isCreate = !opts?.existingFileId;
-  const fileId = opts?.existingFileId ?? YoudaoNoteApi.generateFileId();
-  const name = normalizeSep(relPath).split('/').pop()!;
+  const isCreate = !opts.existingFileId;
+  const fileId = opts.existingFileId ?? YoudaoNoteApi.generateFileId();
+  const parts = normalizeSep(relPath).split('/');
+  const popped = parts.pop();
+  const name: string = popped ?? basename(relPath);
 
   let domain = NoteDomain.MARKDOWN;
   let bodyString = content;
@@ -90,8 +93,10 @@ export async function uploadFile(
     isCreate,
   });
 
-  const entry = (result['entry'] ?? result['fileEntry'] ?? {}) as Record<string, unknown>;
-  const cloudMtime = Number(entry['modifyTimeForSort'] ?? Math.floor(Date.now() / 1000));
+  const entry = (result.entry ?? result.fileEntry ?? {}) as Record<string, unknown>;
+  const mtimeVal = entry.modifyTimeForSort;
+  const cloudMtime: number =
+    typeof mtimeVal === 'number' ? mtimeVal : Math.floor(Date.now() / 1000);
 
   return { fileId, cloudMtime };
 }

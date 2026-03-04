@@ -46,6 +46,9 @@ dist/
 # 本地调试脚本（临时用，不入库）
 .local-scripts/
 
+# 性能分析
+profiles/
+
 # 测试
 .pytest_cache/
 .coverage

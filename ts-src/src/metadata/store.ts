@@ -29,7 +29,9 @@ export class MetadataStore {
 
     const accessor = {
       getState: (key: string) => this.getState(key),
-      setState: (key: string, value: string) => this.setState(key, value),
+      setState: (key: string, value: string) => {
+        this.setState(key, value);
+      },
     };
     runAllMigrations(this.db, accessor, sanitizeFilename);
   }
@@ -72,7 +74,7 @@ export class MetadataStore {
       cloudContentHash?: ContentHash | null;
     },
   ): void {
-    if (!localPath) throw new Error("localPath must not be empty");
+    if (!localPath) throw new Error('localPath must not be empty');
     storeFiles.upsertFile(this.db, this.normalizePath(localPath), opts);
   }
 
@@ -94,7 +96,7 @@ export class MetadataStore {
       detail?: string;
     },
   ): void {
-    if (!localPath) throw new Error("localPath must not be empty");
+    if (!localPath) throw new Error('localPath must not be empty');
     const now = Math.floor(Date.now() / 1000);
     const path = this.normalizePath(localPath);
 
@@ -129,7 +131,7 @@ export class MetadataStore {
       createTime?: number | null;
     },
   ): void {
-    if (!localPath) throw new Error("localPath must not be empty");
+    if (!localPath) throw new Error('localPath must not be empty');
     storeFiles.cacheCloudFileInfo(this.db, this.normalizePath(localPath), opts);
   }
 
@@ -138,11 +140,7 @@ export class MetadataStore {
   }
 
   renamePath(oldPath: string, newPath: string): boolean {
-    return storeFiles.renamePath(
-      this.db,
-      this.normalizePath(oldPath),
-      this.normalizePath(newPath),
-    );
+    return storeFiles.renamePath(this.db, this.normalizePath(oldPath), this.normalizePath(newPath));
   }
 
   getAllFiles(): Map<string, MetadataRecord> {
@@ -178,7 +176,11 @@ export class MetadataStore {
   }
 
   findCloudFileByHash(contentHash: ContentHash, excludePath?: string): string | null {
-    return storeFiles.findCloudFileByHash(this.db, contentHash, excludePath ? this.normalizePath(excludePath) : undefined);
+    return storeFiles.findCloudFileByHash(
+      this.db,
+      contentHash,
+      excludePath ? this.normalizePath(excludePath) : undefined,
+    );
   }
 
   findByDirId(dirId: DirId): string | null {
@@ -213,11 +215,17 @@ export class MetadataStore {
     return storeState.getStateInt(this.db, key, defaultValue);
   }
 
-  getSyncLog(opts?: { limit?: number; path?: string }): Array<{
-    id: number; timestamp: number; path: string; action: string;
-    direction: string | null; oldHash: string | null; newHash: string | null;
-    cloudId: string | null; detail: string | null;
-  }> {
+  getSyncLog(opts?: { limit?: number; path?: string }): {
+    id: number;
+    timestamp: number;
+    path: string;
+    action: string;
+    direction: string | null;
+    oldHash: string | null;
+    newHash: string | null;
+    cloudId: string | null;
+    detail: string | null;
+  }[] {
     return storeState.getSyncLog(this.db, opts, (p) => this.normalizePath(p));
   }
 

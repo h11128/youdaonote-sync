@@ -1,4 +1,12 @@
-import { openSync, writeFileSync, readFileSync, unlinkSync, existsSync, closeSync, constants } from 'node:fs';
+import {
+  openSync,
+  writeFileSync,
+  readFileSync,
+  unlinkSync,
+  existsSync,
+  closeSync,
+  constants,
+} from 'node:fs';
 import { join } from 'node:path';
 
 const STALE_THRESHOLD_MS = 3600 * 1000; // 1 hour
@@ -37,8 +45,8 @@ export class SyncLock {
     // Lock file exists — check if we can take over
     try {
       const raw = readFileSync(this.lockPath, 'utf-8');
-      const info: LockInfo = JSON.parse(raw);
-      if (isPidAlive(info.pid) && (Date.now() - info.started) < STALE_THRESHOLD_MS) {
+      const info = JSON.parse(raw) as LockInfo;
+      if (isPidAlive(info.pid) && Date.now() - info.started < STALE_THRESHOLD_MS) {
         return false;
       }
     } catch {
@@ -46,7 +54,11 @@ export class SyncLock {
     }
 
     // Take over: remove + re-create atomically
-    try { unlinkSync(this.lockPath); } catch { /* ignore */ }
+    try {
+      unlinkSync(this.lockPath);
+    } catch {
+      /* ignore */
+    }
     try {
       const fd = openSync(this.lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
       const info: LockInfo = { pid: process.pid, started: Date.now() };
@@ -61,7 +73,9 @@ export class SyncLock {
   release(): void {
     try {
       if (existsSync(this.lockPath)) unlinkSync(this.lockPath);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 }
 

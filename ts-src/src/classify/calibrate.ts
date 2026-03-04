@@ -8,7 +8,99 @@ import type { MetadataStore } from '../metadata/store.js';
 import type { CloudFile } from '../types/scan.js';
 import type { LocalFile } from '../types/scan.js';
 import type { ContentHash, DirId, FileId } from '../types/common.js';
+import type { MetadataRecord } from '../types/metadata.js';
 import { computeContentHashFromFile } from '../hash.js';
+
+function calibrateDir(meta: MetadataStore, relPath: string, cloudFile: CloudFile): boolean {
+  if (meta.getDirId(relPath) || !cloudFile.id) return false;
+  meta.setDirInfo(relPath, cloudFile.id as DirId, cloudFile.parentId);
+  return true;
+}
+
+function calibrateFileCase1(
+  meta: MetadataStore,
+  relPath: string,
+  cloudFile: CloudFile,
+  existing: MetadataRecord,
+): boolean {
+  if (
+    !existing.fileId ||
+    existing.localMtime <= 0 ||
+    existing.cloudMtime !== 0 ||
+    cloudFile.mtime <= 0
+  ) {
+    return false;
+  }
+  meta.setFileInfo(relPath, {
+    fileId: existing.fileId,
+    cloudMtime: cloudFile.mtime,
+    localMtime: existing.localMtime,
+  });
+  return true;
+}
+
+function shouldSkipCalibration(existing: MetadataRecord | undefined): boolean {
+  if (!existing) return false;
+  return (existing.contentHash ?? null) !== null || existing.lastSyncAt > 0;
+}
+
+interface CalibrateFileCase2Opts {
+  meta: MetadataStore;
+  relPath: string;
+  cloudFile: CloudFile;
+  local: LocalFile;
+  localHashes: Map<string, ContentHash | null>;
+}
+
+function calibrateFileCase2(opts: CalibrateFileCase2Opts): boolean {
+  const { meta, relPath, cloudFile, local, localHashes } = opts;
+  let hash = localHashes.get(relPath) ?? null;
+  if (!hash) {
+    hash = computeContentHashFromFile(local.path);
+    if (hash) localHashes.set(relPath, hash);
+  }
+  if (!hash) return false;
+
+  meta.setFileInfo(relPath, {
+    fileId: cloudFile.id as FileId,
+    cloudMtime: cloudFile.mtime,
+    localMtime: local.mtime,
+    parentId: cloudFile.parentId,
+    domain: cloudFile.domain,
+    contentHash: hash,
+    createTime: cloudFile.ctime || 0,
+  });
+  meta.markSynced(relPath);
+  return true;
+}
+
+interface ProcessFileOpts {
+  meta: MetadataStore;
+  relPath: string;
+  cloudFile: CloudFile;
+  localSnap: ReadonlyMap<string, LocalFile>;
+  localHashes: Map<string, ContentHash | null>;
+}
+
+function processFile(opts: ProcessFileOpts): number {
+  const { meta, relPath, cloudFile, localSnap, localHashes } = opts;
+  const local = localSnap.get(relPath);
+  if (!local || local.isDir) return 0;
+
+  const existing = meta.getFileInfo(relPath);
+
+  if (existing && calibrateFileCase1(meta, relPath, cloudFile, existing)) {
+    if ((existing.contentHash ?? null) !== null || existing.lastSyncAt > 0) {
+      return 1;
+    }
+    if (calibrateFileCase2({ meta, relPath, cloudFile, local, localHashes })) {
+      return 2;
+    }
+    return 1;
+  }
+  if (shouldSkipCalibration(existing ?? undefined)) return 0;
+  return calibrateFileCase2({ meta, relPath, cloudFile, local, localHashes }) ? 1 : 0;
+}
 
 export function calibrateMetadata(
   meta: MetadataStore,
@@ -21,51 +113,16 @@ export function calibrateMetadata(
   meta.batch(() => {
     for (const [relPath, cloudFile] of cloudSnap) {
       if (cloudFile.isDir) {
-        if (!meta.getDirId(relPath) && cloudFile.id) {
-          meta.setDirInfo(relPath, cloudFile.id as DirId, cloudFile.parentId);
-          calibrated++;
-        }
-        continue;
-      }
-
-      const local = localSnap.get(relPath);
-      if (!local || local.isDir) continue;
-
-      const existing = meta.getFileInfo(relPath);
-
-      // Case 1: existing record has file_id but cloud_mtime=0 (migrated from JSON)
-      if (existing?.fileId && existing.localMtime > 0 && existing.cloudMtime === 0 && cloudFile.mtime > 0) {
-        meta.setFileInfo(relPath, {
-          fileId: existing.fileId,
-          cloudMtime: cloudFile.mtime,
-          localMtime: existing.localMtime,
+        if (calibrateDir(meta, relPath, cloudFile)) calibrated++;
+      } else {
+        calibrated += processFile({
+          meta,
+          relPath,
+          cloudFile,
+          localSnap,
+          localHashes,
         });
-        calibrated++;
-        if (existing.contentHash || existing.lastSyncAt > 0) continue;
-        // Fall through to full calibration for incomplete records
-      } else if (existing?.contentHash || (existing && existing.lastSyncAt > 0)) {
-        continue;
       }
-
-      // Case 2: no metadata or incomplete → establish baseline
-      let hash = localHashes.get(relPath) ?? null;
-      if (!hash) {
-        hash = computeContentHashFromFile(local.path);
-        if (hash) localHashes.set(relPath, hash);
-      }
-      if (!hash) continue;
-
-      meta.setFileInfo(relPath, {
-        fileId: cloudFile.id as FileId,
-        cloudMtime: cloudFile.mtime,
-        localMtime: local.mtime,
-        parentId: cloudFile.parentId,
-        domain: cloudFile.domain,
-        contentHash: hash,
-        createTime: cloudFile.ctime || 0,
-      });
-      meta.markSynced(relPath);
-      calibrated++;
     }
   });
 

@@ -4,11 +4,11 @@ const MAX_BITS = 2 ** 31 - 1;
 const encoder = new TextEncoder();
 
 function optimalM(n: number, p: number): number {
-  return Math.min(MAX_BITS, Math.max(1, Math.floor(-n * Math.log(p) / (Math.log(2) ** 2))));
+  return Math.min(MAX_BITS, Math.max(1, Math.floor((-n * Math.log(p)) / Math.log(2) ** 2)));
 }
 
 function optimalK(m: number, n: number): number {
-  return Math.max(1, Math.floor(m * Math.log(2) / n));
+  return Math.max(1, Math.floor((m * Math.log(2)) / n));
 }
 
 function hash64(data: string, seed: bigint): bigint {
@@ -48,13 +48,19 @@ export class BloomFilter {
 
   add(item: string): void {
     for (const pos of this.hashes(item)) {
-      this.bits[Math.floor(pos / 8)]! |= 1 << (pos % 8);
+      const idx = Math.floor(pos / 8);
+      const byte = this.bits[idx];
+      if (byte === undefined) throw new Error(`unreachable: bits[${idx}]`);
+      this.bits[idx] = byte | (1 << (pos % 8));
     }
   }
 
   mightContain(item: string): boolean {
     for (const pos of this.hashes(item)) {
-      if (!(this.bits[Math.floor(pos / 8)]! & (1 << (pos % 8)))) return false;
+      const idx = Math.floor(pos / 8);
+      const byte = this.bits[idx];
+      if (byte === undefined) throw new Error(`unreachable: bits[${idx}]`);
+      if (!(byte & (1 << (pos % 8)))) return false;
     }
     return true;
   }
@@ -82,7 +88,9 @@ export class BloomFilter {
     if (m < 1 || k < 1) throw new Error(`Invalid Bloom filter params: m=${m}, k=${k}`);
     const expectedBytes = Math.ceil(m / 8);
     if (data.length - 8 !== expectedBytes) {
-      throw new Error(`Bloom filter size mismatch: got ${data.length - 8}, expected ${expectedBytes}`);
+      throw new Error(
+        `Bloom filter size mismatch: got ${data.length - 8}, expected ${expectedBytes}`,
+      );
     }
     return BloomFilter.fromRaw(m, k, new Uint8Array(data.subarray(8)));
   }

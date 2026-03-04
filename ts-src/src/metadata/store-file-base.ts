@@ -19,9 +19,9 @@ export function getBaseContent(
   db: Database.Database,
   path: string,
 ): { content: Buffer; hash: string } | null {
-  const row = db.prepare(
-    'SELECT content, hash FROM file_base WHERE path = ?',
-  ).get(path) as { content: Buffer; hash: string } | undefined;
+  const row = db.prepare('SELECT content, hash FROM file_base WHERE path = ?').get(path) as
+    | { content: Buffer; hash: string }
+    | undefined;
   if (!row) return null;
   return { content: Buffer.from(row.content), hash: row.hash };
 }
@@ -31,16 +31,16 @@ export function removeBaseContent(db: Database.Database, path: string): void {
 }
 
 export function getAllBaseContentPaths(db: Database.Database): string[] {
-  const rows = db.prepare('SELECT path FROM file_base').all() as Array<{ path: string }>;
+  const rows = db.prepare('SELECT path FROM file_base').all() as { path: string }[];
   return rows.map((r) => r.path);
 }
 
 // ========== file_refs (incremental ref caching for dedup) ==========
 
 export function getFileRefs(db: Database.Database, sourcePath: string): string[] {
-  const rows = db.prepare(
-    'SELECT ref_path FROM file_refs WHERE source_path = ?',
-  ).all(sourcePath) as Array<{ ref_path: string }>;
+  const rows = db
+    .prepare('SELECT ref_path FROM file_refs WHERE source_path = ?')
+    .all(sourcePath) as { ref_path: string }[];
   return rows.map((r) => r.ref_path);
 }
 
@@ -57,10 +57,10 @@ export function setFileRefs(db: Database.Database, sourcePath: string, refs: str
 }
 
 export function getAllFileRefs(db: Database.Database): Map<string, string[]> {
-  const rows = db.prepare('SELECT source_path, ref_path FROM file_refs').all() as Array<{
+  const rows = db.prepare('SELECT source_path, ref_path FROM file_refs').all() as {
     source_path: string;
     ref_path: string;
-  }>;
+  }[];
   const result = new Map<string, string[]>();
   for (const { source_path, ref_path } of rows) {
     const list = result.get(source_path) ?? [];

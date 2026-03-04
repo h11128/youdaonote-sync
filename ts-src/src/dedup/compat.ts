@@ -7,7 +7,7 @@ import type { MetadataStore } from '../metadata/store.js';
  */
 export function findDuplicates(meta: MetadataStore): Map<ContentHash, string[]> {
   const allFiles = meta.getAllFiles();
-  const byHash = new Map<ContentHash, Array<{ path: string; syncAt: number }>>();
+  const byHash = new Map<ContentHash, { path: string; syncAt: number }[]>();
 
   for (const [path, record] of allFiles) {
     if (!record.contentHash) continue;
@@ -20,7 +20,10 @@ export function findDuplicates(meta: MetadataStore): Map<ContentHash, string[]> 
   for (const [hash, entries] of byHash) {
     if (entries.length <= 1) continue;
     entries.sort((a, b) => b.syncAt - a.syncAt);
-    duplicates.set(hash, entries.slice(1).map(e => e.path));
+    duplicates.set(
+      hash,
+      entries.slice(1).map((e) => e.path),
+    );
   }
 
   return duplicates;
@@ -29,7 +32,11 @@ export function findDuplicates(meta: MetadataStore): Map<ContentHash, string[]> 
 /**
  * Remove duplicate files from metadata (backward compat, metadata-only).
  */
-export function removeDuplicateMetadata(meta: MetadataStore): { total: number; duplicates: number; deleted: number } {
+export function removeDuplicateMetadata(meta: MetadataStore): {
+  total: number;
+  duplicates: number;
+  deleted: number;
+} {
   const duplicates = findDuplicates(meta);
   let deleted = 0;
   let totalDups = 0;

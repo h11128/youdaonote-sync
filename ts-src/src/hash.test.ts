@@ -1,5 +1,9 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { computeContentHashFromBytes, computeContentHashFromFile, normalizeMdFormatting } from './hash.js';
+import {
+  computeContentHashFromBytes,
+  computeContentHashFromFile,
+  normalizeMdFormatting,
+} from './hash.js';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

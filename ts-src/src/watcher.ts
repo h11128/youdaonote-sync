@@ -46,11 +46,11 @@ export class SyncWatcher {
       if (total > 0) {
         console.log(
           `Sync: ↓${s.downloaded} ↑${s.uploaded} ⚡${s.conflicts} →${s.moved} ` +
-          `(${s.skipped} skipped, ${s.errors} errors)`,
+            `(${s.skipped} skipped, ${s.errors} errors)`,
         );
       }
     } catch (e: unknown) {
-      console.error(`Sync error: ${e}`);
+      console.error(`Sync error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       this.running = false;
     }

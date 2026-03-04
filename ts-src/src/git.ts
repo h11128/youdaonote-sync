@@ -9,6 +9,58 @@ export interface GitCommitOpts {
   stats?: { downloaded: number; uploaded: number; conflicts: number; dedupDeleted?: number };
 }
 
+const BATCH = 50;
+const stdioPipe = 'pipe' as const;
+
+function stageChangedPaths(localDir: string, paths: string[]): void {
+  for (let i = 0; i < paths.length; i += BATCH) {
+    const batch = paths.slice(i, i + BATCH).filter((p) => existsSync(p));
+    if (batch.length > 0) {
+      execSync(`git add -- ${batch.map((p) => `"${p}"`).join(' ')}`, {
+        cwd: localDir,
+        stdio: stdioPipe,
+      });
+    }
+  }
+}
+
+function stageDedupDeletedPaths(localDir: string, paths: string[]): void {
+  for (let i = 0; i < paths.length; i += BATCH) {
+    const batch = paths.slice(i, i + BATCH);
+    execSync(`git add -u -- ${batch.map((p) => `"${p}"`).join(' ')}`, {
+      cwd: localDir,
+      stdio: stdioPipe,
+    });
+  }
+}
+
+function stageFiles(localDir: string, opts: GitCommitOpts): void {
+  const { changedPaths, dedupDeletedPaths } = opts;
+
+  if (changedPaths && changedPaths.length > 0) {
+    stageChangedPaths(localDir, changedPaths);
+    if (dedupDeletedPaths && dedupDeletedPaths.length > 0) {
+      stageDedupDeletedPaths(localDir, dedupDeletedPaths);
+    }
+  } else {
+    execSync('git add -A', { cwd: localDir, stdio: stdioPipe });
+  }
+}
+
+function buildCommitMessage(opts?: GitCommitOpts): string {
+  const msg = opts?.message;
+  if (msg) return msg;
+
+  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const s = opts?.stats;
+  const parts: string[] = [];
+  if (s?.downloaded) parts.push(`↓${s.downloaded}`);
+  if (s?.uploaded) parts.push(`↑${s.uploaded}`);
+  if (s?.conflicts) parts.push(`⚡${s.conflicts}`);
+  if (s?.dedupDeleted) parts.push(`🗑${s.dedupDeleted}`);
+  return parts.length > 0 ? `sync: ${parts.join(' ')} (${now})` : `sync: auto-commit (${now})`;
+}
+
 /**
  * Auto-commit changes in the local note directory after sync.
  * Selectively adds only changed files (matches Python commit_sync).
@@ -17,58 +69,19 @@ export function gitAutoCommit(localDir: string, opts?: GitCommitOpts): boolean {
   if (!existsSync(join(localDir, '.git'))) return false;
 
   try {
-    const changedPaths = opts?.changedPaths;
-    const dedupDeletedPaths = opts?.dedupDeletedPaths;
-
-    if (changedPaths && changedPaths.length > 0) {
-      const BATCH = 50;
-      for (let i = 0; i < changedPaths.length; i += BATCH) {
-        const batch = changedPaths.slice(i, i + BATCH).filter(p => existsSync(p));
-        if (batch.length > 0) {
-          execSync(`git add -- ${batch.map(p => `"${p}"`).join(' ')}`, {
-            cwd: localDir, stdio: 'pipe',
-          });
-        }
-      }
-
-      if (dedupDeletedPaths && dedupDeletedPaths.length > 0) {
-        for (let i = 0; i < dedupDeletedPaths.length; i += BATCH) {
-          const batch = dedupDeletedPaths.slice(i, i + BATCH);
-          execSync(`git add -u -- ${batch.map(p => `"${p}"`).join(' ')}`, {
-            cwd: localDir, stdio: 'pipe',
-          });
-        }
-      }
-    } else {
-      execSync('git add -A', { cwd: localDir, stdio: 'pipe' });
-    }
+    stageFiles(localDir, opts ?? {});
 
     const status = execSync('git status --porcelain', {
       cwd: localDir,
       encoding: 'utf-8',
     }).trim();
-
     if (!status) return false;
 
-    const s = opts?.stats;
-    let commitMsg = opts?.message;
-    if (!commitMsg) {
-      const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-      const parts: string[] = [];
-      if (s?.downloaded) parts.push(`↓${s.downloaded}`);
-      if (s?.uploaded) parts.push(`↑${s.uploaded}`);
-      if (s?.conflicts) parts.push(`⚡${s.conflicts}`);
-      if (s?.dedupDeleted) parts.push(`🗑${s.dedupDeleted}`);
-      commitMsg = parts.length > 0
-        ? `sync: ${parts.join(' ')} (${now})`
-        : `sync: auto-commit (${now})`;
-    }
-
+    const commitMsg = buildCommitMessage(opts);
     execSync(`git commit --no-verify -m "${commitMsg}"`, {
       cwd: localDir,
-      stdio: 'pipe',
+      stdio: stdioPipe,
     });
-
     return true;
   } catch {
     return false;

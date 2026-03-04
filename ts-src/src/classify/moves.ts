@@ -18,10 +18,30 @@ export interface PendingMove {
 }
 
 const GENERIC_NAMES = new Set([
-  'readme.md', 'index.md', 'index.html', 'todo.md', 'notes.md',
-  'changelog.md', 'license.md', 'config.json', 'package.json',
-  '.gitignore', 'makefile', 'dockerfile',
+  'readme.md',
+  'index.md',
+  'index.html',
+  'todo.md',
+  'notes.md',
+  'changelog.md',
+  'license.md',
+  'config.json',
+  'package.json',
+  '.gitignore',
+  'makefile',
+  'dockerfile',
 ]);
+
+interface MoveDetectionContext {
+  cloudDeletedPaths: Set<string>;
+  cloudNewPaths: Set<string>;
+  localDeletedPaths: Set<string>;
+  localNewPaths: Set<string>;
+  classified: ReadonlyMap<string, ClassifiedEntry>;
+  meta: MetadataStore | undefined;
+  cloudSnap?: ReadonlyMap<string, CloudFile>;
+  result: Map<string, FileState>;
+}
 
 /**
  * Three-phase move detection (matches Python moves.py):
@@ -46,34 +66,40 @@ export function detectMoves(
 
   for (const [path, entry] of classified) {
     switch (entry.state.kind) {
-      case 'cloudDeleted': cloudDeletedPaths.add(path); break;
-      case 'cloudNew': cloudNewPaths.add(path); break;
-      case 'localDeleted': localDeletedPaths.add(path); break;
-      case 'localNew': localNewPaths.add(path); break;
+      case 'cloudDeleted':
+        cloudDeletedPaths.add(path);
+        break;
+      case 'cloudNew':
+        cloudNewPaths.add(path);
+        break;
+      case 'localDeleted':
+        localDeletedPaths.add(path);
+        break;
+      case 'localNew':
+        localNewPaths.add(path);
+        break;
     }
   }
 
+  const ctx: MoveDetectionContext = {
+    cloudDeletedPaths,
+    cloudNewPaths,
+    localDeletedPaths,
+    localNewPaths,
+    classified,
+    meta,
+    ...(cloudSnap !== undefined ? { cloudSnap } : {}),
+    result,
+  };
+
   // Phase 1: file_id matching
-  if (meta && cloudSnap) {
-    detectByFileId(
-      localNewPaths, cloudNewPaths, cloudDeletedPaths,
-      classified, meta, cloudSnap, result,
-    );
-  }
+  if (meta && cloudSnap) detectByFileId({ ...ctx, meta, cloudSnap }, cloudSnap);
 
   // Phase 2: Filename normalization (same directory)
-  detectByNormalizedName(
-    cloudDeletedPaths, cloudNewPaths,
-    localDeletedPaths, localNewPaths,
-    result,
-  );
+  detectByNormalizedName(ctx);
 
   // Phase 3: Cross-directory matching (hash + filename + ancestor depth)
-  detectCrossDirectory(
-    cloudDeletedPaths, cloudNewPaths,
-    localDeletedPaths, localNewPaths,
-    classified, meta, result,
-  );
+  detectCrossDirectory(ctx);
 
   return result;
 }
@@ -84,14 +110,12 @@ export function detectMoves(
  * If the cloud path is in cloudNew, this is a cloud-side rename.
  */
 function detectByFileId(
-  localNewPaths: Set<string>,
-  cloudNewPaths: Set<string>,
-  cloudDeletedPaths: Set<string>,
-  classified: ReadonlyMap<string, ClassifiedEntry>,
-  meta: MetadataStore,
+  ctx: MoveDetectionContext,
   cloudSnap: ReadonlyMap<string, CloudFile>,
-  result: Map<string, FileState>,
 ): void {
+  const { localNewPaths, cloudNewPaths, cloudDeletedPaths, meta, result } = ctx;
+  if (!meta) return;
+
   const cloudIdToPath = new Map<string, string>();
   for (const [path, cf] of cloudSnap) {
     if (!cf.isDir && cf.id) cloudIdToPath.set(cf.id, path);
@@ -132,13 +156,8 @@ function detectByFileId(
  * If `(dirname, sanitize(basename))` matches between a deleted and a new entry,
  * treat it as a rename caused by character sanitization differences.
  */
-function detectByNormalizedName(
-  cloudDeletedPaths: Set<string>,
-  cloudNewPaths: Set<string>,
-  localDeletedPaths: Set<string>,
-  localNewPaths: Set<string>,
-  result: Map<string, FileState>,
-): void {
+function detectByNormalizedName(ctx: MoveDetectionContext): void {
+  const { cloudDeletedPaths, cloudNewPaths, localDeletedPaths, localNewPaths, result } = ctx;
   matchByNormalizedName(cloudDeletedPaths, cloudNewPaths, result);
   matchByNormalizedName(localDeletedPaths, localNewPaths, result);
 }
@@ -174,29 +193,43 @@ function matchByNormalizedName(
  * Step B: Filename match (weak signal) — same normalized name + shared ancestor depth ≥1
  *         Skips GENERIC_NAMES to avoid false positives.
  */
-function detectCrossDirectory(
-  cloudDeletedPaths: Set<string>,
-  cloudNewPaths: Set<string>,
-  localDeletedPaths: Set<string>,
-  localNewPaths: Set<string>,
-  classified: ReadonlyMap<string, ClassifiedEntry>,
-  meta: MetadataStore | undefined,
-  result: Map<string, FileState>,
-): void {
-  crossDirMatch(cloudDeletedPaths, cloudNewPaths, classified, meta, result);
-  crossDirMatch(localDeletedPaths, localNewPaths, classified, meta, result);
+function detectCrossDirectory(ctx: MoveDetectionContext): void {
+  const {
+    cloudDeletedPaths,
+    cloudNewPaths,
+    localDeletedPaths,
+    localNewPaths,
+    classified,
+    meta,
+    result,
+  } = ctx;
+  crossDirMatch({
+    deletedPaths: cloudDeletedPaths,
+    newPaths: cloudNewPaths,
+    classified,
+    meta,
+    result,
+  });
+  crossDirMatch({
+    deletedPaths: localDeletedPaths,
+    newPaths: localNewPaths,
+    classified,
+    meta,
+    result,
+  });
 }
 
-function crossDirMatch(
-  deletedPaths: Set<string>,
-  newPaths: Set<string>,
-  classified: ReadonlyMap<string, ClassifiedEntry>,
-  meta: MetadataStore | undefined,
-  result: Map<string, FileState>,
-): void {
-  if (deletedPaths.size === 0 || newPaths.size === 0) return;
+interface CrossDirMatchContext {
+  deletedPaths: Set<string>;
+  newPaths: Set<string>;
+  classified: ReadonlyMap<string, ClassifiedEntry>;
+  meta: MetadataStore | undefined;
+  result: Map<string, FileState>;
+}
 
-  // Step A: Hash matching
+function applyHashMatches(ctx: CrossDirMatchContext): void {
+  const { deletedPaths, newPaths, classified, result } = ctx;
+
   const deletedByHash = new Map<ContentHash, string[]>();
   const newByHash = new Map<ContentHash, string[]>();
 
@@ -216,19 +249,52 @@ function crossDirMatch(
     if (!nps) continue;
     const pairCount = Math.min(dps.length, nps.length);
     for (let i = 0; i < pairCount; i++) {
-      const oldPath = dps[i]!;
-      const newPath = nps[i]!;
+      const oldPath = dps[i];
+      const newPath = nps[i];
+      if (oldPath === undefined || newPath === undefined) continue;
       result.set(newPath, { kind: 'moved', oldPath });
       result.set(oldPath, { kind: 'gone' });
       deletedPaths.delete(oldPath);
       newPaths.delete(newPath);
     }
   }
+}
 
-  // Step B: Filename matching with ancestor depth
-  if (deletedPaths.size === 0 || newPaths.size === 0) return;
+function findBestPathByName(
+  dp: string,
+  candidates: string[],
+  result: Map<string, FileState>,
+): string | null {
+  let bestPath: string | null = null;
+  let bestDepth = -1;
+  for (const np of candidates) {
+    if (result.has(np)) continue;
+    const depth = commonAncestorDepth(dp, np);
+    if (depth > bestDepth) {
+      bestDepth = depth;
+      bestPath = np;
+    }
+  }
+  return bestDepth >= 1 ? bestPath : null;
+}
 
+function canPairDifferentContent(
+  dp: string,
+  bestPath: string,
+  classified: ReadonlyMap<string, ClassifiedEntry>,
+  meta: MetadataStore | undefined,
+): boolean {
+  const dpHash = classified.get(dp)?.hash;
+  const bpHash = classified.get(bestPath)?.hash;
+  if (!dpHash || !bpHash || dpHash === bpHash) return true;
+  const dpMeta = meta?.getFileInfo(dp);
+  return !!dpMeta?.fileId;
+}
+
+function applyFilenameMatches(ctx: CrossDirMatchContext): void {
+  const { deletedPaths, newPaths, classified, meta, result } = ctx;
   const MAX_NAME_CANDIDATES = 10;
+
   const newByName = new Map<string, string[]>();
   for (const np of newPaths) {
     const norm = sanitizeFilename(basename(np)).toLowerCase();
@@ -241,32 +307,26 @@ function crossDirMatch(
     const candidates = newByName.get(norm);
     if (!candidates || candidates.length > MAX_NAME_CANDIDATES) continue;
 
-    let bestPath: string | null = null;
-    let bestDepth = -1;
-    for (const np of candidates) {
-      if (result.has(np)) continue;
-      const depth = commonAncestorDepth(dp, np);
-      if (depth > bestDepth) {
-        bestDepth = depth;
-        bestPath = np;
-      }
-    }
+    const bestPath = findBestPathByName(dp, candidates, result);
+    if (!bestPath) continue;
 
-    if (bestPath && bestDepth >= 1) {
-      const dpHash = classified.get(dp)?.hash;
-      const bpHash = classified.get(bestPath)?.hash;
-      if (dpHash && bpHash && dpHash !== bpHash) {
-        // Content differs — only pair if the cloud file was previously synced (has file_id),
-        // indicating "moved + edited" rather than two unrelated files with the same name.
-        const dpMeta = meta?.getFileInfo(dp);
-        if (!dpMeta?.fileId) continue;
-      }
-      result.set(bestPath, { kind: 'moved', oldPath: dp });
-      result.set(dp, { kind: 'gone' });
-      deletedPaths.delete(dp);
-      newPaths.delete(bestPath);
-    }
+    if (!canPairDifferentContent(dp, bestPath, classified, meta)) continue;
+
+    result.set(bestPath, { kind: 'moved', oldPath: dp });
+    result.set(dp, { kind: 'gone' });
+    deletedPaths.delete(dp);
+    newPaths.delete(bestPath);
   }
+}
+
+function crossDirMatch(ctx: CrossDirMatchContext): void {
+  const { deletedPaths, newPaths } = ctx;
+  if (deletedPaths.size === 0 || newPaths.size === 0) return;
+
+  applyHashMatches(ctx);
+  if (deletedPaths.size === 0 || newPaths.size === 0) return;
+
+  applyFilenameMatches(ctx);
 }
 
 function pushToMap<K, V>(map: Map<K, V[]>, key: K, value: V): void {

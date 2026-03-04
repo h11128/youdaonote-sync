@@ -1,5 +1,5 @@
 import { posix } from 'node:path';
-import { sanitizeFilename as sanitizeFromUtil, normalizeSep as normalizeSepFromUtil } from '../util/path.js';
+import { sanitizeFilename as sanitizeFromUtil } from '../util/path.js';
 
 export { sanitizeFilename, normalizeSep } from '../util/path.js';
 

@@ -3,7 +3,7 @@ import { stateToAction } from './state.js';
 import type { FileState, SyncAction } from './state.js';
 
 describe('stateToAction', () => {
-  const cases: Array<[FileState['kind'], SyncAction]> = [
+  const cases: [FileState['kind'], SyncAction][] = [
     ['synced', 'skip'],
     ['cloudModifiedMtimeOnly', 'skip'],
     ['bothModifiedConverged', 'skip'],
@@ -22,9 +22,8 @@ describe('stateToAction', () => {
 
   for (const [kind, expected] of cases) {
     it(`${kind} → ${expected}`, () => {
-      const state = kind === 'moved'
-        ? { kind: 'moved' as const, oldPath: '/old' }
-        : { kind } as FileState;
+      const state =
+        kind === 'moved' ? { kind: 'moved' as const, oldPath: '/old' } : ({ kind } as FileState);
       expect(stateToAction(state)).toBe(expected);
     });
   }

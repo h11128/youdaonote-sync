@@ -30,9 +30,7 @@ describe('buildTree', () => {
   });
 
   it('root hash changes when a file hash changes', () => {
-    const files = new Map<string, LocalFile>([
-      ['a.md', lf('/x/a.md', false)],
-    ]);
+    const files = new Map<string, LocalFile>([['a.md', lf('/x/a.md', false)]]);
     const h1 = new Map([['a.md', 'hash1' as ContentHash]]);
     const h2 = new Map([['a.md', 'hash2' as ContentHash]]);
     const t1 = buildTree(files, h1);
@@ -60,8 +58,14 @@ describe('diffTrees', () => {
   });
 
   it('detects changed directories', () => {
-    const old = new Map<string, TreeHash>([['', 'a' as TreeHash], ['docs', 'b' as TreeHash]]);
-    const fresh = new Map<string, TreeHash>([['', 'a2' as TreeHash], ['docs', 'b' as TreeHash]]);
+    const old = new Map<string, TreeHash>([
+      ['', 'a' as TreeHash],
+      ['docs', 'b' as TreeHash],
+    ]);
+    const fresh = new Map<string, TreeHash>([
+      ['', 'a2' as TreeHash],
+      ['docs', 'b' as TreeHash],
+    ]);
     const changed = diffTrees(old, fresh);
     expect(changed.has('')).toBe(true);
     expect(changed.has('docs')).toBe(false);
@@ -69,7 +73,10 @@ describe('diffTrees', () => {
 
   it('detects new directories', () => {
     const old = new Map<string, TreeHash>([['', 'x' as TreeHash]]);
-    const fresh = new Map<string, TreeHash>([['', 'y' as TreeHash], ['new', 'z' as TreeHash]]);
+    const fresh = new Map<string, TreeHash>([
+      ['', 'y' as TreeHash],
+      ['new', 'z' as TreeHash],
+    ]);
     const changed = diffTrees(old, fresh);
     expect(changed.has('new')).toBe(true);
   });

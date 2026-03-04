@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { SyncEngine } from './engine.js';
 import { SyncWatcher } from './watcher.js';
-import { gitAutoCommit, gitInit } from './git.js';
+import { gitAutoCommit } from './git.js';
 import { stateToAction } from './types/state.js';
 
 interface Config {
@@ -27,6 +27,69 @@ function getConfigDir(): string {
   return join(process.cwd(), 'config');
 }
 
+async function runSyncAction(opts: { dryRun?: boolean; git?: boolean }): Promise<void> {
+  const configDir = getConfigDir();
+  const config = loadConfig(configDir);
+  if (!config.local_dir) {
+    console.error('Error: local_dir not set in config.json');
+    process.exit(1);
+  }
+  const engine = new SyncEngine({
+    cookiesPath: join(configDir, 'cookies.json'),
+    metadataPath: join(configDir, 'sync_metadata.db'),
+    localDir: config.local_dir,
+    syncInclude: config.sync_include,
+    syncExclude: config.sync_exclude,
+    dryRun: opts.dryRun,
+  });
+  try {
+    const result = await engine.sync();
+    const s = result.stats;
+    if (opts.dryRun) {
+      console.log('\n=== Dry-Run Results ===');
+      for (const [path, state] of result.classified) {
+        const action = stateToAction(state);
+        if (action !== 'skip') console.log(`  ${action.padEnd(10)} ${path}`);
+      }
+    }
+    console.log(
+      `\nSync complete: ↓${s.downloaded} ↑${s.uploaded} ⚡${s.conflicts} →${s.moved} (${s.skipped} skipped, ${s.errors} errors)`,
+    );
+    if (opts.git && !opts.dryRun) {
+      gitAutoCommit(config.local_dir, {
+        changedPaths: [...s.changedPaths],
+        stats: { downloaded: s.downloaded, uploaded: s.uploaded, conflicts: s.conflicts },
+      });
+    }
+  } finally {
+    engine.close();
+  }
+}
+
+function runWatchAction(opts: { interval: string; git?: boolean }): void {
+  const configDir = getConfigDir();
+  const config = loadConfig(configDir);
+  if (!config.local_dir) {
+    console.error('Error: local_dir not set in config.json');
+    process.exit(1);
+  }
+  const watcher = new SyncWatcher(
+    {
+      cookiesPath: join(configDir, 'cookies.json'),
+      metadataPath: join(configDir, 'sync_metadata.db'),
+      localDir: config.local_dir,
+      syncInclude: config.sync_include,
+      syncExclude: config.sync_exclude,
+    },
+    parseInt(opts.interval, 10) * 1000,
+  );
+  process.on('SIGINT', () => {
+    watcher.stop();
+    process.exit(0);
+  });
+  void watcher.start();
+}
+
 export function createCli(): Command {
   const program = new Command();
   program
@@ -39,49 +102,8 @@ export function createCli(): Command {
     .description('Run sync once')
     .option('--dry-run', 'Preview changes without executing')
     .option('--git', 'Auto-commit changes to git after sync')
-    .action(async (opts: { dryRun?: boolean; git?: boolean }) => {
-      const configDir = getConfigDir();
-      const config = loadConfig(configDir);
-
-      if (!config.local_dir) {
-        console.error('Error: local_dir not set in config.json');
-        process.exit(1);
-      }
-
-      const engine = new SyncEngine({
-        cookiesPath: join(configDir, 'cookies.json'),
-        metadataPath: join(configDir, 'sync_metadata.db'),
-        localDir: config.local_dir,
-        syncInclude: config.sync_include,
-        syncExclude: config.sync_exclude,
-        dryRun: opts.dryRun,
-      });
-
-      try {
-        const result = await engine.sync();
-        const s = result.stats;
-
-        if (opts.dryRun) {
-          console.log('\n=== Dry-Run Results ===');
-          for (const [path, state] of result.classified) {
-            const action = stateToAction(state);
-            if (action !== 'skip') {
-              console.log(`  ${action.padEnd(10)} ${path}`);
-            }
-          }
-        }
-
-        console.log(`\nSync complete: ↓${s.downloaded} ↑${s.uploaded} ⚡${s.conflicts} →${s.moved} (${s.skipped} skipped, ${s.errors} errors)`);
-
-        if (opts.git && !opts.dryRun) {
-          gitAutoCommit(config.local_dir, {
-            changedPaths: [...s.changedPaths],
-            stats: { downloaded: s.downloaded, uploaded: s.uploaded, conflicts: s.conflicts },
-          });
-        }
-      } finally {
-        engine.close();
-      }
+    .action((opts: { dryRun?: boolean; git?: boolean }) => {
+      void runSyncAction(opts);
     });
 
   program
@@ -90,31 +112,7 @@ export function createCli(): Command {
     .option('--interval <seconds>', 'Sync interval in seconds', '300')
     .option('--git', 'Auto-commit changes to git after each sync')
     .action((opts: { interval: string; git?: boolean }) => {
-      const configDir = getConfigDir();
-      const config = loadConfig(configDir);
-
-      if (!config.local_dir) {
-        console.error('Error: local_dir not set in config.json');
-        process.exit(1);
-      }
-
-      const watcher = new SyncWatcher(
-        {
-          cookiesPath: join(configDir, 'cookies.json'),
-          metadataPath: join(configDir, 'sync_metadata.db'),
-          localDir: config.local_dir,
-          syncInclude: config.sync_include,
-          syncExclude: config.sync_exclude,
-        },
-        parseInt(opts.interval, 10) * 1000,
-      );
-
-      process.on('SIGINT', () => {
-        watcher.stop();
-        process.exit(0);
-      });
-
-      void watcher.start();
+      runWatchAction(opts);
     });
 
   program
@@ -123,8 +121,8 @@ export function createCli(): Command {
     .action(() => {
       console.log(
         'Browser login is not yet implemented in TypeScript.\n' +
-        'Use: python -m src login\n' +
-        'The cookies.json will be shared between Python and TS.',
+          'Use: python -m src login\n' +
+          'The cookies.json will be shared between Python and TS.',
       );
     });
 

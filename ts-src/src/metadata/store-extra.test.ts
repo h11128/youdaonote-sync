@@ -3,9 +3,9 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from './store.js';
-import type { FileId, DirId, ContentHash } from '../types/common.js';
+import type { FileId, ContentHash } from '../types/common.js';
 
-const TMP = join(tmpdir(), 'store-extra-test-' + Date.now());
+const TMP = join(tmpdir(), `store-extra-test-${Date.now()}`);
 const DB_PATH = join(TMP, 'meta.db');
 let meta: MetadataStore;
 
@@ -26,8 +26,11 @@ describe('getSyncLog', () => {
 
   it('records and retrieves sync log entries', () => {
     meta.recordSync('a.md', {
-      fileId: 'f1' as FileId, cloudMtime: 100, localMtime: 100,
-      action: 'download', direction: 'pull',
+      fileId: 'f1' as FileId,
+      cloudMtime: 100,
+      localMtime: 100,
+      action: 'download',
+      direction: 'pull',
     });
     const logs = meta.getSyncLog();
     expect(logs.length).toBe(1);
@@ -37,11 +40,15 @@ describe('getSyncLog', () => {
 
   it('filters by path', () => {
     meta.recordSync('a.md', {
-      fileId: 'f1' as FileId, cloudMtime: 100, localMtime: 100,
+      fileId: 'f1' as FileId,
+      cloudMtime: 100,
+      localMtime: 100,
       action: 'download',
     });
     meta.recordSync('b.md', {
-      fileId: 'f2' as FileId, cloudMtime: 200, localMtime: 200,
+      fileId: 'f2' as FileId,
+      cloudMtime: 200,
+      localMtime: 200,
       action: 'upload',
     });
     const logs = meta.getSyncLog({ path: 'a.md' });
@@ -52,7 +59,9 @@ describe('getSyncLog', () => {
   it('respects limit', () => {
     for (let i = 0; i < 5; i++) {
       meta.recordSync(`f${i}.md`, {
-        fileId: `id${i}` as FileId, cloudMtime: i, localMtime: i,
+        fileId: `id${i}` as FileId,
+        cloudMtime: i,
+        localMtime: i,
         action: 'sync',
       });
     }
@@ -105,36 +114,68 @@ describe('batch', () => {
         meta.setFileInfo('c.md', { fileId: 'f3' as FileId, cloudMtime: 3, localMtime: 3 });
         throw new Error('deliberate');
       });
-    } catch { /* expected */ }
+    } catch {
+      /* expected */
+    }
     expect(meta.getFileInfo('c.md')).toBeNull();
   });
 });
 
 describe('findCloudFileByHash', () => {
   it('finds cloud file with matching hash', () => {
-    meta.setFileInfo('a.md', { fileId: 'WEB1' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc123' as ContentHash });
+    meta.setFileInfo('a.md', {
+      fileId: 'WEB1' as FileId,
+      cloudMtime: 1,
+      localMtime: 1,
+      contentHash: 'abc123' as ContentHash,
+    });
     expect(meta.findCloudFileByHash('abc123' as ContentHash)).toBe('a.md');
   });
 
   it('returns null when no match', () => {
-    meta.setFileInfo('a.md', { fileId: 'WEB1' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc' as ContentHash });
+    meta.setFileInfo('a.md', {
+      fileId: 'WEB1' as FileId,
+      cloudMtime: 1,
+      localMtime: 1,
+      contentHash: 'abc' as ContentHash,
+    });
     expect(meta.findCloudFileByHash('zzz' as ContentHash)).toBeNull();
   });
 
   it('excludes self', () => {
-    meta.setFileInfo('a.md', { fileId: 'WEB1' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc' as ContentHash });
+    meta.setFileInfo('a.md', {
+      fileId: 'WEB1' as FileId,
+      cloudMtime: 1,
+      localMtime: 1,
+      contentHash: 'abc' as ContentHash,
+    });
     expect(meta.findCloudFileByHash('abc' as ContentHash, 'a.md')).toBeNull();
   });
 
   it('excludes self but returns other match', () => {
-    meta.setFileInfo('a.md', { fileId: 'WEB1' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc' as ContentHash });
-    meta.setFileInfo('b.md', { fileId: 'WEB2' as FileId, cloudMtime: 2, localMtime: 2, contentHash: 'abc' as ContentHash });
+    meta.setFileInfo('a.md', {
+      fileId: 'WEB1' as FileId,
+      cloudMtime: 1,
+      localMtime: 1,
+      contentHash: 'abc' as ContentHash,
+    });
+    meta.setFileInfo('b.md', {
+      fileId: 'WEB2' as FileId,
+      cloudMtime: 2,
+      localMtime: 2,
+      contentHash: 'abc' as ContentHash,
+    });
     const result = meta.findCloudFileByHash('abc' as ContentHash, 'a.md');
     expect(result).toBe('b.md');
   });
 
   it('ignores files without file_id', () => {
-    meta.setFileInfo('local.md', { fileId: '' as FileId, cloudMtime: 1, localMtime: 1, contentHash: 'abc' as ContentHash });
+    meta.setFileInfo('local.md', {
+      fileId: '' as FileId,
+      cloudMtime: 1,
+      localMtime: 1,
+      contentHash: 'abc' as ContentHash,
+    });
     expect(meta.findCloudFileByHash('abc' as ContentHash)).toBeNull();
   });
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectMoves, commonAncestorDepth } from './moves.js';
 import { asContentHash } from '../types/common.js';
-import type { ContentHash } from '../types/common.js';
 import type { FileState } from '../types/state.js';
 
 function entry(kind: FileState['kind'], hash: string | null) {
@@ -11,9 +10,7 @@ function entry(kind: FileState['kind'], hash: string | null) {
   };
 }
 
-describe('detectMoves', () => {
-  // ── Phase 3 (hash matching, backward compat with old tests) ──
-
+describe('detectMoves phase 3 hash matching', () => {
   it('detects cloud-side rename (cloudDeleted + cloudNew with same hash)', () => {
     const classified = new Map([
       ['/old/file.md', entry('cloudDeleted', 'hash-123')],
@@ -85,9 +82,9 @@ describe('detectMoves', () => {
 
     expect(result.size).toBe(0);
   });
+});
 
-  // ── Phase 2 (filename normalization matching) ──
-
+describe('detectMoves phase 2 filename normalization', () => {
   it('phase 2: matches by normalized filename in same directory', () => {
     // sanitize('<') → '_', sanitize('>') → deleted
     // so 'hello<world>.md' normalizes to 'hello_world.md'
@@ -116,9 +113,9 @@ describe('detectMoves', () => {
     // requires ancestor depth >= 1, which fails for dir-a vs dir-b
     expect(result.size).toBe(0);
   });
+});
 
-  // ── Phase 3B (cross-directory filename matching) ──
-
+describe('detectMoves phase 3B cross-directory', () => {
   it('phase 3B: matches cross-directory with shared ancestor', () => {
     const classified = new Map([
       ['project/old-dir/meeting-recap.md', entry('cloudDeleted', null)],

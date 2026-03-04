@@ -3,7 +3,7 @@ import type { CookieEntry } from './cookies.js';
 import { loadCookies, loadFromDesktop, saveCookies } from './cookies.js';
 import type { DirId, FileId } from '../types/common.js';
 import type { DirInfoByIdResponse } from '../types/dir.js';
-import { NoteDomain } from '../types/common.js';
+import { type NoteDomain } from '../types/common.js';
 import { ROOT_ID_URL, FILE_URL, LIST_RECENT_URL, tpl, BASE_HEADERS } from './constants.js';
 import { safeJson } from './request.js';
 import { fetchDirList } from './dir.js';
@@ -22,9 +22,7 @@ export class YoudaoNoteApi {
   // ========== Auth ==========
 
   private applyCookies(cookies: CookieEntry[]): string | null {
-    this.cookieHeader = cookies
-      .map((c) => `${c.name}=${c.value}`)
-      .join('; ');
+    this.cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
     this.cstk = null;
     for (const c of cookies) {
       if (c.name === 'YNOTE_CSTK') {
@@ -53,9 +51,11 @@ export class YoudaoNoteApi {
     return null;
   }
 
+  private static readonly NOT_LOGGED_IN_MSG = 'Not logged in: cstk is empty.';
+
   private requireAuth(): void {
     if (!this.cstk) {
-      throw new Error('Not logged in: cstk is empty. Call loginByCookies() first.');
+      throw new Error(`${YoudaoNoteApi.NOT_LOGGED_IN_MSG} Call loginByCookies() first.`);
     }
   }
 
@@ -70,10 +70,7 @@ export class YoudaoNoteApi {
 
   // ========== HTTP ==========
 
-  private async httpPost(
-    url: string,
-    body?: URLSearchParams | FormData,
-  ): Promise<Response> {
+  private async httpPost(url: string, body?: URLSearchParams | FormData): Promise<Response> {
     const headers: Record<string, string> = {
       ...BASE_HEADERS,
       Cookie: this.cookieHeader,
@@ -87,12 +84,12 @@ export class YoudaoNoteApi {
 
     let resp = await fetch(url, fetchOpts);
 
-    if (await this.isAuthError(resp) && this.refreshSession()) {
+    if ((await this.isAuthError(resp)) && this.refreshSession()) {
       url = this.refreshUrl(url);
       if (body instanceof URLSearchParams && body.has('cstk') && this.cstk) {
         body.set('cstk', this.cstk);
       }
-      headers['Cookie'] = this.cookieHeader;
+      headers.Cookie = this.cookieHeader;
       const retryOpts: RequestInit = { method: 'POST', headers };
       if (body) retryOpts.body = body;
       resp = await fetch(url, retryOpts);
@@ -112,9 +109,9 @@ export class YoudaoNoteApi {
 
     let resp = await fetch(url, { headers });
 
-    if (await this.isAuthError(resp) && this.refreshSession()) {
+    if ((await this.isAuthError(resp)) && this.refreshSession()) {
       url = this.refreshUrl(url);
-      headers['Cookie'] = this.cookieHeader;
+      headers.Cookie = this.cookieHeader;
       resp = await fetch(url, { headers });
     }
 
@@ -130,7 +127,9 @@ export class YoudaoNoteApi {
       try {
         const body = await resp.clone().text();
         if (body.includes('error=207') || body.includes('AUTHENTICATION_FAILURE')) return true;
-      } catch { /* ignore read errors */ }
+      } catch {
+        /* ignore read errors */
+      }
     }
     return false;
   }
@@ -151,20 +150,22 @@ export class YoudaoNoteApi {
   async getRootId(): Promise<DirId> {
     if (this.cachedRootId) return this.cachedRootId;
     this.requireAuth();
+    const cstk = this.cstk;
+    if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
     const params = new URLSearchParams({
       path: '/',
       entire: 'true',
       purge: 'false',
-      cstk: this.cstk!,
+      cstk,
     });
-    const url = tpl(ROOT_ID_URL, { cstk: this.cstk! });
+    const url = tpl(ROOT_ID_URL, { cstk });
     const data = await safeJson(await this.httpPost(url, params));
 
-    const fe = data['fileEntry'] as Record<string, unknown> | undefined;
-    if (fe?.['id']) {
-      this.cachedRootId = fe['id'] as DirId;
-    } else if (data['id']) {
-      this.cachedRootId = data['id'] as DirId;
+    const fe = data.fileEntry as Record<string, unknown> | undefined;
+    if (fe?.id) {
+      this.cachedRootId = fe.id as DirId;
+    } else if (data.id) {
+      this.cachedRootId = data.id as DirId;
     } else {
       throw new Error(`Cannot extract root dir ID from API response`);
     }
@@ -174,24 +175,24 @@ export class YoudaoNoteApi {
   async getDirInfoById(dirId: DirId): Promise<DirInfoByIdResponse> {
     if (!dirId) throw new Error('dirId must not be empty');
     this.requireAuth();
-    return fetchDirList(
-      { httpGet: (u) => this.httpGet(u), getCstk: () => this.cstk! },
-      dirId,
-    );
+    const cstk = this.cstk;
+    if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
+    return fetchDirList({ httpGet: (u) => this.httpGet(u), getCstk: () => cstk }, dirId);
   }
 
   async getFileById(fileId: FileId): Promise<ArrayBuffer> {
     if (!fileId) throw new Error('fileId must not be empty');
     this.requireAuth();
-
+    const cstk = this.cstk;
+    if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
     const params = new URLSearchParams({
       fileId,
       version: '-1',
       convert: 'true',
       editorType: '1',
-      cstk: this.cstk!,
+      cstk,
     });
-    const url = tpl(FILE_URL, { cstk: this.cstk! });
+    const url = tpl(FILE_URL, { cstk });
     const resp = await this.httpPost(url, params);
     return resp.arrayBuffer();
   }
@@ -210,11 +211,8 @@ export class YoudaoNoteApi {
   }
 
   async createDir(parentId: DirId, name: string): Promise<Record<string, unknown>> {
-    return fileApi.createDir(
-      this.asFileApiContext(),
-      parentId,
-      name,
-      () => YoudaoNoteApi.generateFileId(),
+    return fileApi.createDir(this.asFileApiContext(), parentId, name, () =>
+      YoudaoNoteApi.generateFileId(),
     );
   }
 
@@ -234,9 +232,11 @@ export class YoudaoNoteApi {
    * Fetch recently modified files (ordered by modify time, descending).
    * API maximum is 30 items per call.
    */
-  async listRecent(limit = 30): Promise<Array<Record<string, unknown>>> {
+  async listRecent(limit = 30): Promise<Record<string, unknown>[]> {
     this.requireAuth();
-    const url = tpl(LIST_RECENT_URL, { cstk: this.cstk! });
+    const cstk = this.cstk;
+    if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
+    const url = tpl(LIST_RECENT_URL, { cstk });
     const params = new URLSearchParams({
       offset: '0',
       limit: String(Math.min(limit, 30)),
@@ -249,8 +249,14 @@ export class YoudaoNoteApi {
   private asFileApiContext(): fileApi.FileApiContext {
     return {
       httpPost: (url, body) => this.httpPost(url, body),
-      getCstk: () => this.cstk!,
-      requireAuth: () => this.requireAuth(),
+      getCstk: () => {
+        const cstk = this.cstk;
+        if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
+        return cstk;
+      },
+      requireAuth: () => {
+        this.requireAuth();
+      },
     };
   }
 }

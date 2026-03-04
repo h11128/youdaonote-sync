@@ -94,21 +94,24 @@ export async function createDir(
   const url = tpl(PUSH_URL, { cstk: ctx.getCstk() });
   const result = await safeJson(await ctx.httpPost(url, params));
 
-  if (result['error'] === '20108') {
-    const dupId = result['duplicateFileId'] as string | undefined;
+  if (result.error === '20108') {
+    const dupId = result.duplicateFileId as string | undefined;
     if (dupId) {
       return { fileEntry: { id: dupId, name, dir: true } };
     }
   }
 
-  if (result['entry'] && !result['fileEntry']) {
-    result['fileEntry'] = result['entry'];
+  if (result.entry && !result.fileEntry) {
+    result.fileEntry = result.entry;
   }
 
   return result;
 }
 
-export async function deleteFile(ctx: FileApiContext, fileId: FileId): Promise<Record<string, unknown>> {
+export async function deleteFile(
+  ctx: FileApiContext,
+  fileId: FileId,
+): Promise<Record<string, unknown>> {
   if (!fileId) throw new Error('fileId must not be empty');
   ctx.requireAuth();
   const url = tpl(DELETE_URL, { file_id: fileId, cstk: ctx.getCstk() });

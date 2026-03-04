@@ -12,6 +12,6 @@ export interface DirFileEntry {
 }
 
 export interface DirInfoByIdResponse {
-  entries?: Array<{ fileEntry: DirFileEntry }>;
+  entries?: { fileEntry: DirFileEntry }[];
   count?: number;
 }

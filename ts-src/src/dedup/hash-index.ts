@@ -63,7 +63,9 @@ export function buildHashIndex(
       processFile(rel, info.path, info.mtime);
     }
   } else {
-    walkFiles(root, root, (entry) => processFile(entry.rel, entry.absPath, entry.mtime));
+    walkFiles(root, root, (entry) => {
+      processFile(entry.rel, entry.absPath, entry.mtime);
+    });
   }
 
   if (updated > 0) meta.save();

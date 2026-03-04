@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { SyncEngine, filterCloudSnap, filterByDirection } from './engine.js';
 import type { YoudaoNoteApi } from './api/client.js';
 import { asDirId, asFileId } from './types/common.js';
-import type { DirId, NoteDomain } from './types/common.js';
+import type { NoteDomain } from './types/common.js';
 import type { CloudFile } from './types/scan.js';
 import type { FileState } from './types/state.js';
 import type { DirInfoByIdResponse } from './types/dir.js';
@@ -22,11 +22,11 @@ describe('SyncEngine', () => {
   });
 
   it('uses injected api and meta when provided (dryRun path)', async () => {
-    const mockApi: YoudaoNoteApi = {
+    const mockApi = {
       loginByCookies: () => null,
-      getRootId: async () => asDirId('injected-root'),
-      getDirInfoById: async () => ({ entries: [] } as DirInfoByIdResponse),
-    } as YoudaoNoteApi;
+      getRootId: () => Promise.resolve(asDirId('injected-root')),
+      getDirInfoById: () => Promise.resolve({ entries: [] } as DirInfoByIdResponse),
+    } as unknown as YoudaoNoteApi;
 
     const metaPath = join(tmpDir, 'meta.db');
     const { MetadataStore } = await import('./metadata/store.js');
@@ -53,7 +53,7 @@ describe('SyncEngine', () => {
 function fakeCloudFile(name: string): CloudFile {
   return {
     id: asFileId('f-' + name),
-    parentId: asDirId('root') as DirId,
+    parentId: asDirId('root'),
     name,
     isDir: false,
     mtime: 1000,
@@ -90,9 +90,7 @@ describe('filterCloudSnap', () => {
   });
 
   it('no-ops when both include and exclude are empty', () => {
-    const snap = new Map<string, CloudFile>([
-      ['a.md', fakeCloudFile('a.md')],
-    ]);
+    const snap = new Map<string, CloudFile>([['a.md', fakeCloudFile('a.md')]]);
 
     filterCloudSnap(snap, {});
 

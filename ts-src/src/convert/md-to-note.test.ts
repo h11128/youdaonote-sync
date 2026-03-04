@@ -15,7 +15,7 @@ describe('markdownToNoteJson', () => {
     const parsed = JSON.parse(result);
     const first = parsed['5'][0];
     expect(first['6']).toBe('h');
-    expect(first['4']['l']).toBe('h2');
+    expect(first['4'].l).toBe('h2');
   });
 
   it('handles code blocks', () => {
@@ -24,7 +24,7 @@ describe('markdownToNoteJson', () => {
     const parsed = JSON.parse(result);
     const codeBlock = parsed['5'].find((e: Record<string, unknown>) => e['6'] === 'cd');
     expect(codeBlock).toBeDefined();
-    expect(codeBlock['4']['la']).toBe('python');
+    expect(codeBlock['4'].la).toBe('python');
   });
 
   it('handles unordered lists', () => {
@@ -32,7 +32,7 @@ describe('markdownToNoteJson', () => {
     const parsed = JSON.parse(result);
     const first = parsed['5'][0];
     expect(first['6']).toBe('l');
-    expect(first['4']['lt']).toBe('unordered');
+    expect(first['4'].lt).toBe('unordered');
   });
 
   it('handles ordered lists', () => {
@@ -40,7 +40,7 @@ describe('markdownToNoteJson', () => {
     const parsed = JSON.parse(result);
     const first = parsed['5'][0];
     expect(first['6']).toBe('l');
-    expect(first['4']['lt']).toBe('ordered');
+    expect(first['4'].lt).toBe('ordered');
   });
 
   it('handles multi-line quotes', () => {
@@ -56,6 +56,6 @@ describe('markdownToNoteJson', () => {
     const parsed = JSON.parse(result);
     const img = parsed['5'].find((e: Record<string, unknown>) => e['6'] === 'im');
     expect(img).toBeDefined();
-    expect(img['4']['u']).toBe('https://img.com/pic.png');
+    expect(img['4'].u).toBe('https://img.com/pic.png');
   });
 });

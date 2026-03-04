@@ -7,7 +7,12 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "check": "tsc --noEmit && eslint src/ && prettier --check \"src/**/*.ts\""
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
@@ -16,11 +21,24 @@
     "xxhash-wasm": "^1.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
-    "vitest": "^2.0.0",
+    "@eslint/js": "^10.0.1",
     "@fast-check/vitest": "^0.1.0",
     "@types/better-sqlite3": "^7.0.0",
     "@types/node": "^22.0.0",
-    "tsup": "^8.0.0"
+    "eslint": "^10.0.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-sonarjs": "^4.0.0",
+    "lint-staged": "^16.3.2",
+    "prettier": "^3.8.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.56.1",
+    "vitest": "^2.0.0"
+  },
+  "lint-staged": {
+    "src/**/*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ]
   }
 }

@@ -25,12 +25,15 @@ export async function scanCloud(
   base = '',
   maxConcurrent = 8,
 ): Promise<Map<string, CloudFile>> {
-  if (!rootDirId) throw new Error("rootDirId must not be empty");
+  if (!rootDirId) throw new Error('rootDirId must not be empty');
 
   const files = new Map<string, CloudFile>();
   const visited = new Set<string>([rootDirId]);
 
-  type QueueItem = { dirId: DirId; basePath: string };
+  interface QueueItem {
+    dirId: DirId;
+    basePath: string;
+  }
   const queue: QueueItem[] = [{ dirId: rootDirId, basePath: base }];
   let inflight = 0;
   let resolveAll: (() => void) | null = null;
@@ -56,7 +59,8 @@ export async function scanCloud(
 
   function drain(): void {
     while (queue.length > 0 && inflight < maxConcurrent) {
-      const item = queue.shift()!;
+      const item = queue.shift();
+      if (item == null) break;
       inflight++;
       void processItem(item);
     }
@@ -79,11 +83,11 @@ async function fetchDir(
   dirId: DirId,
   basePath: string,
 ): Promise<{
-  entries: Array<[string, CloudFile]>;
-  subdirs: Array<{ dirId: DirId; basePath: string }>;
+  entries: [string, CloudFile][];
+  subdirs: { dirId: DirId; basePath: string }[];
 }> {
-  const entries: Array<[string, CloudFile]> = [];
-  const subdirs: Array<{ dirId: DirId; basePath: string }> = [];
+  const entries: [string, CloudFile][] = [];
+  const subdirs: { dirId: DirId; basePath: string }[] = [];
 
   let data: Awaited<ReturnType<DirBrowser['getDirInfoById']>>;
   try {

@@ -2,10 +2,18 @@ import { XMLParser } from 'fast-xml-parser';
 
 const MD_ESCAPE_RE = /[\\*_#&<>\u201c\u2019\t\r\n]/g;
 const MD_ESCAPE_MAP: Record<string, string> = {
-  '\\': '\\\\', '*': '\\*', '_': '\\_', '#': '\\#',
-  '&': '&amp;', '<': '&lt;', '>': '&gt;',
-  '\u201c': '&quot;', '\u2019': '&apos;',
-  '\t': '&emsp;', '\r': '<br>', '\n': '<br>',
+  '\\': '\\\\',
+  '*': '\\*',
+  _: '\\_',
+  '#': '\\#',
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '\u201c': '&quot;',
+  '\u2019': '&apos;',
+  '\t': '&emsp;',
+  '\r': '<br>',
+  '\n': '<br>',
 };
 
 function encodeMd(text: string): string {
@@ -26,7 +34,11 @@ function getTextByKey(children: XmlElement[], key = 'text'): string {
       if (k.includes(key)) {
         const val = child[k];
         if (typeof val === 'string') return val;
-        if (typeof val === 'object' && val !== null && '#text' in (val as Record<string, unknown>)) {
+        if (
+          typeof val === 'object' &&
+          val !== null &&
+          '#text' in (val as Record<string, unknown>)
+        ) {
           return String((val as Record<string, unknown>)['#text']);
         }
         return '';
@@ -54,7 +66,7 @@ const converters: Record<string, Converter> = {
   para: (text) => text,
   heading: (text, el) => {
     const attrs = el[':@'] ?? {};
-    let level = (attrs as Record<string, unknown>)['@_level'] ?? 1;
+    let level = attrs['@_level'] ?? 1;
     if (level === 'a' || level === 'b') level = 1;
     return text ? `${'#'.repeat(Number(level))} ${text}` : text;
   },
@@ -79,46 +91,81 @@ const converters: Record<string, Converter> = {
   horizontal_line: () => '---',
   list_item: (text, el, listTypes) => {
     const attrs = el[':@'] ?? {};
-    const listId = (attrs as Record<string, unknown>)['@_list-id'] as string;
+    const listId = attrs['@_list-id'] as string;
     const type = listTypes[listId];
     return type === 'ordered' ? `1. ${text}` : `- ${text}`;
   },
-  table: (_text, el) => {
-    const children = getChildren(el);
-    const content = getTextByKey(children, 'content');
-    try {
-      const data = JSON.parse(content) as {
-        widths?: unknown[];
-        cells?: Array<{ value?: string }>;
-      };
-      const colCount = data.widths?.length ?? 0;
-      if (colCount === 0) return content;
-
-      const rows: string[][] = [];
-      let row: string[] = [];
-      for (const cell of data.cells ?? []) {
-        row.push(encodeMd(cell.value ?? ''));
-        if (row.length === colCount) {
-          rows.push(row);
-          row = [];
-        }
-      }
-
-      if (rows.length === 1) {
-        rows.unshift(Array(colCount).fill(' '));
-        rows.splice(1, 0, Array(colCount).fill('-'));
-      } else if (rows.length > 1) {
-        rows.splice(1, 0, Array(colCount).fill('-'));
-      }
-
-      return rows.map((r) => `| ${r.join(' | ')} |`).join('\n') + '\n';
-    } catch {
-      return content || '';
-    }
-  },
+  table: (_text, el) => convertTable(el),
 };
 
+function convertTable(el: XmlElement): string {
+  const children = getChildren(el);
+  const content = getTextByKey(children, 'content');
+  try {
+    const data = JSON.parse(content) as {
+      widths?: unknown[];
+      cells?: { value?: string }[];
+    };
+    const colCount = data.widths?.length ?? 0;
+    if (colCount === 0) return content;
+
+    const rows = buildTableRows(data, colCount);
+    addSeparatorRow(rows, colCount);
+    return rows.map((r) => `| ${r.join(' | ')} |`).join('\n') + '\n';
+  } catch {
+    return content || '';
+  }
+}
+
+function buildTableRows(data: { cells?: { value?: string }[] }, colCount: number): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  for (const cell of data.cells ?? []) {
+    row.push(encodeMd(cell.value ?? ''));
+    if (row.length === colCount) {
+      rows.push(row);
+      row = [];
+    }
+  }
+  return rows;
+}
+
+function addSeparatorRow(rows: string[][], colCount: number): void {
+  const separator = Array(colCount).fill('-') as string[];
+  if (rows.length === 1) {
+    rows.unshift(Array(colCount).fill(' ') as string[]);
+  }
+  rows.splice(1, 0, separator);
+}
+
 const NS = 'http://note.youdao.com';
+
+function extractListTypeFromItem(item: XmlElement): [string, string] | null {
+  const keys = Object.keys(item).filter((k) => k !== ':@');
+  for (const k of keys) {
+    if (!k.includes('list')) continue;
+    const attrs = item[':@'] ?? {};
+    const a: Record<string, unknown> = attrs;
+    const id = a['@_id'];
+    const typeVal = a['@_type'];
+    if (id == null || typeVal == null) return null;
+    const idStr = typeof id === 'string' || typeof id === 'number' ? String(id) : '';
+    const typeStr =
+      typeof typeVal === 'string' || typeof typeVal === 'number' ? String(typeVal) : '';
+    return idStr && typeStr ? [idStr, typeStr] : null;
+  }
+  return null;
+}
+
+function parseListTypes(rootChildren: XmlElement[]): Record<string, string> {
+  const listTypes: Record<string, string> = {};
+  const listDefs = getChildren(rootChildren[0] ?? {});
+  for (const item of listDefs) {
+    const pair = extractListTypeFromItem(item);
+    if (pair) listTypes[pair[0]] = pair[1];
+  }
+  return listTypes;
+}
 
 /**
  * Convert Youdao XML note bytes to Markdown.
@@ -131,28 +178,10 @@ export function xmlBytesToMarkdown(data: Buffer | Uint8Array): string {
   });
 
   const xmlStr = typeof data === 'string' ? data : Buffer.from(data).toString('utf-8');
-  const parsed = parser.parse(xmlStr);
+  const parsed: unknown[] = parser.parse(xmlStr) as unknown[];
 
-  // Extract root → [0] = list types, [1] = body
-  const rootChildren = getChildren(parsed[0] ?? parsed);
-  const listTypes: Record<string, string> = {};
-
-  // First child: list definitions
-  const listDefs = getChildren(rootChildren[0] ?? {});
-  for (const item of listDefs) {
-    const keys = Object.keys(item).filter((k) => k !== ':@');
-    for (const k of keys) {
-      if (k.includes('list')) {
-        const attrs = item[':@'] ?? {};
-        const a = attrs as Record<string, unknown>;
-        if (a['@_id'] && a['@_type']) {
-          listTypes[String(a['@_id'])] = String(a['@_type']);
-        }
-      }
-    }
-  }
-
-  // Second child: body
+  const rootChildren = getChildren((parsed[0] ?? parsed) as unknown);
+  const listTypes = parseListTypes(rootChildren);
   const bodyChildren = getChildren(rootChildren[1] ?? {});
   const result: string[] = [];
 
@@ -161,7 +190,10 @@ export function xmlBytesToMarkdown(data: Buffer | Uint8Array): string {
     const text = getTextByKey(children);
     const keys = Object.keys(element).filter((k) => k !== ':@');
     const tagName = keys[0] ?? '';
-    const name = tagName.replace(`${NS}:`, '').replace(/{[^}]+}/, '').replace(/-/g, '_');
+    const name = tagName
+      .replace(`${NS}:`, '')
+      .replace(/{[^}]+}/, '')
+      .replace(/-/g, '_');
 
     const converter = converters[name];
     if (converter) {

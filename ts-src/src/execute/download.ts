@@ -82,7 +82,11 @@ export async function downloadFile(
     }
     renameSync(tmpPath, localPath);
   } catch (err) {
-    try { unlinkSync(tmpPath); } catch { /* cleanup best-effort */ }
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      /* cleanup best-effort */
+    }
     throw err;
   }
 
@@ -90,12 +94,12 @@ export async function downloadFile(
     try {
       const mtime = opts.cloudMtime;
       utimesSync(localPath, mtime, mtime);
-    } catch { /* ignore timing errors */ }
+    } catch {
+      /* ignore timing errors */
+    }
   }
 
-  const contentBytes = markdown !== null
-    ? new TextEncoder().encode(markdown)
-    : data;
+  const contentBytes = markdown !== null ? new TextEncoder().encode(markdown) : data;
   const contentHash = opts?.hashFn?.(contentBytes, localPath) ?? null;
 
   return { localPath, fileType, contentHash, rawData: data };

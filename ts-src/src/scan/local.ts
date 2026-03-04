@@ -13,6 +13,36 @@ const LOCAL_ARTIFACT_DIRS = new Set(['images', 'attachments']);
  * - When .note and .md both exist, .md takes priority
  * - images/ and attachments/ are download artifacts, skipped
  */
+function processEntry(
+  entry: Dirent,
+  scanDir: string,
+  localDir: string,
+  result: Map<string, LocalFile>,
+): void {
+  if (entry.name.startsWith('.')) return;
+
+  if (entry.isDirectory()) {
+    if (LOCAL_ARTIFACT_DIRS.has(entry.name)) return;
+    const fullPath = join(scanDir, entry.name);
+    const rel = normalizeSep(relative(localDir, fullPath));
+    try {
+      const st = statSync(fullPath);
+      result.set(rel, {
+        path: fullPath,
+        isDir: true,
+        mtime: Math.floor(st.mtimeMs / 1000),
+      });
+    } catch {
+      /* skip inaccessible dirs */
+    }
+    const subEntries = scandirRecursive(fullPath, localDir);
+    for (const [k, v] of subEntries) result.set(k, v);
+  } else if (entry.isFile()) {
+    if (entry.name.includes('.conflict.')) return;
+    addLocalFile(join(scanDir, entry.name), entry.name, localDir, result);
+  }
+}
+
 export function scanLocal(
   localDir: string,
   basePath = '',
@@ -23,38 +53,18 @@ export function scanLocal(
 
   let entries: Dirent[];
   try {
-    entries = readdirSync(scanDir, { withFileTypes: true, encoding: 'utf-8' }) as Dirent[];
+    entries = readdirSync(scanDir, { withFileTypes: true, encoding: 'utf-8' });
   } catch {
     return result;
   }
 
   for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;
-
-    if (entry.isDirectory()) {
-      if (LOCAL_ARTIFACT_DIRS.has(entry.name)) continue;
-      const fullPath = join(scanDir, entry.name);
-      const rel = normalizeSep(relative(localDir, fullPath));
-      try {
-        const st = statSync(fullPath);
-        result.set(rel, {
-          path: fullPath,
-          isDir: true,
-          mtime: Math.floor(st.mtimeMs / 1000),
-        });
-      } catch { /* skip inaccessible dirs */ }
-
-      const subEntries = scandirRecursive(fullPath, localDir);
-      for (const [k, v] of subEntries) {
-        result.set(k, v);
-      }
-    } else if (entry.isFile()) {
-      if (entry.name.includes('.conflict.')) continue;
-      addLocalFile(join(scanDir, entry.name), entry.name, localDir, result);
-    }
+    processEntry(entry, scanDir, localDir, result);
   }
 
-  if (opts?.include?.length || opts?.exclude?.length) {
+  const hasInclude = opts?.include && opts.include.length > 0;
+  const hasExclude = opts?.exclude && opts.exclude.length > 0;
+  if (hasInclude || hasExclude) {
     const filter = compileFilter(opts.include ?? [], opts.exclude ?? []);
     for (const key of [...result.keys()]) {
       if (!filter(key)) result.delete(key);
@@ -64,42 +74,46 @@ export function scanLocal(
   return result;
 }
 
-function scandirRecursive(
+function processRecursiveEntry(
+  entry: Dirent,
   dirpath: string,
   localDir: string,
-): Map<string, LocalFile> {
+  target: Map<string, LocalFile>,
+): void {
+  if (entry.name.startsWith('.')) return;
+  try {
+    if (entry.isDirectory()) {
+      if (LOCAL_ARTIFACT_DIRS.has(entry.name)) return;
+      const fullPath = join(dirpath, entry.name);
+      const rel = normalizeSep(relative(localDir, fullPath));
+      const st = statSync(fullPath);
+      target.set(rel, {
+        path: fullPath,
+        isDir: true,
+        mtime: Math.floor(st.mtimeMs / 1000),
+      });
+      const sub = scandirRecursive(fullPath, localDir);
+      for (const [k, v] of sub) target.set(k, v);
+    } else if (entry.isFile()) {
+      if (entry.name.includes('.conflict.')) return;
+      addLocalFile(join(dirpath, entry.name), entry.name, localDir, target);
+    }
+  } catch {
+    /* skip inaccessible entries */
+  }
+}
+
+function scandirRecursive(dirpath: string, localDir: string): Map<string, LocalFile> {
   const target = new Map<string, LocalFile>();
   let entries: Dirent[];
   try {
-    entries = readdirSync(dirpath, { withFileTypes: true, encoding: 'utf-8' }) as Dirent[];
+    entries = readdirSync(dirpath, { withFileTypes: true, encoding: 'utf-8' });
   } catch {
     return target;
   }
-
   for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;
-
-    try {
-      if (entry.isDirectory()) {
-        if (LOCAL_ARTIFACT_DIRS.has(entry.name)) continue;
-        const fullPath = join(dirpath, entry.name);
-        const rel = normalizeSep(relative(localDir, fullPath));
-        const st = statSync(fullPath);
-        target.set(rel, {
-          path: fullPath,
-          isDir: true,
-          mtime: Math.floor(st.mtimeMs / 1000),
-        });
-        const sub = scandirRecursive(fullPath, localDir);
-        for (const [k, v] of sub) target.set(k, v);
-      } else if (entry.isFile()) {
-        if (entry.name.includes('.conflict.')) continue;
-        const fullPath = join(dirpath, entry.name);
-        addLocalFile(fullPath, entry.name, localDir, target);
-      }
-    } catch { /* skip inaccessible entries */ }
+    processRecursiveEntry(entry, dirpath, localDir, target);
   }
-
   return target;
 }
 
@@ -125,13 +139,12 @@ function addLocalFile(
       mtime: Math.floor(st.mtimeMs / 1000),
       size: st.size,
     });
-  } catch { /* skip inaccessible files */ }
+  } catch {
+    /* skip inaccessible files */
+  }
 }
 
-function compileFilter(
-  include: string[],
-  exclude: string[],
-): (path: string) => boolean {
+function compileFilter(include: string[], exclude: string[]): (path: string) => boolean {
   const includeRes = include.map(patternToRegex);
   const excludeRes = exclude.map(patternToRegex);
 

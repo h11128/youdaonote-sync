@@ -39,7 +39,7 @@ export function discardOrphanDuplicates(
     const candidates = bothByName.get(sanitizeFilename(basename(lp)).toLowerCase());
     if (!candidates) continue;
 
-    if (candidates.some(bp => localHashes.get(bp) === lpHash)) {
+    if (candidates.some((bp) => localHashes.get(bp) === lpHash)) {
       skipped.add(lp);
     }
   }

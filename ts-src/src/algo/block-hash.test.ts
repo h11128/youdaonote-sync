@@ -4,10 +4,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { computeBlockHashes, diffBlocks, encodeDelta, applyDelta } from './block-hash.js';
 
-const TMP = join(tmpdir(), 'block-hash-test-' + Date.now());
+const TMP = join(tmpdir(), `block-hash-test-${Date.now()}`);
 
 beforeEach(() => mkdirSync(TMP, { recursive: true }));
-afterEach(() => rmSync(TMP, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(TMP, { recursive: true, force: true });
+});
 
 describe('computeBlockHashes', () => {
   it('returns blocks for a file', () => {

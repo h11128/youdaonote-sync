@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+
+cd ts-src || exit 1
+
+# Lint + format staged .ts files
+npx lint-staged
+
+# TypeScript type check (catches errors that per-file linting misses)
+npm run typecheck

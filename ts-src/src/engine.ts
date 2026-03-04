@@ -1,5 +1,5 @@
 import { extname } from 'node:path';
-import type { ContentHash, FileId, SyncDirection } from './types/common.js';
+import type { ContentHash, DirId, FileId, SyncDirection } from './types/common.js';
 import type { CloudFile, LocalFile } from './types/scan.js';
 import type { FileState } from './types/state.js';
 import { stateToAction } from './types/state.js';
@@ -13,18 +13,45 @@ import { classifyAll } from './classify/classify.js';
 import { detectMoves } from './classify/moves.js';
 import { calibrateMetadata } from './classify/calibrate.js';
 import { refineCloudModified } from './classify/refine.js';
-import { executeAll, emptyStats, fallbackDeleteOldFiles } from './execute/executor.js';
+import { executeAll, fallbackDeleteOldFiles } from './execute/executor.js';
 import type { SyncStats, ExecuteContext } from './execute/executor.js';
+import { diagnoseDryrun, dryRunStats } from './engine-helpers.js';
 import { computeContentHashFromBytes, computeContentHashFromFile, initXxhash } from './hash.js';
 import { SyncLock } from './lock.js';
 import { autoDedup, discardOrphanDuplicates } from './dedup/index.js';
 import { gitAutoCommit } from './git.js';
 import { retryWithBackoff } from './api/retry.js';
-import {
-  tryCachedCloudScan, saveScanVersion, fetchCurrentVersion,
-} from './scan/cloud-cache.js';
+import { tryCachedCloudScan, saveScanVersion, fetchCurrentVersion } from './scan/cloud-cache.js';
 
-const HASHABLE_EXTS = new Set(['.md', '.txt', '.html', '.htm', '.xml', '.json', '.css', '.js', '.csv']);
+const HASHABLE_EXTS = new Set([
+  '.md',
+  '.txt',
+  '.html',
+  '.htm',
+  '.xml',
+  '.json',
+  '.css',
+  '.js',
+  '.csv',
+]);
+
+function isConflictCandidate(state: FileState): boolean {
+  return state.kind === 'cloudModifiedContent' || state.kind === 'conflict';
+}
+
+function collectConflictCandidates(
+  classified: Map<string, FileState>,
+  cloudSnap: ReadonlyMap<string, CloudFile>,
+): { relPath: string; cloudFile: CloudFile }[] {
+  const candidates: { relPath: string; cloudFile: CloudFile }[] = [];
+  for (const [relPath, state] of classified) {
+    if (!isConflictCandidate(state)) continue;
+    if (!HASHABLE_EXTS.has(extname(relPath).toLowerCase())) continue;
+    const cf = cloudSnap.get(relPath);
+    if (cf) candidates.push({ relPath, cloudFile: cf });
+  }
+  return candidates;
+}
 
 export type { SyncDirection } from './types/common.js';
 
@@ -86,27 +113,57 @@ export class SyncEngine {
 
   private async syncInner(): Promise<SyncResult> {
     const { localDir, dryRun } = this.config;
+    if (!dryRun) heal(this.meta, localDir, true);
 
-    // 0b. Self-heal metadata before sync
-    if (!dryRun) {
-      heal(this.meta, localDir, true);
+    const { cloudSnap, localSnap, localHashes, rootDirId, didFullScan } =
+      await this.obtainSnapshots(localDir);
+    const classified = await this.classifyAndRefine(cloudSnap, localSnap, localHashes);
+    const direction = this.config.direction ?? 'both';
+    if (direction !== 'both') filterByDirection(classified, direction);
+
+    if (dryRun) {
+      diagnoseDryrun(classified, this.meta);
+      return { stats: dryRunStats(classified), classified };
     }
 
-    // 1. Scan
+    const stats = await this.executeSync({
+      classified,
+      cloudSnap,
+      localSnap,
+      localHashes,
+      rootDirId,
+      direction,
+    });
+    await this.postSyncCleanup({
+      cloudSnap,
+      localSnap,
+      localHashes,
+      stats,
+      didFullScan,
+    });
+    return { stats, classified };
+  }
+
+  private async obtainSnapshots(localDir: string): Promise<{
+    cloudSnap: Map<string, CloudFile>;
+    localSnap: Map<string, LocalFile>;
+    localHashes: Map<string, ContentHash | null>;
+    rootDirId: DirId;
+    didFullScan: boolean;
+  }> {
     const rootDirId = await this.api.getRootId();
     const scanOpts: { include?: string[]; exclude?: string[] } = {};
     if (this.config.syncInclude) scanOpts.include = this.config.syncInclude;
     if (this.config.syncExclude) scanOpts.exclude = this.config.syncExclude;
 
-    // Try cached cloud scan first, fall back to full scan
-    let cloudSnap: Map<string, CloudFile>;
-    let didFullScan = false;
     const cacheDeps = {
       api: this.api,
       meta: this.meta,
       skipDesktopSeed: !!this.config.api,
     };
     const cachedCloud = await tryCachedCloudScan(cacheDeps);
+    let cloudSnap: Map<string, CloudFile>;
+    let didFullScan = false;
     if (cachedCloud) {
       cloudSnap = cachedCloud;
     } else {
@@ -115,117 +172,122 @@ export class SyncEngine {
       didFullScan = true;
     }
 
-    // Filter cloud files by sync_include/sync_exclude (matches Python)
     if (scanOpts.include?.length || scanOpts.exclude?.length) {
       filterCloudSnap(cloudSnap, scanOpts);
     }
-
-    // Filter out .conflict. backup files from cloud snapshot (matches Python)
     for (const [path] of [...cloudSnap]) {
       const name = path.split('/').pop() ?? '';
       if (name.includes('.conflict.')) cloudSnap.delete(path);
     }
 
     const localSnap = scanLocal(localDir, '', scanOpts);
-
-    // 1b. Calibrate metadata for files present on both sides
     const localHashes = new Map<string, ContentHash | null>();
     calibrateMetadata(this.meta, cloudSnap, localSnap, localHashes);
-
-    // 1c. Compute local hashes (reuses any computed during calibration)
     for (const [relPath, local] of localSnap) {
       if (!local.isDir && !localHashes.has(relPath)) {
-        const hash = computeContentHashFromFile(local.path);
-        localHashes.set(relPath, hash);
+        localHashes.set(relPath, computeContentHashFromFile(local.path));
       }
     }
+    this.warmupHashCache(cloudSnap, localSnap, localHashes);
+    return { cloudSnap, localSnap, localHashes, rootDirId, didFullScan };
+  }
 
-    // 1d. Warmup: pre-compute hashes for "both side" files in parallel
-    await this.warmupHashCache(cloudSnap, localSnap, localHashes);
-
+  private async classifyAndRefine(
+    cloudSnap: Map<string, CloudFile>,
+    localSnap: Map<string, LocalFile>,
+    localHashes: Map<string, ContentHash | null>,
+  ): Promise<Map<string, FileState>> {
     const metaSnap = this.meta.getAllFiles();
-
-    // 2. Classify
     const classified = classifyAll(cloudSnap, localSnap, metaSnap, localHashes);
-
-    // 2b. Detect moves
     const classifiedWithHash = new Map<string, { state: FileState; hash: ContentHash | null }>();
     for (const [path, state] of classified) {
       classifiedWithHash.set(path, { state, hash: localHashes.get(path) ?? null });
     }
-    const moves = detectMoves(classifiedWithHash, this.meta, cloudSnap);
-    for (const [path, movedState] of moves) {
+    for (const [path, movedState] of detectMoves(classifiedWithHash, this.meta, cloudSnap)) {
       classified.set(path, movedState);
     }
-
-    // 2c. Discard orphan local duplicates before refine/execute
-    const orphans = discardOrphanDuplicates(cloudSnap, localSnap, localHashes);
-    for (const orphanPath of orphans) {
+    for (const orphanPath of discardOrphanDuplicates(cloudSnap, localSnap, localHashes)) {
       classified.set(orphanPath, { kind: 'gone' });
     }
-
-    // 2d. Refine conflicts — download cloud content hash to distinguish
-    //     mtime-only changes, converged edits, and true conflicts
     await this.refineConflicts(classified, cloudSnap, localHashes);
+    return classified;
+  }
 
-    // 2e. Filter by direction
-    const direction = this.config.direction ?? 'both';
-    if (direction !== 'both') {
-      filterByDirection(classified, direction);
-    }
-
-    // 3. Execute
-    if (dryRun) {
-      diagnoseDryrun(classified, this.meta);
-      return { stats: dryRunStats(classified), classified };
-    }
-
+  private async executeSync(ctx: {
+    classified: Map<string, FileState>;
+    cloudSnap: Map<string, CloudFile>;
+    localSnap: Map<string, LocalFile>;
+    localHashes: Map<string, ContentHash | null>;
+    rootDirId: DirId;
+    direction: SyncDirection;
+  }): Promise<SyncStats> {
     const hashFn = this.config.hashFn ?? computeContentHashFromBytes;
-    const ctx: ExecuteContext = {
+    const executeCtx: ExecuteContext = {
       api: this.api,
       meta: this.meta,
-      rootDirId,
-      localDir,
+      rootDirId: ctx.rootDirId,
+      localDir: this.config.localDir,
       hashFn,
     };
-
-    const stats = await executeAll(classified, cloudSnap, ctx, direction);
-
-    // 3b. Fallback: delete old cloud files for failed moves that were uploaded
+    const stats = await executeAll(ctx.classified, ctx.cloudSnap, executeCtx, ctx.direction);
     if (stats.failedMoves.length > 0) {
       await fallbackDeleteOldFiles(stats, this.api, this.meta);
     }
+    return stats;
+  }
 
-    // 4. Post-sync: cleanup stale metadata (only after full scan — cached scan may be incomplete)
-    if (didFullScan) {
-      this.cleanupStalePaths(cloudSnap);
+  private buildDedupInputs(
+    localSnap: Map<string, LocalFile>,
+    localHashes: Map<string, ContentHash | null>,
+  ): {
+    localFileMap: Map<string, { path: string; mtime: number; isDir: boolean }>;
+    absPathHashes: Map<string, ContentHash>;
+  } {
+    const localFileMap = new Map<string, { path: string; mtime: number; isDir: boolean }>();
+    const absPathHashes = new Map<string, ContentHash>();
+    for (const [rel, info] of localSnap) {
+      localFileMap.set(rel, { path: info.path, mtime: info.mtime, isDir: info.isDir });
+      const h = localHashes.get(rel);
+      if (h) absPathHashes.set(info.path, h);
     }
+    return { localFileMap, absPathHashes };
+  }
 
-    // 5. Post-sync: auto-dedup
-    let dedupDeletedPaths: string[] = [];
-    let dedupDeletedCount = 0;
-    if (this.config.autoDedup !== false) {
-      const localFileMap = new Map<string, { path: string; mtime: number; isDir: boolean }>();
-      const absPathHashes = new Map<string, ContentHash>();
-      for (const [rel, info] of localSnap) {
-        localFileMap.set(rel, { path: info.path, mtime: info.mtime, isDir: info.isDir });
-        const h = localHashes.get(rel);
-        if (h) absPathHashes.set(info.path, h);
-      }
-      const dedupResult = await autoDedup(localDir, this.meta, {
-        api: this.api,
-        hashCache: absPathHashes,
-        localFiles: localFileMap,
-      });
-      dedupDeletedPaths = dedupResult.deletedPaths;
-      dedupDeletedCount = dedupResult.stats.deleted;
+  private async runDedupIfEnabled(
+    localSnap: Map<string, LocalFile>,
+    localHashes: Map<string, ContentHash | null>,
+  ): Promise<{ deletedPaths: string[]; deletedCount: number }> {
+    if (this.config.autoDedup === false) {
+      return { deletedPaths: [], deletedCount: 0 };
     }
+    const { localFileMap, absPathHashes } = this.buildDedupInputs(localSnap, localHashes);
+    const dedupResult = await autoDedup(this.config.localDir, this.meta, {
+      api: this.api,
+      hashCache: absPathHashes,
+      localFiles: localFileMap,
+    });
+    return {
+      deletedPaths: dedupResult.deletedPaths,
+      deletedCount: dedupResult.stats.deleted,
+    };
+  }
 
+  private async postSyncCleanup(opts: {
+    cloudSnap: Map<string, CloudFile>;
+    localSnap: Map<string, LocalFile>;
+    localHashes: Map<string, ContentHash | null>;
+    stats: SyncStats;
+    didFullScan: boolean;
+  }): Promise<void> {
+    const { cloudSnap, localSnap, localHashes, stats, didFullScan } = opts;
+    if (didFullScan) this.cleanupStalePaths(cloudSnap);
+
+    const { deletedPaths: dedupDeletedPaths, deletedCount: dedupDeletedCount } =
+      await this.runDedupIfEnabled(localSnap, localHashes);
     this.meta.save();
 
-    // 6. Post-sync: git auto-commit
     if (this.config.autoGit !== false) {
-      gitAutoCommit(localDir, {
+      gitAutoCommit(this.config.localDir, {
         changedPaths: [...stats.changedPaths],
         dedupDeletedPaths,
         stats: {
@@ -236,20 +298,18 @@ export class SyncEngine {
         },
       });
     }
-
-    return { stats, classified };
   }
 
   /**
    * Pre-compute content hashes for files on both sides (warm the cache).
    * Only computes for hashable extensions that haven't been computed yet.
    */
-  private async warmupHashCache(
+  private warmupHashCache(
     cloudSnap: ReadonlyMap<string, CloudFile>,
     localSnap: ReadonlyMap<string, LocalFile>,
     localHashes: Map<string, ContentHash | null>,
-  ): Promise<void> {
-    const toCompute: Array<{ relPath: string; absPath: string }> = [];
+  ): void {
+    const toCompute: { relPath: string; absPath: string }[] = [];
     for (const [relPath, local] of localSnap) {
       if (local.isDir || localHashes.has(relPath)) continue;
       if (!cloudSnap.has(relPath)) continue;
@@ -279,48 +339,66 @@ export class SyncEngine {
     cloudSnap: ReadonlyMap<string, CloudFile>,
     localHashes: ReadonlyMap<string, ContentHash | null>,
   ): Promise<void> {
-    const candidates: Array<{ relPath: string; cloudFile: CloudFile }> = [];
-    for (const [relPath, state] of classified) {
-      if (state.kind !== 'cloudModifiedContent' && state.kind !== 'conflict') continue;
-      const ext = extname(relPath).toLowerCase();
-      if (!HASHABLE_EXTS.has(ext)) continue;
-      const cf = cloudSnap.get(relPath);
-      if (!cf) continue;
-      candidates.push({ relPath, cloudFile: cf });
-    }
-
+    const candidates = collectConflictCandidates(classified, cloudSnap);
     if (candidates.length === 0) return;
 
     const hashFn = this.config.hashFn ?? computeContentHashFromBytes;
-
     for (const { relPath, cloudFile } of candidates) {
-      try {
-        // Use cached cloud content hash if cloudMtime matches (avoids extra download)
-        const cachedMeta = this.meta.getFileInfo(relPath);
-        let cloudHash: ContentHash | null = null;
-        if (cachedMeta?.cloudContentHash && cachedMeta.cloudMtime === cloudFile.mtime) {
-          cloudHash = cachedMeta.cloudContentHash;
-        } else {
-          const rawData = await retryWithBackoff(() => this.api.getFileById(cloudFile.id as FileId));
-          const data = new Uint8Array(rawData);
-          cloudHash = hashFn(data, relPath);
-        }
-        if (!cloudHash) continue;
+      await this.refineSingleConflict({
+        relPath,
+        cloudFile,
+        classified,
+        localHashes,
+        hashFn,
+      });
+    }
+  }
 
-        const localHash = localHashes.get(relPath);
-        if (!localHash) continue;
+  private async getCloudHashForRefine(
+    relPath: string,
+    cloudFile: CloudFile,
+    hashFn: (data: Uint8Array, path: string) => ContentHash | null,
+  ): Promise<ContentHash | null> {
+    const cachedMeta = this.meta.getFileInfo(relPath);
+    if (cachedMeta?.cloudContentHash && cachedMeta.cloudMtime === cloudFile.mtime) {
+      return cachedMeta.cloudContentHash;
+    }
+    const rawData = await retryWithBackoff(() => this.api.getFileById(cloudFile.id as FileId));
+    return hashFn(new Uint8Array(rawData), relPath);
+  }
 
-        const metaRecord = this.meta.getFileInfo(relPath);
-        const refined = refineCloudModified(localHash, cloudHash, metaRecord);
+  private applyRefinementIfChanged(
+    relPath: string,
+    refined: FileState,
+    classified: Map<string, FileState>,
+  ): void {
+    const current = classified.get(relPath);
+    if (current && refined.kind !== current.kind) {
+      classified.set(relPath, refined);
+    }
+  }
 
-        if (refined.kind !== classified.get(relPath)!.kind) {
-          classified.set(relPath, refined);
-        }
+  private async refineSingleConflict(opts: {
+    relPath: string;
+    cloudFile: CloudFile;
+    classified: Map<string, FileState>;
+    localHashes: ReadonlyMap<string, ContentHash | null>;
+    hashFn: (data: Uint8Array, path: string) => ContentHash | null;
+  }): Promise<void> {
+    const { relPath, cloudFile, classified, localHashes, hashFn } = opts;
+    try {
+      const cloudHash = await this.getCloudHashForRefine(relPath, cloudFile, hashFn);
+      if (!cloudHash) return;
 
-        this.meta.setCloudContentHash(relPath, cloudHash);
-      } catch {
-        // If cloud fetch fails, keep original classification
-      }
+      const localHash = localHashes.get(relPath);
+      if (!localHash) return;
+
+      const metaRecord = this.meta.getFileInfo(relPath);
+      const refined = refineCloudModified(localHash, cloudHash, metaRecord);
+      this.applyRefinementIfChanged(relPath, refined, classified);
+      this.meta.setCloudContentHash(relPath, cloudHash);
+    } catch {
+      // If cloud fetch fails, keep original classification
     }
   }
 
@@ -361,21 +439,27 @@ export function filterCloudSnap(
   const excludeRes = (opts.exclude ?? []).map(patternToRegex);
 
   for (const path of [...cloudSnap.keys()]) {
-    if (excludeRes.some(re => re.test(path))) { cloudSnap.delete(path); continue; }
-    if (includeRes.length > 0 && !includeRes.some(re => re.test(path))) { cloudSnap.delete(path); }
+    if (excludeRes.some((re) => re.test(path))) {
+      cloudSnap.delete(path);
+      continue;
+    }
+    if (includeRes.length > 0 && !includeRes.some((re) => re.test(path))) {
+      cloudSnap.delete(path);
+    }
   }
 }
-
 
 /**
  * Filter classified entries by sync direction.
  * 'pull' keeps only downloads/conflicts; 'push' keeps only uploads.
  * Non-matching entries are set to 'gone' (skipped).
  */
-export function filterByDirection(classified: Map<string, FileState>, direction: 'pull' | 'push'): void {
-  const allowedActions: Set<SyncAction> = direction === 'pull'
-    ? new Set(['download', 'conflict'])
-    : new Set(['upload']);
+export function filterByDirection(
+  classified: Map<string, FileState>,
+  direction: 'pull' | 'push',
+): void {
+  const allowedActions: Set<SyncAction> =
+    direction === 'pull' ? new Set(['download', 'conflict']) : new Set(['upload']);
 
   for (const [path, state] of classified) {
     const action = stateToAction(state);
@@ -384,64 +468,4 @@ export function filterByDirection(classified: Map<string, FileState>, direction:
       classified.set(path, { kind: 'gone' });
     }
   }
-}
-
-/**
- * Diagnose suspicious UPLOADs in dry-run results (matches Python diagnose_dryrun).
- * Warns when a file marked for upload has metadata suggesting it was previously synced.
- */
-function diagnoseDryrun(
-  classified: Map<string, FileState>,
-  meta: MetadataStore,
-): void {
-  const warnings: Array<{ path: string; reasons: string[] }> = [];
-
-  for (const [path, state] of classified) {
-    const action = stateToAction(state);
-    if (action !== 'upload') continue;
-
-    const info = meta.getFileInfo(path);
-    if (!info) continue;
-
-    const reasons: string[] = [];
-    if (!info.fileId && info.cloudMtime > 0) {
-      reasons.push('metadata 有记录但 file_id 为空');
-    }
-    if (info.lastSyncAt > 0) {
-      const d = new Date(info.lastSyncAt * 1000);
-      reasons.push(`曾在 ${d.toISOString().slice(0, 16).replace('T', ' ')} 同步过`);
-    }
-    if (reasons.length > 0) {
-      warnings.push({ path, reasons });
-    }
-  }
-
-  if (warnings.length === 0) return;
-
-  console.log();
-  console.log('='.repeat(60));
-  console.log(`  ⚠ 可疑 UPLOAD 诊断（${warnings.length} 个文件）`);
-  console.log('='.repeat(60));
-  console.log('  以下文件标记为上传，但 metadata 显示它们曾与云端关联。');
-  console.log();
-  for (const { path, reasons } of warnings) {
-    console.log(`  ${path}`);
-    for (const r of reasons) console.log(`    → ${r}`);
-  }
-  console.log();
-}
-
-function dryRunStats(classified: Map<string, FileState>): SyncStats {
-  const stats = emptyStats();
-  for (const state of classified.values()) {
-    const action = stateToAction(state);
-    switch (action) {
-      case 'skip': stats.skipped++; break;
-      case 'download': stats.downloaded++; break;
-      case 'upload': stats.uploaded++; break;
-      case 'conflict': stats.conflicts++; break;
-      case 'move': stats.moved++; break;
-    }
-  }
-  return Object.freeze(stats) as Readonly<SyncStats>;
 }
