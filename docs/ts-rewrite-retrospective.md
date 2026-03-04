@@ -676,3 +676,57 @@ Python 在文件名+祖先深度匹配后，还检查内容 hash：hash 不同�
 ### 11.4 修复验证
 
 `tsc --noEmit` 通过，254 测试全绿（+11 新测试），0 lint 错误。
+
+---
+
+## §12 第六轮审查：深度功能对等性审查
+
+日期：2026-03-04
+
+### 12.1 审查方法
+
+对 Python 和 TypeScript 的每个模块进行逐行功能对比（engine/executor/API/CLI/convert/dedup/scanner），
+重点排查以下维度：
+- 执行流中缺失的副作用（本地文件移动、changedPaths 记录）
+- API 能力缺失（二进制上传、按 ID 查文件）
+- 格式转换缺失（HTML → Markdown）
+- CLI 选项缺失（方向控制、子目录、去重开关）
+- 行为差异（lock 失败处理、dry-run 输出）
+
+### 12.2 发现与修复
+
+#### P1 — 影响同步正确性
+
+| # | 差距 | Python 行为 | TS 原状 | 修复 |
+|---|------|------------|---------|------|
+| 1 | 移动成功后未移动本地文件 | `shutil.move(old_abs, new_abs)` | 只更新 metadata 和云端 | `move-handler.ts` 添加 `renameSync` + `mkdirSync` |
+| 2 | 冲突解决路径未记入 changedPaths | 冲突解决后文件参与 git commit | push/pull fallback 和 diff3 merge 都不记录 | `executor.ts` + `conflict.ts` 所有分支添加 `changedPaths.push` |
+
+#### P2 — 功能完善
+
+| # | 差距 | 修复 |
+|---|------|------|
+| 3 | 上传只支持文本文件 (UTF-8) | `file-api.ts` 新增 `pushBinaryFile` (multipart)；`upload.ts` 按扩展名分流二进制/文本 |
+| 4 | 下载后未迁移图片 URL | `executor.ts` 下载后调用 `migrateImages`，传入 cookie header |
+| 5 | HTML → Markdown 转换缺失 | 新增 `convert/html-to-md.ts`；`download.ts` 的 `detectFileType` 识别 HTML |
+| 6 | dry-run 输出不完整 | `engine-helpers.ts` 新增 `printPreview` + `printDryrunSummary`，`diagnoseDryrun` 自动调用 |
+| 7 | lock 失败抛异常而非返回空 stats | `engine.ts` lock 失败返回 `emptyStats()` + 空 classified（匹配 Python 行为）|
+| 8 | 缺少 `getFileInfo(fileId)` API | `client.ts` 新增该方法 |
+
+#### P3 — 功能增强
+
+| # | 差距 | 修复 |
+|---|------|------|
+| 9 | CLI 缺少 --dir/--push/--pull/--no-dedup | `cli.ts` sync 命令添加四个选项 |
+| 10 | 缺少 `collectItems()` 公开 API | `engine.ts` 新增该方法，供外部工具调用 |
+
+### 12.3 重构
+
+为保持文件行数 ≤300：
+- 冲突 fallback 逻辑从 `executor.ts` 提取到 `conflict.ts`
+- refine 逻辑从 `engine.ts` 提取到 `engine-refine.ts`
+- `file-api.ts` 校验逻辑提取为 `required()` 工具函数
+
+### 12.4 修复验证
+
+`tsc --noEmit` 通过，271 测试全绿，0 lint 错误。

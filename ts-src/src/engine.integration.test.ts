@@ -253,8 +253,11 @@ describe('Engine integration: lock and dryRun', () => {
       meta,
     });
 
-    // Should throw because lock is held by a live process
-    await expect(engine.sync()).rejects.toThrow(/sync lock/);
+    // Should return empty stats instead of throwing (matches Python behavior)
+    const result = await engine.sync();
+    expect(result.stats.downloaded).toBe(0);
+    expect(result.stats.uploaded).toBe(0);
+    expect(result.classified.size).toBe(0);
 
     // Clean up lock so afterEach can delete tmpDir
     rmSync(lockPath, { force: true });
@@ -347,6 +350,121 @@ describe('Engine integration: full download flow', () => {
 
     // Lock file should be released
     expect(existsSync(join(localDir, '.sync.lock'))).toBe(false);
+    engine.close();
+  });
+});
+
+describe('Engine integration: collectItems API', () => {
+  let localDir: string;
+  let metaPath: string;
+  let cleanup: () => void;
+
+  beforeEach(() => {
+    const ctx = setupEngineIntContext();
+    localDir = ctx.localDir;
+    metaPath = ctx.metaPath;
+    cleanup = ctx.cleanup;
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('collectItems returns classified map without executing', async () => {
+    const meta = new MetadataStore(metaPath);
+    writeFileSync(join(localDir, 'local-only.md'), 'new file');
+
+    const mockApi = buildMockApi([], new Map());
+
+    const engine = new SyncEngine({
+      cookiesPath: '',
+      metadataPath: metaPath,
+      localDir,
+      api: mockApi,
+      meta,
+    });
+
+    const result = await engine.collectItems();
+
+    expect(result.classified).toBeInstanceOf(Map);
+    expect(result.classified.get('local-only.md')?.kind).toBe('localNew');
+    expect(result.cloudSnap).toBeInstanceOf(Map);
+    expect(result.localSnap).toBeInstanceOf(Map);
+
+    engine.close();
+  });
+
+  it('collectItems respects direction filter', async () => {
+    const meta = new MetadataStore(metaPath);
+    writeFileSync(join(localDir, 'local-only.md'), 'new file');
+
+    const cloudContent = '# Cloud only';
+    const cloudEntries = [
+      makeCloudEntry('f-cloud', 'cloud-only.md', Math.floor(Date.now() / 1000)),
+    ];
+    const cloudFiles = new Map([['f-cloud', cloudContent]]);
+    const mockApi = buildMockApi(cloudEntries, cloudFiles);
+
+    const engine = new SyncEngine({
+      cookiesPath: '',
+      metadataPath: metaPath,
+      localDir,
+      direction: 'pull',
+      api: mockApi,
+      meta,
+    });
+
+    const result = await engine.collectItems();
+
+    // local-only should be filtered out (direction=pull)
+    const localState = result.classified.get('local-only.md');
+    expect(localState?.kind === 'gone' || localState === undefined).toBe(true);
+
+    // cloud-only should still be present
+    expect(result.classified.has('cloud-only.md')).toBe(true);
+    engine.close();
+  });
+});
+
+describe('Engine integration: lock failure graceful return', () => {
+  let localDir: string;
+  let metaPath: string;
+  let cleanup: () => void;
+
+  beforeEach(() => {
+    const ctx = setupEngineIntContext();
+    localDir = ctx.localDir;
+    metaPath = ctx.metaPath;
+    cleanup = ctx.cleanup;
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('returns zero stats when lock already held', async () => {
+    const meta = new MetadataStore(metaPath);
+    const mockApi = buildMockApi([], new Map());
+
+    // Simulate a lock held by the current process
+    const lockPath = join(localDir, '.sync.lock');
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, started: Date.now() }));
+
+    const engine = new SyncEngine({
+      cookiesPath: '',
+      metadataPath: metaPath,
+      localDir,
+      api: mockApi,
+      meta,
+    });
+
+    const result = await engine.sync();
+
+    expect(result.stats.downloaded).toBe(0);
+    expect(result.stats.uploaded).toBe(0);
+    expect(result.stats.errors).toBe(0);
+    expect(result.stats.conflicts).toBe(0);
+    expect(result.classified.size).toBe(0);
+
+    rmSync(lockPath, { force: true });
     engine.close();
   });
 });

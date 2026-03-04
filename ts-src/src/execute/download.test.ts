@@ -20,6 +20,21 @@ describe('detectFileType', () => {
     const data = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG header
     expect(detectFileType(data, '.png')).toBe('binary');
   });
+
+  it('detects HTML by <!DOCTYPE html>', () => {
+    const data = new TextEncoder().encode('<!DOCTYPE html><html><body>hi</body></html>');
+    expect(detectFileType(data, '.note')).toBe('html');
+  });
+
+  it('detects HTML by <html> tag', () => {
+    const data = new TextEncoder().encode('<html><head></head><body>content</body></html>');
+    expect(detectFileType(data, '.note')).toBe('html');
+  });
+
+  it('detects HTML with leading whitespace', () => {
+    const data = new TextEncoder().encode('  \n<!DOCTYPE html><html>');
+    expect(detectFileType(data, '.note')).toBe('html');
+  });
 });
 
 describe('convertToMarkdown', () => {
@@ -30,5 +45,12 @@ describe('convertToMarkdown', () => {
 
   it('returns null for binary', () => {
     expect(convertToMarkdown(new Uint8Array(), 'binary')).toBeNull();
+  });
+
+  it('converts HTML to markdown', () => {
+    const data = new TextEncoder().encode('<h1>Title</h1><p>Hello <strong>world</strong></p>');
+    const result = convertToMarkdown(data, 'html');
+    expect(result).toContain('# Title');
+    expect(result).toContain('**world**');
   });
 });

@@ -3,8 +3,6 @@ import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { SyncEngine } from './engine.js';
 import { SyncWatcher } from './watcher.js';
-import { gitAutoCommit } from './git.js';
-import { stateToAction } from './types/state.js';
 
 interface Config {
   local_dir: string;
@@ -27,40 +25,46 @@ function getConfigDir(): string {
   return join(process.cwd(), 'config');
 }
 
-async function runSyncAction(opts: { dryRun?: boolean; git?: boolean }): Promise<void> {
+interface SyncActionOpts {
+  dryRun?: boolean;
+  git?: boolean;
+  dir?: string;
+  push?: boolean;
+  pull?: boolean;
+  noDedup?: boolean;
+}
+
+function resolveDirection(opts: SyncActionOpts): 'both' | 'push' | 'pull' {
+  if (opts.push && !opts.pull) return 'push';
+  if (opts.pull && !opts.push) return 'pull';
+  return 'both';
+}
+
+async function runSyncAction(opts: SyncActionOpts): Promise<void> {
   const configDir = getConfigDir();
   const config = loadConfig(configDir);
-  if (!config.local_dir) {
-    console.error('Error: local_dir not set in config.json');
+  const localDir = opts.dir ?? config.local_dir;
+  if (!localDir) {
+    console.error('Error: local_dir not set in config.json (or use --dir)');
     process.exit(1);
   }
   const engine = new SyncEngine({
     cookiesPath: join(configDir, 'cookies.json'),
     metadataPath: join(configDir, 'sync_metadata.db'),
-    localDir: config.local_dir,
+    localDir,
     syncInclude: config.sync_include,
     syncExclude: config.sync_exclude,
     dryRun: opts.dryRun,
+    direction: resolveDirection(opts),
+    autoDedup: opts.noDedup ? false : undefined,
+    autoGit: opts.git ?? undefined,
   });
   try {
     const result = await engine.sync();
     const s = result.stats;
-    if (opts.dryRun) {
-      console.log('\n=== Dry-Run Results ===');
-      for (const [path, state] of result.classified) {
-        const action = stateToAction(state);
-        if (action !== 'skip') console.log(`  ${action.padEnd(10)} ${path}`);
-      }
-    }
     console.log(
       `\nSync complete: ↓${s.downloaded} ↑${s.uploaded} ⚡${s.conflicts} →${s.moved} (${s.skipped} skipped, ${s.errors} errors)`,
     );
-    if (opts.git && !opts.dryRun) {
-      gitAutoCommit(config.local_dir, {
-        changedPaths: [...s.changedPaths],
-        stats: { downloaded: s.downloaded, uploaded: s.uploaded, conflicts: s.conflicts },
-      });
-    }
   } finally {
     engine.close();
   }
@@ -102,7 +106,11 @@ export function createCli(): Command {
     .description('Run sync once')
     .option('--dry-run', 'Preview changes without executing')
     .option('--git', 'Auto-commit changes to git after sync')
-    .action((opts: { dryRun?: boolean; git?: boolean }) => {
+    .option('--dir <path>', 'Override local sync directory')
+    .option('--push', 'Only push local changes to cloud')
+    .option('--pull', 'Only pull cloud changes to local')
+    .option('--no-dedup', 'Disable automatic deduplication')
+    .action((opts: SyncActionOpts) => {
       void runSyncAction(opts);
     });
 

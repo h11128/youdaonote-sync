@@ -4,8 +4,9 @@ import type { YoudaoNoteApi } from '../api/client.js';
 import type { FileId, ContentHash } from '../types/common.js';
 import { xmlBytesToMarkdown } from '../convert/xml-to-md.js';
 import { jsonBytesToMarkdown } from '../convert/json-to-md.js';
+import { htmlBytesToMarkdown } from '../convert/html-to-md.js';
 
-export type FileType = 'markdown' | 'xml' | 'json' | 'binary';
+export type FileType = 'markdown' | 'xml' | 'json' | 'html' | 'binary';
 
 /**
  * Detect the content type of a downloaded note by inspecting the first bytes.
@@ -13,9 +14,10 @@ export type FileType = 'markdown' | 'xml' | 'json' | 'binary';
 export function detectFileType(data: Uint8Array, ext: string): FileType {
   if (ext === '.md') return 'markdown';
 
-  const prefix = Buffer.from(data.slice(0, 10)).toString('utf-8');
+  const prefix = Buffer.from(data.slice(0, 50)).toString('utf-8').trimStart();
   if (prefix.startsWith('<?xml')) return 'xml';
   if (prefix.startsWith('{"')) return 'json';
+  if (/^<!DOCTYPE\s+html/i.test(prefix) || /^<html/i.test(prefix)) return 'html';
   return 'binary';
 }
 
@@ -31,6 +33,8 @@ export function convertToMarkdown(data: Uint8Array, fileType: FileType): string 
       return xmlBytesToMarkdown(data);
     case 'json':
       return jsonBytesToMarkdown(data);
+    case 'html':
+      return htmlBytesToMarkdown(data);
     case 'binary':
       return null;
   }

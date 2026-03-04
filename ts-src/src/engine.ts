@@ -1,4 +1,4 @@
-import type { ContentHash, DirId, FileId, SyncDirection } from './types/common.js';
+import type { ContentHash, DirId, SyncDirection } from './types/common.js';
 import type { CloudFile, LocalFile } from './types/scan.js';
 import type { FileState } from './types/state.js';
 import { YoudaoNoteApi } from './api/client.js';
@@ -9,8 +9,7 @@ import { scanLocal } from './scan/local.js';
 import { classifyAll } from './classify/classify.js';
 import { detectMoves } from './classify/moves.js';
 import { calibrateMetadata } from './classify/calibrate.js';
-import { refineCloudModified } from './classify/refine.js';
-import { executeAll } from './execute/executor.js';
+import { executeAll, emptyStats } from './execute/executor.js';
 import type { SyncStats, ExecuteContext } from './execute/executor.js';
 import { fallbackDeleteOldFiles } from './execute/move-handler.js';
 import {
@@ -18,17 +17,15 @@ import {
   dryRunStats,
   filterCloudSnap,
   filterByDirection,
-  collectConflictCandidates,
   buildDedupInputs,
   warmupHashCache,
-  applyRefinementIfChanged,
   cleanupStalePaths,
 } from './engine-helpers.js';
+import { refineAllConflicts } from './engine-refine.js';
 import { computeContentHashFromBytes, computeContentHashFromFile, initXxhash } from './hash.js';
 import { SyncLock } from './lock.js';
 import { autoDedup, discardOrphanDuplicates } from './dedup/index.js';
 import { gitAutoCommit } from './git.js';
-import { retryWithBackoff } from './api/retry.js';
 import { tryCachedCloudScan, saveScanVersion, fetchCurrentVersion } from './scan/cloud-cache.js';
 
 export type { SyncDirection } from './types/common.js';
@@ -79,7 +76,8 @@ export class SyncEngine {
 
     const lock = new SyncLock(this.config.localDir);
     if (!this.config.dryRun && !lock.acquire()) {
-      throw new Error('Cannot acquire sync lock — another sync process is running');
+      console.error('Cannot acquire sync lock — another sync process is running');
+      return { stats: emptyStats(), classified: new Map() };
     }
 
     try {
@@ -261,66 +259,40 @@ export class SyncEngine {
     }
   }
 
-  /**
-   * Second-pass classification: for cloudModifiedContent and conflict entries,
-   * download cloud content, compute cloud hash, and use refineCloudModified
-   * to potentially downgrade to skip/upload/download.
-   */
   private async refineConflicts(
     classified: Map<string, FileState>,
     cloudSnap: ReadonlyMap<string, CloudFile>,
     localHashes: ReadonlyMap<string, ContentHash | null>,
   ): Promise<void> {
-    const candidates = collectConflictCandidates(classified, cloudSnap);
-    if (candidates.length === 0) return;
-
     const hashFn = this.config.hashFn ?? computeContentHashFromBytes;
-    for (const { relPath, cloudFile } of candidates) {
-      await this.refineSingleConflict({
-        relPath,
-        cloudFile,
-        classified,
-        localHashes,
-        hashFn,
-      });
-    }
+    await refineAllConflicts({
+      classified,
+      cloudSnap,
+      localHashes,
+      hashFn,
+      meta: this.meta,
+      api: this.api,
+    });
   }
 
-  private async getCloudHashForRefine(
-    relPath: string,
-    cloudFile: CloudFile,
-    hashFn: (data: Uint8Array, path: string) => ContentHash | null,
-  ): Promise<ContentHash | null> {
-    const cachedMeta = this.meta.getFileInfo(relPath);
-    if (cachedMeta?.cloudContentHash && cachedMeta.cloudMtime === cloudFile.mtime) {
-      return cachedMeta.cloudContentHash;
-    }
-    const rawData = await retryWithBackoff(() => this.api.getFileById(cloudFile.id as FileId));
-    return hashFn(new Uint8Array(rawData), relPath);
-  }
-
-  private async refineSingleConflict(opts: {
-    relPath: string;
-    cloudFile: CloudFile;
+  /**
+   * Collect sync items without executing — for dry-run and external tools.
+   * Returns the classified map and snapshots.
+   */
+  async collectItems(): Promise<{
     classified: Map<string, FileState>;
-    localHashes: ReadonlyMap<string, ContentHash | null>;
-    hashFn: (data: Uint8Array, path: string) => ContentHash | null;
-  }): Promise<void> {
-    const { relPath, cloudFile, classified, localHashes, hashFn } = opts;
-    try {
-      const cloudHash = await this.getCloudHashForRefine(relPath, cloudFile, hashFn);
-      if (!cloudHash) return;
+    cloudSnap: Map<string, CloudFile>;
+    localSnap: Map<string, LocalFile>;
+  }> {
+    await initXxhash();
+    const loginErr = this.api.loginByCookies();
+    if (loginErr) throw new Error(`Login failed: ${loginErr}`);
 
-      const localHash = localHashes.get(relPath);
-      if (!localHash) return;
-
-      const metaRecord = this.meta.getFileInfo(relPath);
-      const refined = refineCloudModified(localHash, cloudHash, metaRecord);
-      applyRefinementIfChanged(relPath, refined, classified);
-      this.meta.setCloudContentHash(relPath, cloudHash);
-    } catch {
-      // If cloud fetch fails, keep original classification
-    }
+    const { cloudSnap, localSnap, localHashes } = await this.obtainSnapshots(this.config.localDir);
+    const classified = await this.classifyAndRefine(cloudSnap, localSnap, localHashes);
+    const direction = this.config.direction ?? 'both';
+    if (direction !== 'both') filterByDirection(classified, direction);
+    return { classified, cloudSnap, localSnap };
   }
 
   close(): void {

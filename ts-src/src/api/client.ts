@@ -232,6 +232,30 @@ export class YoudaoNoteApi {
    * Fetch recently modified files (ordered by modify time, descending).
    * API maximum is 30 items per call.
    */
+  async pushBinaryFile(opts: {
+    fileId: FileId;
+    parentId: DirId;
+    name: string;
+    fileData: Uint8Array;
+    createTime?: number;
+    modifyTime?: number;
+    isCreate?: boolean;
+  }): Promise<Record<string, unknown>> {
+    return fileApi.pushBinaryFile(this.asFileApiContext(), opts);
+  }
+
+  async getFileInfo(fileId: FileId): Promise<Record<string, unknown>> {
+    if (!fileId) throw new Error('fileId must not be empty');
+    this.requireAuth();
+    const cstk = this.cstk;
+    if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
+    const url =
+      `https://note.youdao.com/yws/api/personal/file/${fileId}` +
+      `?method=getById&keyfrom=web&cstk=${cstk}`;
+    const params = new URLSearchParams({ cstk });
+    return safeJson(await this.httpPost(url, params));
+  }
+
   async listRecent(limit = 30): Promise<Record<string, unknown>[]> {
     this.requireAuth();
     const cstk = this.cstk;
@@ -244,6 +268,10 @@ export class YoudaoNoteApi {
     const resp = await this.httpPost(url, params);
     const json = await safeJson(resp);
     return Array.isArray(json) ? json : [];
+  }
+
+  getCookieHeader(): string {
+    return this.cookieHeader;
   }
 
   private asFileApiContext(): fileApi.FileApiContext {

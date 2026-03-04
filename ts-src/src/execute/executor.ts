@@ -1,5 +1,5 @@
-import { readFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, statSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import type { YoudaoNoteApi } from '../api/client.js';
@@ -9,10 +9,11 @@ import type { ContentHash, DirId, FileId, SyncDirection } from '../types/common.
 import type { CloudFile } from '../types/scan.js';
 import { downloadFile } from './download.js';
 import { uploadFile, ensureParentDir, type UploadFileOpts } from './upload.js';
-import { backupFile } from './conflict.js';
+import { conflictFallback, type ConflictOpts } from './conflict.js';
 import { tryDiff3Merge } from './diff3-merge.js';
 import { retryWithBackoff } from '../api/retry.js';
 import { handleMove } from './move-handler.js';
+import { migrateImages } from './images.js';
 
 export interface SyncStats {
   downloaded: number;
@@ -185,6 +186,14 @@ async function handleDownload(o: HandleDownloadOpts): Promise<void> {
   if (cloudFile.domain === NoteDomain.NOTE && result.contentHash) {
     meta.saveBaseContent(relPath, Buffer.from(result.rawData), result.contentHash);
   }
+  try {
+    const imagesDir = join(dirname(localPath), 'images');
+    const attachDir = join(dirname(localPath), 'attachments');
+    const cookie = api.getCookieHeader();
+    await migrateImages(localPath, imagesDir, attachDir, { Cookie: cookie });
+  } catch {
+    /* image migration is best-effort */
+  }
   stats.downloaded++;
   stats.changedPaths.push(localPath);
 }
@@ -231,21 +240,13 @@ async function handleUpload(o: HandleUploadOpts): Promise<void> {
   stats.uploadedPaths.add(relPath);
 }
 
-interface ConflictOpts {
-  relPath: string;
-  localPath: string;
-  cloudFile: CloudFile | undefined;
-  ctx: ExecuteContext;
-  stats: SyncStats;
-  direction: SyncDirection;
-}
-
 async function handleConflict(o: ConflictOpts): Promise<void> {
   const { relPath, localPath, cloudFile, ctx, stats, direction } = o;
   if (direction === 'both' && cloudFile) {
     const merged = await tryDiff3Merge(relPath, localPath, cloudFile, ctx);
     if (merged) {
       stats.merged++;
+      stats.changedPaths.push(localPath);
       return;
     }
   }
@@ -270,72 +271,4 @@ async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
   };
   const handler = handlers[action];
   await handler();
-}
-
-/**
- * Conflict fallback branching on sync direction (matches Python _do_conflict).
- * PULL  → backup + download
- * PUSH  → backup + upload
- * BOTH  → backup + download (both versions preserved)
- */
-async function conflictFallback(opts: ConflictOpts): Promise<void> {
-  if (opts.direction === 'push') return conflictPushFallback(opts);
-  return conflictPullFallback(opts);
-}
-
-/** PUSH branch: backup + upload. */
-async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
-  const { relPath, localPath, cloudFile, ctx, stats } = opts;
-  const { api, meta, rootDirId } = ctx;
-  if (existsSync(localPath)) backupFile(localPath);
-  const ulOpts: UploadFileOpts = {
-    api,
-    meta,
-    localPath,
-    relPath,
-    rootDirId,
-  };
-  if (cloudFile?.id) ulOpts.existingFileId = cloudFile.id as FileId;
-  if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
-  const result = await retryWithBackoff(() => uploadFile(ulOpts));
-  meta.recordSync(relPath, {
-    fileId: result.fileId,
-    cloudMtime: result.cloudMtime,
-    localMtime: readFileMtime(localPath),
-    contentHash: ctx.hashFn ? ctx.hashFn(readFileSync(localPath), localPath) : null,
-    action: 'conflict-upload',
-    direction: 'push',
-  });
-  stats.uploaded++;
-  stats.conflicts++;
-}
-
-/** PULL or BOTH branch: backup + download (both versions preserved). */
-async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
-  const { relPath, localPath, cloudFile, ctx, stats } = opts;
-  const { api, meta } = ctx;
-  if (existsSync(localPath)) backupFile(localPath);
-  if (cloudFile) {
-    const conflictDlOpts: {
-      cloudMtime?: number;
-      hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
-    } = {
-      cloudMtime: cloudFile.mtime,
-    };
-    if (ctx.hashFn) conflictDlOpts.hashFn = ctx.hashFn;
-    const result = await retryWithBackoff(() =>
-      downloadFile(api, cloudFile.id as FileId, localPath, conflictDlOpts),
-    );
-    meta.recordSync(relPath, {
-      fileId: cloudFile.id as FileId,
-      cloudMtime: cloudFile.mtime,
-      localMtime: readFileMtime(localPath, cloudFile.mtime),
-      parentId: cloudFile.parentId,
-      domain: cloudFile.domain,
-      contentHash: result.contentHash,
-      action: 'conflict-download',
-      direction: 'pull',
-    });
-  }
-  stats.conflicts++;
 }

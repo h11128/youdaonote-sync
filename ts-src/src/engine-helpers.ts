@@ -121,10 +121,78 @@ function printUploadWarnings(warnings: { path: string; reasons: string[] }[]): v
 }
 
 /**
+ * Print per-item preview of sync actions (matches Python print_preview).
+ */
+export function printPreview(classified: Map<string, FileState>): void {
+  const groups: Record<string, string[]> = {};
+  for (const [path, state] of classified) {
+    const action = stateToAction(state);
+    if (action === 'skip') continue;
+    (groups[action] ??= []).push(path);
+  }
+
+  console.log('\n=== Dry-Run Preview ===\n');
+  const order: SyncAction[] = ['download', 'upload', 'conflict', 'move'];
+  const labels: Record<string, string> = {
+    download: '↓ DOWNLOAD',
+    upload: '↑ UPLOAD',
+    conflict: '⚡ CONFLICT',
+    move: '→ MOVE',
+  };
+  for (const action of order) {
+    const paths = groups[action];
+    if (!paths?.length) continue;
+    console.log(`${labels[action]} (${paths.length}):`);
+    for (const p of paths) console.log(`  ${p}`);
+    console.log();
+  }
+}
+
+/**
+ * Print summary of dry-run results (matches Python print_dryrun_summary).
+ */
+export function printDryrunSummary(classified: Map<string, FileState>): void {
+  let dl = 0;
+  let ul = 0;
+  let conflict = 0;
+  let move = 0;
+  let skip = 0;
+  for (const state of classified.values()) {
+    switch (stateToAction(state)) {
+      case 'download':
+        dl++;
+        break;
+      case 'upload':
+        ul++;
+        break;
+      case 'conflict':
+        conflict++;
+        break;
+      case 'move':
+        move++;
+        break;
+      case 'skip':
+        skip++;
+        break;
+    }
+  }
+  const total = dl + ul + conflict + move;
+  console.log('=== Dry-Run Summary ===');
+  console.log(`  Total changes: ${total} (${skip} unchanged)`);
+  if (dl) console.log(`  Downloads: ${dl}`);
+  if (ul) console.log(`  Uploads:   ${ul}`);
+  if (conflict) console.log(`  Conflicts: ${conflict}`);
+  if (move) console.log(`  Moves:     ${move}`);
+}
+
+/**
  * Diagnose suspicious UPLOADs in dry-run results (matches Python diagnose_dryrun).
  * Warns when a file marked for upload has metadata suggesting it was previously synced.
  */
 export function diagnoseDryrun(classified: Map<string, FileState>, meta: MetadataStore): void {
+  printPreview(classified);
+  printDryrunSummary(classified);
+
   const warnings = collectUploadWarnings(classified, meta);
   if (warnings.length === 0) return;
   printUploadWarnings(warnings);

@@ -1,5 +1,11 @@
-import { copyFileSync, existsSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { extname } from 'node:path';
+import type { ContentHash, FileId, SyncDirection } from '../types/common.js';
+import type { CloudFile } from '../types/scan.js';
+import { downloadFile } from './download.js';
+import { uploadFile, type UploadFileOpts } from './upload.js';
+import type { ExecuteContext, SyncStats } from './executor.js';
+import { retryWithBackoff } from '../api/retry.js';
 
 /**
  * Create a conflict backup of a file.
@@ -31,4 +37,78 @@ export function backupFile(filePath: string): string | null {
   } catch {
     return null;
   }
+}
+
+function readFileMtime(path: string, fallback?: number): number {
+  try {
+    return Math.floor(statSync(path).mtimeMs / 1000);
+  } catch {
+    return fallback ?? Math.floor(Date.now() / 1000);
+  }
+}
+
+export interface ConflictOpts {
+  relPath: string;
+  localPath: string;
+  cloudFile: CloudFile | undefined;
+  ctx: ExecuteContext;
+  stats: SyncStats;
+  direction: SyncDirection;
+}
+
+/**
+ * Conflict fallback branching on sync direction (matches Python _do_conflict).
+ */
+export async function conflictFallback(opts: ConflictOpts): Promise<void> {
+  if (opts.direction === 'push') return conflictPushFallback(opts);
+  return conflictPullFallback(opts);
+}
+
+async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
+  const { relPath, localPath, cloudFile, ctx, stats } = opts;
+  const { api, meta, rootDirId } = ctx;
+  if (existsSync(localPath)) backupFile(localPath);
+  const ulOpts: UploadFileOpts = { api, meta, localPath, relPath, rootDirId };
+  if (cloudFile?.id) ulOpts.existingFileId = cloudFile.id as FileId;
+  if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
+  const result = await retryWithBackoff(() => uploadFile(ulOpts));
+  meta.recordSync(relPath, {
+    fileId: result.fileId,
+    cloudMtime: result.cloudMtime,
+    localMtime: readFileMtime(localPath),
+    contentHash: ctx.hashFn ? ctx.hashFn(readFileSync(localPath), localPath) : null,
+    action: 'conflict-upload',
+    direction: 'push',
+  });
+  stats.uploaded++;
+  stats.conflicts++;
+  stats.changedPaths.push(localPath);
+}
+
+async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
+  const { relPath, localPath, cloudFile, ctx, stats } = opts;
+  const { api, meta } = ctx;
+  if (existsSync(localPath)) backupFile(localPath);
+  if (cloudFile) {
+    const dlOpts: {
+      cloudMtime?: number;
+      hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
+    } = { cloudMtime: cloudFile.mtime };
+    if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
+    const result = await retryWithBackoff(() =>
+      downloadFile(api, cloudFile.id as FileId, localPath, dlOpts),
+    );
+    meta.recordSync(relPath, {
+      fileId: cloudFile.id as FileId,
+      cloudMtime: cloudFile.mtime,
+      localMtime: readFileMtime(localPath, cloudFile.mtime),
+      parentId: cloudFile.parentId,
+      domain: cloudFile.domain,
+      contentHash: result.contentHash,
+      action: 'conflict-download',
+      direction: 'pull',
+    });
+  }
+  stats.conflicts++;
+  stats.changedPaths.push(localPath);
 }

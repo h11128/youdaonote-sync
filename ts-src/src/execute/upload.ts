@@ -7,6 +7,35 @@ import type { MetadataStore } from '../metadata/store.js';
 import { markdownToNoteJson } from '../convert/md-to-note.js';
 import { normalizeSep } from '../scan/name.js';
 
+const TEXT_EXTS = new Set([
+  '.md',
+  '.txt',
+  '.html',
+  '.htm',
+  '.xml',
+  '.json',
+  '.css',
+  '.js',
+  '.csv',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.cfg',
+  '.conf',
+  '.sh',
+  '.bat',
+  '.ps1',
+  '.py',
+  '.ts',
+  '.jsx',
+  '.tsx',
+  '.vue',
+  '.svelte',
+  '.note',
+  '.clip',
+]);
+
 export interface UploadResult {
   readonly fileId: FileId;
   readonly cloudMtime: number;
@@ -59,23 +88,47 @@ export interface UploadFileOpts {
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
 }
 
+function isTextFile(ext: string): boolean {
+  return TEXT_EXTS.has(ext);
+}
+
+function extractCloudMtime(result: Record<string, unknown>): number {
+  const entry = (result.entry ?? result.fileEntry ?? {}) as Record<string, unknown>;
+  const mtimeVal = entry.modifyTimeForSort;
+  return typeof mtimeVal === 'number' ? mtimeVal : Math.floor(Date.now() / 1000);
+}
+
 /**
  * Upload a single local file to the cloud.
  *
  * - .md files: upload as Markdown (domain=1)
- * - Other text: try markdown push, fallback to binary
+ * - .note/.clip: convert md→JSON then upload (domain=0)
+ * - Binary files (PDF, images, etc.): upload via multipart/form-data
+ * - Other text files: upload as Markdown domain
  */
 export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
   const { api, meta, localPath, relPath, rootDirId } = opts;
   const parentId = await ensureParentDir(api, meta, relPath, rootDirId);
   const ext = extname(localPath).toLowerCase();
-  const content = readFileSync(localPath, 'utf-8');
   const isCreate = !opts.existingFileId;
   const fileId = opts.existingFileId ?? YoudaoNoteApi.generateFileId();
   const parts = normalizeSep(relPath).split('/');
   const popped = parts.pop();
   const name: string = popped ?? basename(relPath);
 
+  if (!isTextFile(ext)) {
+    const fileData = new Uint8Array(readFileSync(localPath));
+    const result = await api.pushBinaryFile({
+      fileId,
+      parentId,
+      name,
+      fileData,
+      isCreate,
+    });
+    return { fileId, cloudMtime: extractCloudMtime(result) };
+  }
+
+  const content = readFileSync(localPath, 'utf-8');
   let domain = NoteDomain.MARKDOWN;
   let bodyString = content;
 
@@ -92,11 +145,5 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
     bodyString,
     isCreate,
   });
-
-  const entry = (result.entry ?? result.fileEntry ?? {}) as Record<string, unknown>;
-  const mtimeVal = entry.modifyTimeForSort;
-  const cloudMtime: number =
-    typeof mtimeVal === 'number' ? mtimeVal : Math.floor(Date.now() / 1000);
-
-  return { fileId, cloudMtime };
+  return { fileId, cloudMtime: extractCloudMtime(result) };
 }
