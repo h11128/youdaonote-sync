@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import type { YoudaoNoteApi } from '../api/client.js';
@@ -12,6 +12,7 @@ import { uploadFile, ensureParentDir, type UploadFileOpts } from './upload.js';
 import { backupFile } from './conflict.js';
 import { tryDiff3Merge } from './diff3-merge.js';
 import { retryWithBackoff } from '../api/retry.js';
+import { handleMove } from './move-handler.js';
 
 export interface SyncStats {
   downloaded: number;
@@ -230,7 +231,7 @@ async function handleUpload(o: HandleUploadOpts): Promise<void> {
   stats.uploadedPaths.add(relPath);
 }
 
-interface HandleConflictOpts {
+interface ConflictOpts {
   relPath: string;
   localPath: string;
   cloudFile: CloudFile | undefined;
@@ -239,7 +240,7 @@ interface HandleConflictOpts {
   direction: SyncDirection;
 }
 
-async function handleConflict(o: HandleConflictOpts): Promise<void> {
+async function handleConflict(o: ConflictOpts): Promise<void> {
   const { relPath, localPath, cloudFile, ctx, stats, direction } = o;
   if (direction === 'both' && cloudFile) {
     const merged = await tryDiff3Merge(relPath, localPath, cloudFile, ctx);
@@ -249,60 +250,6 @@ async function handleConflict(o: HandleConflictOpts): Promise<void> {
     }
   }
   await conflictFallback({ relPath, localPath, cloudFile, ctx, stats, direction });
-}
-
-interface HandleMoveOpts {
-  relPath: string;
-  state: FileState;
-  cloudFile: CloudFile | undefined;
-  ctx: ExecuteContext;
-  stats: SyncStats;
-}
-
-async function handleMove(o: HandleMoveOpts): Promise<void> {
-  const { relPath, state, cloudFile, ctx, stats } = o;
-  if (state.kind !== 'moved') return;
-  const { api, meta, rootDirId, localDir } = ctx;
-  const oldPath = state.oldPath;
-  const oldRecord = meta.getFileInfo(oldPath);
-  const oldFileId = oldRecord?.fileId;
-
-  if (!oldFileId || !cloudFile) return;
-
-  let moveFailed = false;
-  try {
-    const newParentId = await ensureParentDir(api, meta, relPath, rootDirId);
-    await retryWithBackoff(() => api.moveFile(oldFileId, newParentId, cloudFile.domain));
-    const oldName = basename(oldPath);
-    const newName = basename(relPath);
-    if (oldName !== newName) {
-      await retryWithBackoff(() => api.renameFile(oldFileId, newName, cloudFile.domain));
-    }
-  } catch {
-    moveFailed = true;
-    stats.failedMoves.push({
-      oldPath,
-      newPath: relPath,
-      fileId: oldFileId,
-      domain: cloudFile.domain,
-    });
-  }
-
-  if (!moveFailed) {
-    meta.renamePath(oldPath, relPath);
-    const localAbsPath = join(localDir, relPath);
-    const localMtime = existsSync(localAbsPath)
-      ? Math.floor(statSync(localAbsPath).mtimeMs / 1000)
-      : 0;
-    meta.recordSync(relPath, {
-      fileId: oldFileId,
-      cloudMtime: Math.floor(Date.now() / 1000),
-      localMtime,
-      action: 'moved',
-      direction: 'push',
-    });
-    stats.moved++;
-  }
 }
 
 async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
@@ -325,51 +272,48 @@ async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
   await handler();
 }
 
-interface ConflictFallbackOpts {
-  relPath: string;
-  localPath: string;
-  cloudFile: CloudFile | undefined;
-  ctx: ExecuteContext;
-  stats: SyncStats;
-  direction: SyncDirection;
-}
-
 /**
  * Conflict fallback branching on sync direction (matches Python _do_conflict).
  * PULL  → backup + download
  * PUSH  → backup + upload
  * BOTH  → backup + download (both versions preserved)
  */
-async function conflictFallback(opts: ConflictFallbackOpts): Promise<void> {
-  const { relPath, localPath, cloudFile, ctx, stats, direction } = opts;
+async function conflictFallback(opts: ConflictOpts): Promise<void> {
+  if (opts.direction === 'push') return conflictPushFallback(opts);
+  return conflictPullFallback(opts);
+}
+
+/** PUSH branch: backup + upload. */
+async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
+  const { relPath, localPath, cloudFile, ctx, stats } = opts;
   const { api, meta, rootDirId } = ctx;
+  if (existsSync(localPath)) backupFile(localPath);
+  const ulOpts: UploadFileOpts = {
+    api,
+    meta,
+    localPath,
+    relPath,
+    rootDirId,
+  };
+  if (cloudFile?.id) ulOpts.existingFileId = cloudFile.id as FileId;
+  if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
+  const result = await retryWithBackoff(() => uploadFile(ulOpts));
+  meta.recordSync(relPath, {
+    fileId: result.fileId,
+    cloudMtime: result.cloudMtime,
+    localMtime: readFileMtime(localPath),
+    contentHash: ctx.hashFn ? ctx.hashFn(readFileSync(localPath), localPath) : null,
+    action: 'conflict-upload',
+    direction: 'push',
+  });
+  stats.uploaded++;
+  stats.conflicts++;
+}
 
-  if (direction === 'push') {
-    if (existsSync(localPath)) backupFile(localPath);
-    const ulOpts: UploadFileOpts = {
-      api,
-      meta,
-      localPath,
-      relPath,
-      rootDirId,
-    };
-    if (cloudFile?.id) ulOpts.existingFileId = cloudFile.id as FileId;
-    if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
-    const result = await retryWithBackoff(() => uploadFile(ulOpts));
-    meta.recordSync(relPath, {
-      fileId: result.fileId,
-      cloudMtime: result.cloudMtime,
-      localMtime: readFileMtime(localPath),
-      contentHash: ctx.hashFn ? ctx.hashFn(readFileSync(localPath), localPath) : null,
-      action: 'conflict-upload',
-      direction: 'push',
-    });
-    stats.uploaded++;
-    stats.conflicts++;
-    return;
-  }
-
-  // PULL or BOTH → backup + download
+/** PULL or BOTH branch: backup + download (both versions preserved). */
+async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
+  const { relPath, localPath, cloudFile, ctx, stats } = opts;
+  const { api, meta } = ctx;
   if (existsSync(localPath)) backupFile(localPath);
   if (cloudFile) {
     const conflictDlOpts: {
@@ -394,24 +338,4 @@ async function conflictFallback(opts: ConflictFallbackOpts): Promise<void> {
     });
   }
   stats.conflicts++;
-}
-
-/**
- * Fallback for failed cloud moves: delete old cloud files if the new path was uploaded.
- * Matches Python _fallback_delete_old_files.
- */
-export async function fallbackDeleteOldFiles(
-  stats: SyncStats,
-  api: { deleteFile(fileId: FileId): Promise<unknown> },
-  meta: MetadataStore,
-): Promise<void> {
-  for (const fm of stats.failedMoves) {
-    if (!stats.uploadedPaths.has(fm.newPath)) continue;
-    try {
-      await api.deleteFile(fm.fileId);
-      meta.removeFileInfo(fm.oldPath);
-    } catch {
-      // best-effort cleanup
-    }
-  }
 }

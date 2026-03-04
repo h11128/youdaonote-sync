@@ -4,8 +4,9 @@ import { asContentHash } from '../types/common.js';
 import type { FileState } from '../types/state.js';
 
 function entry(kind: FileState['kind'], hash: string | null) {
+  const state = { kind };
   return {
-    state: { kind } as FileState,
+    state: state as FileState,
     hash: hash ? asContentHash(hash) : null,
   };
 }

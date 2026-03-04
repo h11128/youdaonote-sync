@@ -39,7 +39,7 @@ export async function tryDiff3Merge(
 ): Promise<boolean> {
   const ext = extname(relPath).toLowerCase();
   if (!MERGEABLE_EXTS.has(ext) || !existsSync(localPath)) return false;
-  const { api, meta, rootDirId, localDir } = ctx;
+  const { api, meta, localDir } = ctx;
 
   let baseBytes: Buffer | null = getFileContentFromGit(localDir, relPath);
   if (!baseBytes) {
@@ -67,6 +67,18 @@ export async function tryDiff3Merge(
   if (contentHash)
     meta.saveBaseContent(relPath, Buffer.from(result.mergedText, 'utf-8'), contentHash);
 
+  return uploadMergedFile({ relPath, localPath, cloudFile, ctx, contentHash });
+}
+
+async function uploadMergedFile(opts: {
+  relPath: string;
+  localPath: string;
+  cloudFile: CloudFile;
+  ctx: Diff3Context;
+  contentHash: ContentHash | null;
+}): Promise<boolean> {
+  const { relPath, localPath, cloudFile, ctx, contentHash } = opts;
+  const { api, meta, rootDirId } = ctx;
   try {
     const ulOpts: UploadFileOpts = {
       api,
@@ -86,8 +98,8 @@ export async function tryDiff3Merge(
       action: 'merge-upload',
       direction: 'push',
     });
+    return true;
   } catch {
     return false;
   }
-  return true;
 }

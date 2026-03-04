@@ -19,6 +19,11 @@ export interface DirBrowser {
  *
  * Uses concurrent fetching with a configurable worker count.
  */
+interface QueueItem {
+  dirId: DirId;
+  basePath: string;
+}
+
 export async function scanCloud(
   api: DirBrowser,
   rootDirId: DirId,
@@ -29,11 +34,6 @@ export async function scanCloud(
 
   const files = new Map<string, CloudFile>();
   const visited = new Set<string>([rootDirId]);
-
-  interface QueueItem {
-    dirId: DirId;
-    basePath: string;
-  }
   const queue: QueueItem[] = [{ dirId: rootDirId, basePath: base }];
   let inflight = 0;
   let resolveAll: (() => void) | null = null;

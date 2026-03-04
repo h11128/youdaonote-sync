@@ -41,9 +41,9 @@ export default tseslint.config(
 
       'max-lines-per-function': [
         'error',
-        { max: 60, skipBlankLines: true, skipComments: true },
+        { max: 50, skipBlankLines: true, skipComments: true },
       ],
-      'max-lines': ['error', { max: 400, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['error', { max: 300, skipBlankLines: true, skipComments: true }],
       'max-classes-per-file': ['error', 1],
 
       'max-params': ['error', 4],
@@ -90,7 +90,7 @@ export default tseslint.config(
 
       '@typescript-eslint/consistent-type-assertions': [
         'error',
-        { assertionStyle: 'as', objectLiteralTypeAssertions: 'allow' },
+        { assertionStyle: 'as', objectLiteralTypeAssertions: 'allow-as-parameter' },
       ],
 
       '@typescript-eslint/no-unnecessary-condition': 'error',
@@ -125,13 +125,6 @@ export default tseslint.config(
       'max-params': 'off',
       'sonarjs/no-duplicate-string': 'off',
       'sonarjs/no-identical-functions': 'off',
-    },
-  },
-
-  {
-    files: ['**/e2e.test.ts'],
-    rules: {
-      'max-lines': ['error', { max: 750, skipBlankLines: true, skipComments: true }],
     },
   },
 

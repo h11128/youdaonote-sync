@@ -22,8 +22,8 @@ describe('stateToAction', () => {
 
   for (const [kind, expected] of cases) {
     it(`${kind} → ${expected}`, () => {
-      const state =
-        kind === 'moved' ? { kind: 'moved' as const, oldPath: '/old' } : ({ kind } as FileState);
+      const raw = kind === 'moved' ? { kind: 'moved' as const, oldPath: '/old' } : { kind };
+      const state = raw as FileState;
       expect(stateToAction(state)).toBe(expected);
     });
   }

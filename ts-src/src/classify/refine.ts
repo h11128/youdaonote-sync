@@ -27,7 +27,8 @@ export function refineCloudModified(
 
   for (const rule of REFINE_RULES) {
     if (matchesRule(cond, rule.when)) {
-      return { kind: rule.then } as FileState;
+      const matched = { kind: rule.then };
+      return matched as FileState;
     }
   }
   throw new Error(`No refine rule matched: ${JSON.stringify(cond)}`);

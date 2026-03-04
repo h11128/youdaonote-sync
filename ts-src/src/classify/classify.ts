@@ -21,7 +21,8 @@ export function classify(input: ClassifyInput | null): FileState {
   const cond = extractConditions(input);
   for (const rule of RULES) {
     if (matchesRule(cond, rule.when)) {
-      return { kind: rule.then } as FileState;
+      const matched = { kind: rule.then };
+      return matched as FileState;
     }
   }
   throw new Error(`No rule matched: ${JSON.stringify(cond)}`);

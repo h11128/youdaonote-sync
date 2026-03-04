@@ -1,57 +1,35 @@
-import { extname } from 'node:path';
 import type { ContentHash, DirId, FileId, SyncDirection } from './types/common.js';
 import type { CloudFile, LocalFile } from './types/scan.js';
 import type { FileState } from './types/state.js';
-import { stateToAction } from './types/state.js';
-import type { SyncAction } from './types/state.js';
 import { YoudaoNoteApi } from './api/client.js';
 import { MetadataStore } from './metadata/store.js';
 import { heal } from './metadata/health.js';
 import { scanCloud } from './scan/cloud.js';
-import { scanLocal, patternToRegex } from './scan/local.js';
+import { scanLocal } from './scan/local.js';
 import { classifyAll } from './classify/classify.js';
 import { detectMoves } from './classify/moves.js';
 import { calibrateMetadata } from './classify/calibrate.js';
 import { refineCloudModified } from './classify/refine.js';
-import { executeAll, fallbackDeleteOldFiles } from './execute/executor.js';
+import { executeAll } from './execute/executor.js';
 import type { SyncStats, ExecuteContext } from './execute/executor.js';
-import { diagnoseDryrun, dryRunStats } from './engine-helpers.js';
+import { fallbackDeleteOldFiles } from './execute/move-handler.js';
+import {
+  diagnoseDryrun,
+  dryRunStats,
+  filterCloudSnap,
+  filterByDirection,
+  collectConflictCandidates,
+  buildDedupInputs,
+  warmupHashCache,
+  applyRefinementIfChanged,
+  cleanupStalePaths,
+} from './engine-helpers.js';
 import { computeContentHashFromBytes, computeContentHashFromFile, initXxhash } from './hash.js';
 import { SyncLock } from './lock.js';
 import { autoDedup, discardOrphanDuplicates } from './dedup/index.js';
 import { gitAutoCommit } from './git.js';
 import { retryWithBackoff } from './api/retry.js';
 import { tryCachedCloudScan, saveScanVersion, fetchCurrentVersion } from './scan/cloud-cache.js';
-
-const HASHABLE_EXTS = new Set([
-  '.md',
-  '.txt',
-  '.html',
-  '.htm',
-  '.xml',
-  '.json',
-  '.css',
-  '.js',
-  '.csv',
-]);
-
-function isConflictCandidate(state: FileState): boolean {
-  return state.kind === 'cloudModifiedContent' || state.kind === 'conflict';
-}
-
-function collectConflictCandidates(
-  classified: Map<string, FileState>,
-  cloudSnap: ReadonlyMap<string, CloudFile>,
-): { relPath: string; cloudFile: CloudFile }[] {
-  const candidates: { relPath: string; cloudFile: CloudFile }[] = [];
-  for (const [relPath, state] of classified) {
-    if (!isConflictCandidate(state)) continue;
-    if (!HASHABLE_EXTS.has(extname(relPath).toLowerCase())) continue;
-    const cf = cloudSnap.get(relPath);
-    if (cf) candidates.push({ relPath, cloudFile: cf });
-  }
-  return candidates;
-}
 
 export type { SyncDirection } from './types/common.js';
 
@@ -188,7 +166,7 @@ export class SyncEngine {
         localHashes.set(relPath, computeContentHashFromFile(local.path));
       }
     }
-    this.warmupHashCache(cloudSnap, localSnap, localHashes);
+    warmupHashCache(cloudSnap, localSnap, localHashes);
     return { cloudSnap, localSnap, localHashes, rootDirId, didFullScan };
   }
 
@@ -236,23 +214,6 @@ export class SyncEngine {
     return stats;
   }
 
-  private buildDedupInputs(
-    localSnap: Map<string, LocalFile>,
-    localHashes: Map<string, ContentHash | null>,
-  ): {
-    localFileMap: Map<string, { path: string; mtime: number; isDir: boolean }>;
-    absPathHashes: Map<string, ContentHash>;
-  } {
-    const localFileMap = new Map<string, { path: string; mtime: number; isDir: boolean }>();
-    const absPathHashes = new Map<string, ContentHash>();
-    for (const [rel, info] of localSnap) {
-      localFileMap.set(rel, { path: info.path, mtime: info.mtime, isDir: info.isDir });
-      const h = localHashes.get(rel);
-      if (h) absPathHashes.set(info.path, h);
-    }
-    return { localFileMap, absPathHashes };
-  }
-
   private async runDedupIfEnabled(
     localSnap: Map<string, LocalFile>,
     localHashes: Map<string, ContentHash | null>,
@@ -260,7 +221,7 @@ export class SyncEngine {
     if (this.config.autoDedup === false) {
       return { deletedPaths: [], deletedCount: 0 };
     }
-    const { localFileMap, absPathHashes } = this.buildDedupInputs(localSnap, localHashes);
+    const { localFileMap, absPathHashes } = buildDedupInputs(localSnap, localHashes);
     const dedupResult = await autoDedup(this.config.localDir, this.meta, {
       api: this.api,
       hashCache: absPathHashes,
@@ -280,7 +241,7 @@ export class SyncEngine {
     didFullScan: boolean;
   }): Promise<void> {
     const { cloudSnap, localSnap, localHashes, stats, didFullScan } = opts;
-    if (didFullScan) this.cleanupStalePaths(cloudSnap);
+    if (didFullScan) cleanupStalePaths(this.meta, cloudSnap);
 
     const { deletedPaths: dedupDeletedPaths, deletedCount: dedupDeletedCount } =
       await this.runDedupIfEnabled(localSnap, localHashes);
@@ -297,35 +258,6 @@ export class SyncEngine {
           dedupDeleted: dedupDeletedCount,
         },
       });
-    }
-  }
-
-  /**
-   * Pre-compute content hashes for files on both sides (warm the cache).
-   * Only computes for hashable extensions that haven't been computed yet.
-   */
-  private warmupHashCache(
-    cloudSnap: ReadonlyMap<string, CloudFile>,
-    localSnap: ReadonlyMap<string, LocalFile>,
-    localHashes: Map<string, ContentHash | null>,
-  ): void {
-    const toCompute: { relPath: string; absPath: string }[] = [];
-    for (const [relPath, local] of localSnap) {
-      if (local.isDir || localHashes.has(relPath)) continue;
-      if (!cloudSnap.has(relPath)) continue;
-      const ext = extname(relPath).toLowerCase();
-      if (!HASHABLE_EXTS.has(ext)) continue;
-      toCompute.push({ relPath, absPath: local.path });
-    }
-
-    // Compute in small batches to avoid blocking
-    const BATCH = 50;
-    for (let i = 0; i < toCompute.length; i += BATCH) {
-      const batch = toCompute.slice(i, i + BATCH);
-      for (const { relPath, absPath } of batch) {
-        const hash = computeContentHashFromFile(absPath);
-        localHashes.set(relPath, hash);
-      }
     }
   }
 
@@ -367,17 +299,6 @@ export class SyncEngine {
     return hashFn(new Uint8Array(rawData), relPath);
   }
 
-  private applyRefinementIfChanged(
-    relPath: string,
-    refined: FileState,
-    classified: Map<string, FileState>,
-  ): void {
-    const current = classified.get(relPath);
-    if (current && refined.kind !== current.kind) {
-      classified.set(relPath, refined);
-    }
-  }
-
   private async refineSingleConflict(opts: {
     relPath: string;
     cloudFile: CloudFile;
@@ -395,77 +316,14 @@ export class SyncEngine {
 
       const metaRecord = this.meta.getFileInfo(relPath);
       const refined = refineCloudModified(localHash, cloudHash, metaRecord);
-      this.applyRefinementIfChanged(relPath, refined, classified);
+      applyRefinementIfChanged(relPath, refined, classified);
       this.meta.setCloudContentHash(relPath, cloudHash);
     } catch {
       // If cloud fetch fails, keep original classification
     }
   }
 
-  /**
-   * Clean up metadata for files that no longer exist in cloud.
-   * Clears the file_id so they won't be treated as cloud-linked.
-   */
-  private cleanupStalePaths(cloudSnap: ReadonlyMap<string, CloudFile>): void {
-    const activeCloudPaths = new Set<string>();
-    for (const [path, cf] of cloudSnap) {
-      if (!cf.isDir) activeCloudPaths.add(path);
-    }
-
-    const stalePaths = this.meta.getStaleCloudPaths(activeCloudPaths);
-    if (stalePaths.length === 0) return;
-
-    this.meta.batch(() => {
-      for (const path of stalePaths) {
-        this.meta.clearCloudId(path);
-      }
-    });
-  }
-
   close(): void {
     this.meta.close();
-  }
-}
-
-/**
- * Filter cloud snapshot by include/exclude patterns (matches local scan filtering).
- * Removes entries that don't match include patterns or that match exclude patterns.
- */
-export function filterCloudSnap(
-  cloudSnap: Map<string, CloudFile>,
-  opts: { include?: string[]; exclude?: string[] },
-): void {
-  const includeRes = (opts.include ?? []).map(patternToRegex);
-  const excludeRes = (opts.exclude ?? []).map(patternToRegex);
-
-  for (const path of [...cloudSnap.keys()]) {
-    if (excludeRes.some((re) => re.test(path))) {
-      cloudSnap.delete(path);
-      continue;
-    }
-    if (includeRes.length > 0 && !includeRes.some((re) => re.test(path))) {
-      cloudSnap.delete(path);
-    }
-  }
-}
-
-/**
- * Filter classified entries by sync direction.
- * 'pull' keeps only downloads/conflicts; 'push' keeps only uploads.
- * Non-matching entries are set to 'gone' (skipped).
- */
-export function filterByDirection(
-  classified: Map<string, FileState>,
-  direction: 'pull' | 'push',
-): void {
-  const allowedActions: Set<SyncAction> =
-    direction === 'pull' ? new Set(['download', 'conflict']) : new Set(['upload']);
-
-  for (const [path, state] of classified) {
-    const action = stateToAction(state);
-    if (action === 'skip' || action === 'move') continue;
-    if (!allowedActions.has(action)) {
-      classified.set(path, { kind: 'gone' });
-    }
   }
 }
