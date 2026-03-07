@@ -1,5 +1,5 @@
 ---
-description: "开发工具技巧和环境配置 — WSL、CRLF、换行符、Vitest、Mermaid、StrReplace、Cursor hooks、preToolUse。Development tool tips, WSL line endings, Mermaid validation, StrReplace strategies, Cursor hook format."
+description: "开发工具技巧和环境配置 — WSL、CRLF、换行符、Vitest、Mermaid、StrReplace、Cursor hooks、preToolUse、markdownlint、cargo clippy --fix。Development tool tips, WSL line endings, Mermaid validation, StrReplace strategies, Cursor hook format, markdownlint auto-fix, cargo clippy fix."
 alwaysApply: false
 ---
 
@@ -39,6 +39,16 @@ GitHub Issue: vitest-dev/vitest#9507
 - Enums: List fixed sets (domain, subject) in Prompt
 - Sync: Sync new fields across — Schema, Prompt, Coverage Stats
 
+## Markdownlint 自动修复
+
+编辑 .md 文件后如果 lint 报错，先跑自动修复再看剩余问题：
+
+```
+npx markdownlint-cli --fix <file.md>
+```
+
+项目 `.markdownlint.json` 已禁用不可自动修复且不影响可读性的规则（MD013 行宽、MD040 代码块语言、MD060 表格格式）。`--fix` 能处理空行、缩进等格式问题。**不要手动逐条修复 markdownlint 警告。**
+
 ## StrReplace Tips
 
 大段内容替换容易失败：
@@ -52,3 +62,16 @@ Cursor 对所有拦截类 hook（`beforeShellExecution`、`preToolUse`、`before
 
 **正确**: `{"permission": "deny", "agent_message": "原因"}` / `{"permission": "allow"}`
 **错误**: `{"decision": "deny", "reason": "..."}` — Cursor 会静默忽略
+
+## cargo clippy --fix 全部回滚问题
+
+`cargo clippy --fix` 应用修复后会重新编译验证。如果任何一个 fix 导致编译失败，**所有 fix 全部回滚**——不是只回滚出错的那个。这意味着一个坏 fix 会阻止所有好 fix。
+
+**典型场景**: clippy 修了 trait 签名（如 `&str` → `&'static str`）但没修 impl 侧 → 编译失败 → 46 个 fix 全部回滚 → 看起来"什么都没修"。
+
+**解决方法**: 用 `--broken-code` 强制保留修改，然后手动修编译错误：
+```
+cargo clippy --fix --all-targets --allow-dirty --allow-staged --broken-code
+```
+
+**注意**: `--broken-code` 会留下无法编译的代码。先 `git stash` 或确保能恢复。
