@@ -3,6 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from '../metadata/store.js';
+import { asEpochSeconds } from '../types/common.js';
 import type { DirId, FileId } from '../types/common.js';
 import { tryCachedCloudScan, loadCloudFilesFromCache, saveScanVersion } from './cloud-cache.js';
 import type { CloudFile } from '../types/scan.js';
@@ -48,8 +49,8 @@ function makeCloudFile(id: string, name: string, parentId = 'root'): CloudFile {
     parentId: parentId as DirId,
     name,
     isDir: false,
-    mtime: 1000,
-    ctime: 500,
+    mtime: asEpochSeconds(1000),
+    ctime: asEpochSeconds(500),
     domain: 0 as never,
   };
 }
@@ -200,17 +201,17 @@ describe('loadCloudFilesFromCache', () => {
   it('skips .conflict. files', () => {
     meta.cacheCloudFileInfo('doc.md', {
       fileId: 'f-1' as FileId,
-      cloudMtime: 100,
+      cloudMtime: asEpochSeconds(100),
       parentId: 'root' as DirId,
       domain: 0,
-      createTime: 50,
+      createTime: asEpochSeconds(50),
     });
     meta.cacheCloudFileInfo('doc.conflict.md', {
       fileId: 'f-2' as FileId,
-      cloudMtime: 200,
+      cloudMtime: asEpochSeconds(200),
       parentId: 'root' as DirId,
       domain: 0,
-      createTime: 50,
+      createTime: asEpochSeconds(50),
     });
     const result = loadCloudFilesFromCache(meta);
     expect(result).not.toBeNull();

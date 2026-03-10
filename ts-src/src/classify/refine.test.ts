@@ -4,21 +4,21 @@ import { refineCloudModified } from './refine.js';
 import { matchesRule } from './classify.js';
 import { REFINE_RULES } from './rules.js';
 import type { RefineConditions } from './rules.js';
-import { asContentHash, asDirId, asFileId, NoteDomain } from '../types/common.js';
+import { asContentHash, asDirId, asEpochSeconds, asFileId, NoteDomain } from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
 
 function makeMeta(overrides: Partial<MetadataRecord> = {}): MetadataRecord {
   return {
     fileId: asFileId('file-1'),
-    cloudMtime: 1000,
-    localMtime: 1000,
+    cloudMtime: asEpochSeconds(1000),
+    localMtime: asEpochSeconds(1000),
     contentHash: asContentHash('hash-abc'),
     cloudContentHash: asContentHash('hash-abc'),
     parentId: asDirId('dir-1'),
     domain: NoteDomain.MARKDOWN,
-    lastSyncAt: 900,
+    lastSyncAt: asEpochSeconds(900),
     originalDomain: null,
-    createTime: 800,
+    createTime: asEpochSeconds(800),
     ...overrides,
   };
 }

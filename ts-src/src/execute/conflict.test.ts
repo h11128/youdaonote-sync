@@ -13,7 +13,7 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from '../metadata/store.js';
-import { asDirId, asFileId } from '../types/common.js';
+import { asDirId, asEpochSeconds, asFileId } from '../types/common.js';
 import type { NoteDomain } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { YoudaoNoteApi } from '../api/client.js';
@@ -51,8 +51,8 @@ function makeCloudFile(id: string, name: string): CloudFile {
     parentId: asDirId('root'),
     name,
     isDir: false,
-    mtime: 1000,
-    ctime: 900,
+    mtime: asEpochSeconds(1000),
+    ctime: asEpochSeconds(900),
     domain: 1 as NoteDomain,
   };
 }

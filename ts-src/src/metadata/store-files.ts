@@ -1,5 +1,11 @@
 import type Database from 'better-sqlite3';
-import type { ContentHash, DirId, FileId, NoteDomain } from '../types/common.js';
+import {
+  asEpochSeconds,
+  type ContentHash,
+  type DirId,
+  type FileId,
+  type NoteDomain,
+} from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
 
 export const FILE_META_COLS =
@@ -18,17 +24,17 @@ function getStrOrNull(val: unknown): string | null {
 export function rowToMetadata(row: Record<string, unknown>): MetadataRecord {
   return {
     fileId: (getStrOrNull(row.file_id) ?? '') as FileId,
-    cloudMtime: getNum(row.cloud_mtime, 0),
-    localMtime: getNum(row.local_mtime, 0),
+    cloudMtime: asEpochSeconds(getNum(row.cloud_mtime, 0)),
+    localMtime: asEpochSeconds(getNum(row.local_mtime, 0)),
     contentHash: getStrOrNull(row.content_hash) as ContentHash | null,
     cloudContentHash: getStrOrNull(row.cloud_content_hash) as ContentHash | null,
     parentId: getStrOrNull(row.parent_id) as DirId | null,
     domain: getNum(row.domain, 1) as NoteDomain,
-    lastSyncAt: getNum(row.last_sync_at, 0),
+    lastSyncAt: asEpochSeconds(getNum(row.last_sync_at, 0)),
     originalDomain: (row.original_domain != null
       ? getNum(row.original_domain, 1)
       : null) as NoteDomain | null,
-    createTime: getNum(row.create_time, 0),
+    createTime: asEpochSeconds(getNum(row.create_time, 0)),
   };
 }
 

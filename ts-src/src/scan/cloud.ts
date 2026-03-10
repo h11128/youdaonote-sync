@@ -1,4 +1,4 @@
-import type { DirId, FileId, NoteDomain } from '../types/common.js';
+import { asEpochSeconds, type DirId, type FileId, type NoteDomain } from '../types/common.js';
 import type { DirInfoByIdResponse } from '../types/dir.js';
 import type { CloudFile } from '../types/scan.js';
 import { mapCloudName } from './name.js';
@@ -123,8 +123,8 @@ function parseEntry(
     parentId: dirId,
     name: fe.name,
     isDir,
-    mtime: fe.modifyTimeForSort ?? 0,
-    ctime: fe.createTimeForSort ?? 0,
+    mtime: asEpochSeconds(fe.modifyTimeForSort ?? 0),
+    ctime: asEpochSeconds(fe.createTimeForSort ?? 0),
     domain: (fe.domain ?? 1) as NoteDomain,
   };
   const subdir = isDir

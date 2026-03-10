@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { buildTree, diffTrees } from './merkle.js';
 import type { TreeHash } from './merkle.js';
+import { asEpochSeconds } from '../types/common.js';
 import type { ContentHash } from '../types/common.js';
 import type { LocalFile } from '../types/scan.js';
 
-function lf(path: string, isDir: boolean, mtime = 0): LocalFile {
+function lf(path: string, isDir: boolean, mtime = asEpochSeconds(0)): LocalFile {
   return { path, isDir, mtime };
 }
 

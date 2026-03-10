@@ -57,11 +57,22 @@ function verifyDirIssues(meta: MetadataStore, localDir: string): VerifyIssue[] {
 function applyVerifyFixes(meta: MetadataStore, localDir: string, issues: VerifyIssue[]): void {
   meta.batch(() => {
     for (const issue of issues) {
-      if (issue.type === VerifyIssueType.HASH_MISMATCH) {
-        const actual = computeContentHashFromFile(join(localDir, issue.path));
-        if (actual) meta.updateContentHash(issue.path, actual);
-      } else if (issue.type === VerifyIssueType.ORPHAN_DIR) {
-        meta.removeDir(issue.path);
+      switch (issue.type) {
+        case VerifyIssueType.HASH_MISMATCH: {
+          const actual = computeContentHashFromFile(join(localDir, issue.path));
+          if (actual) {
+            meta.updateContentHash(issue.path, actual);
+          } else {
+            console.warn(`verify: hash computation failed for ${issue.path}`);
+          }
+          break;
+        }
+        case VerifyIssueType.ORPHAN:
+          meta.removeFileInfo(issue.path);
+          break;
+        case VerifyIssueType.ORPHAN_DIR:
+          meta.removeDir(issue.path);
+          break;
       }
     }
   });

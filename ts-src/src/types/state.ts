@@ -1,3 +1,5 @@
+import type { RelPath } from './common.js';
+
 export type FileState =
   | { readonly kind: 'synced' }
   | { readonly kind: 'localNew' }
@@ -11,7 +13,7 @@ export type FileState =
   | { readonly kind: 'cloudModifiedMtimeOnly' }
   | { readonly kind: 'bothModifiedConverged' }
   | { readonly kind: 'conflict' }
-  | { readonly kind: 'moved'; readonly oldPath: string }
+  | { readonly kind: 'moved'; readonly oldPath: RelPath }
   | { readonly kind: 'gone' };
 
 export type SyncAction = 'skip' | 'upload' | 'download' | 'conflict' | 'move';

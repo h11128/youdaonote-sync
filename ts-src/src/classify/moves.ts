@@ -1,5 +1,5 @@
 import { basename, dirname } from 'node:path';
-import type { ContentHash, FileId } from '../types/common.js';
+import { asRelPath, type ContentHash, type FileId } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { FileState } from '../types/state.js';
@@ -138,7 +138,7 @@ function detectByFileId(
     const cloudNewPath = cloudIdToPath.get(record.fileId);
     if (!cloudNewPath || !cloudNewPaths.has(cloudNewPath)) continue;
 
-    result.set(cloudNewPath, { kind: 'moved', oldPath: localPath });
+    result.set(cloudNewPath, { kind: 'moved', oldPath: asRelPath(localPath) });
     result.set(localPath, { kind: 'gone' });
     localNewPaths.delete(localPath);
     cloudNewPaths.delete(cloudNewPath);
@@ -153,7 +153,7 @@ function detectByFileId(
     const localPath = meta.findByFileId(record.fileId);
     if (!localPath || !localNewPaths.has(localPath)) continue;
 
-    result.set(localPath, { kind: 'moved', oldPath: cloudPath });
+    result.set(localPath, { kind: 'moved', oldPath: asRelPath(cloudPath) });
     result.set(cloudPath, { kind: 'gone' });
     cloudDeletedPaths.delete(cloudPath);
     localNewPaths.delete(localPath);
@@ -187,7 +187,7 @@ function matchByNormalizedName(
     const match = normIndex.get(key);
     if (!match || !newPaths.has(match)) continue;
 
-    result.set(match, { kind: 'moved', oldPath: dp });
+    result.set(match, { kind: 'moved', oldPath: asRelPath(dp) });
     result.set(dp, { kind: 'gone' });
     deletedPaths.delete(dp);
     newPaths.delete(match);
@@ -273,7 +273,7 @@ function applyHashMatches(ctx: CrossDirMatchContext): void {
       const oldPath = dps[i];
       const newPath = nps[i];
       if (oldPath === undefined || newPath === undefined) continue;
-      result.set(newPath, { kind: 'moved', oldPath });
+      result.set(newPath, { kind: 'moved', oldPath: asRelPath(oldPath) });
       result.set(oldPath, { kind: 'gone' });
       deletedPaths.delete(oldPath);
       newPaths.delete(newPath);
@@ -333,7 +333,7 @@ function applyFilenameMatches(ctx: CrossDirMatchContext): void {
 
     if (!canPairDifferentContent(dp, bestPath, classified, meta)) continue;
 
-    result.set(bestPath, { kind: 'moved', oldPath: dp });
+    result.set(bestPath, { kind: 'moved', oldPath: asRelPath(dp) });
     result.set(dp, { kind: 'gone' });
     deletedPaths.delete(dp);
     newPaths.delete(bestPath);

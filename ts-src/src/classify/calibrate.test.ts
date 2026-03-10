@@ -6,6 +6,7 @@ import { MetadataStore } from '../metadata/store.js';
 import { calibrateMetadata } from './calibrate.js';
 import type { CloudFile } from '../types/scan.js';
 import type { LocalFile } from '../types/scan.js';
+import { asEpochSeconds } from '../types/common.js';
 import type { ContentHash, DirId, FileId } from '../types/common.js';
 
 const TMP = join(tmpdir(), `calibrate-test-${Date.now()}`);
@@ -26,8 +27,8 @@ function makeCloudFile(overrides?: Partial<CloudFile>): CloudFile {
   return {
     id: 'cf1' as FileId,
     name: 'test.md',
-    mtime: 1000,
-    ctime: 900,
+    mtime: asEpochSeconds(1000),
+    ctime: asEpochSeconds(900),
     isDir: false,
     domain: 0,
     parentId: 'root' as DirId,
@@ -38,7 +39,7 @@ function makeCloudFile(overrides?: Partial<CloudFile>): CloudFile {
 function makeLocalFile(overrides?: Partial<LocalFile>): LocalFile {
   return {
     path: join(TMP, 'test.md'),
-    mtime: 1000,
+    mtime: asEpochSeconds(1000),
     size: 100,
     isDir: false,
     ...overrides,
@@ -69,8 +70,8 @@ describe('calibrateMetadata: file calibration', () => {
   it('Case1: fills cloudMtime when existing metadata has fileId and localMtime but no cloudMtime', () => {
     meta.setFileInfo('existing.md', {
       fileId: 'f-exist' as FileId,
-      cloudMtime: 0,
-      localMtime: 500,
+      cloudMtime: asEpochSeconds(0),
+      localMtime: asEpochSeconds(500),
     });
 
     const cloud = new Map<string, CloudFile>([
@@ -79,7 +80,7 @@ describe('calibrateMetadata: file calibration', () => {
         makeCloudFile({
           id: 'f-exist' as FileId,
           name: 'existing.md',
-          mtime: 800,
+          mtime: asEpochSeconds(800),
         }),
       ],
     ]);
@@ -99,8 +100,8 @@ describe('calibrateMetadata: file calibration', () => {
   it('skips files that already have contentHash and lastSyncAt', () => {
     meta.setFileInfo('synced.md', {
       fileId: 'f-s' as FileId,
-      cloudMtime: 100,
-      localMtime: 100,
+      cloudMtime: asEpochSeconds(100),
+      localMtime: asEpochSeconds(100),
     });
     meta.batch(() => {
       meta.updateContentHash('synced.md', 'somehash' as ContentHash);

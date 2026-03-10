@@ -47,10 +47,9 @@ async function moveCloudFile(
 function moveLocalFile(localDir: string, oldPath: string, relPath: string): void {
   const oldAbs = join(localDir, oldPath);
   const newAbs = join(localDir, relPath);
-  if (existsSync(oldAbs) && oldAbs !== newAbs) {
-    mkdirSync(dirname(newAbs), { recursive: true });
-    renameSync(oldAbs, newAbs);
-  }
+  if (!existsSync(oldAbs) || oldAbs === newAbs) return;
+  mkdirSync(dirname(newAbs), { recursive: true });
+  renameSync(oldAbs, newAbs);
 }
 
 /**

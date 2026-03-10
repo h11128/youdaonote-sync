@@ -67,7 +67,11 @@ export async function conflictFallback(opts: ConflictOpts): Promise<void> {
 async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
   const { relPath, localPath, cloudFile, ctx, stats } = opts;
   const { api, meta, rootDirId } = ctx;
-  if (existsSync(localPath)) backupFile(localPath);
+  if (existsSync(localPath)) {
+    backupFile(localPath);
+  } else {
+    /* no local file to backup, proceed with upload */
+  }
   const ulOpts: UploadFileOpts = { api, meta, localPath, relPath, rootDirId };
   if (cloudFile?.id) ulOpts.existingFileId = cloudFile.id as FileId;
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
@@ -90,26 +94,27 @@ async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
   const { relPath, localPath, cloudFile, ctx, stats } = opts;
   const { api, meta } = ctx;
   if (existsSync(localPath)) backupFile(localPath);
-  if (cloudFile) {
-    const dlOpts: {
-      cloudMtime?: number;
-      hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
-    } = { cloudMtime: cloudFile.mtime };
-    if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
-    const result = await retryWithBackoff(() =>
-      downloadFile(api, cloudFile.id as FileId, localPath, dlOpts),
-    );
-    meta.recordSync(relPath, {
-      fileId: cloudFile.id as FileId,
-      cloudMtime: cloudFile.mtime,
-      localMtime: readFileMtime(localPath, cloudFile.mtime),
-      parentId: cloudFile.parentId,
-      domain: cloudFile.domain,
-      contentHash: result.contentHash,
-      action: 'conflict-download',
-      direction: 'pull',
-    });
+  if (!cloudFile) {
+    throw new Error(`conflictPullFallback: cloudFile required for ${relPath}`);
   }
+  const dlOpts: {
+    cloudMtime?: number;
+    hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
+  } = { cloudMtime: cloudFile.mtime };
+  if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
+  const result = await retryWithBackoff(() =>
+    downloadFile(api, cloudFile.id as FileId, localPath, dlOpts),
+  );
+  meta.recordSync(relPath, {
+    fileId: cloudFile.id as FileId,
+    cloudMtime: cloudFile.mtime,
+    localMtime: readFileMtime(localPath, cloudFile.mtime),
+    parentId: cloudFile.parentId,
+    domain: cloudFile.domain,
+    contentHash: result.contentHash,
+    action: 'conflict-download',
+    direction: 'pull',
+  });
   stats.conflicts++;
   stats.changedPaths.push(localPath);
 }

@@ -4,7 +4,7 @@
  * Extracted from engine.ts to keep engine focused on orchestration.
  */
 import { basename } from 'node:path';
-import type { DirId, FileId, NoteDomain } from '../types/common.js';
+import { asEpochSeconds, type DirId, type FileId, type NoteDomain } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { mapCloudName, sanitizeFilename } from '../scan/name.js';
@@ -40,8 +40,8 @@ export function loadCloudFilesFromCache(meta: MetadataStore): Map<string, CloudF
       parentId: info.parentId as DirId,
       name: basename(path),
       isDir: false,
-      mtime: info.cloudMtime,
-      ctime: info.createTime,
+      mtime: asEpochSeconds(info.cloudMtime),
+      ctime: asEpochSeconds(info.createTime),
       domain: info.domain as NoteDomain,
     });
   }
@@ -197,8 +197,8 @@ function processDirEntry(opts: DirEntryParams): void {
     parentId: parentId as DirId,
     name,
     isDir: true,
-    mtime: 0,
-    ctime: 0,
+    mtime: asEpochSeconds(0),
+    ctime: asEpochSeconds(0),
     domain: 0 as NoteDomain,
   });
   meta.setDirInfo(relPath, fid as DirId, parentId as DirId);
@@ -222,8 +222,8 @@ function processFileEntry(opts: FileEntryParams): void {
     parentId: parentId as DirId,
     name,
     isDir: false,
-    mtime,
-    ctime,
+    mtime: asEpochSeconds(mtime),
+    ctime: asEpochSeconds(ctime),
     domain,
   };
   cloudFiles.set(relPath, info);

@@ -4,7 +4,7 @@ import { classify, classifyAll, matchesRule } from './classify.js';
 import { extractConditions } from './conditions.js';
 import type { ClassifyInput, Conditions } from './conditions.js';
 import { RULES } from './rules.js';
-import { asContentHash, asDirId, asFileId, NoteDomain } from '../types/common.js';
+import { asContentHash, asDirId, asEpochSeconds, asFileId, NoteDomain } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { MetadataRecord } from '../types/metadata.js';
 
@@ -16,8 +16,8 @@ function makeCloud(overrides: Partial<CloudFile> = {}): CloudFile {
     parentId: asDirId('dir-1'),
     name: 'test.md',
     isDir: false,
-    mtime: 1000,
-    ctime: 500,
+    mtime: asEpochSeconds(1000),
+    ctime: asEpochSeconds(500),
     domain: NoteDomain.MARKDOWN,
     ...overrides,
   };
@@ -27,7 +27,7 @@ function makeLocal(overrides: Partial<LocalFile> = {}): LocalFile {
   return {
     path: '/notes/test.md',
     isDir: false,
-    mtime: 1000,
+    mtime: asEpochSeconds(1000),
     ...overrides,
   };
 }
@@ -35,15 +35,15 @@ function makeLocal(overrides: Partial<LocalFile> = {}): LocalFile {
 function makeMeta(overrides: Partial<MetadataRecord> = {}): MetadataRecord {
   return {
     fileId: asFileId('file-1'),
-    cloudMtime: 1000,
-    localMtime: 1000,
+    cloudMtime: asEpochSeconds(1000),
+    localMtime: asEpochSeconds(1000),
     contentHash: asContentHash('hash-abc'),
     cloudContentHash: asContentHash('hash-abc'),
     parentId: asDirId('dir-1'),
     domain: NoteDomain.MARKDOWN,
-    lastSyncAt: 900,
+    lastSyncAt: asEpochSeconds(900),
     originalDomain: null,
-    createTime: 800,
+    createTime: asEpochSeconds(800),
     ...overrides,
   };
 }
@@ -86,8 +86,8 @@ describe('classify: deleted states', () => {
   it('localDeleted — local gone, cloud unchanged since last sync', () => {
     const result = classify({
       local: null,
-      cloud: makeCloud({ mtime: 1000 }),
-      meta: makeMeta({ cloudMtime: 1000 }),
+      cloud: makeCloud({ mtime: asEpochSeconds(1000) }),
+      meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
     expect(result.kind).toBe('localDeleted');
@@ -96,8 +96,8 @@ describe('classify: deleted states', () => {
   it('localDeletedCloudModified — local gone, cloud changed since last sync', () => {
     const result = classify({
       local: null,
-      cloud: makeCloud({ mtime: 2000 }),
-      meta: makeMeta({ cloudMtime: 1000 }),
+      cloud: makeCloud({ mtime: asEpochSeconds(2000) }),
+      meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
     expect(result.kind).toBe('localDeletedCloudModified');
@@ -105,9 +105,9 @@ describe('classify: deleted states', () => {
 
   it('cloudDeleted — cloud gone, local unchanged since last sync', () => {
     const result = classify({
-      local: makeLocal({ mtime: 1000 }),
+      local: makeLocal({ mtime: asEpochSeconds(1000) }),
       cloud: null,
-      meta: makeMeta({ localMtime: 1000 }),
+      meta: makeMeta({ localMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
     expect(result.kind).toBe('cloudDeleted');
@@ -115,9 +115,9 @@ describe('classify: deleted states', () => {
 
   it('cloudDeletedLocalModified — cloud gone, local changed since last sync', () => {
     const result = classify({
-      local: makeLocal({ mtime: 2000 }),
+      local: makeLocal({ mtime: asEpochSeconds(2000) }),
       cloud: null,
-      meta: makeMeta({ localMtime: 1000 }),
+      meta: makeMeta({ localMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
     expect(result.kind).toBe('cloudDeletedLocalModified');
@@ -128,8 +128,8 @@ describe('classify: modified states', () => {
   it('localModified — both exist, only local hash changed', () => {
     const result = classify({
       local: makeLocal(),
-      cloud: makeCloud({ mtime: 1000 }),
-      meta: makeMeta({ cloudMtime: 1000 }),
+      cloud: makeCloud({ mtime: asEpochSeconds(1000) }),
+      meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: asContentHash('hash-changed'),
     });
     expect(result.kind).toBe('localModified');
@@ -138,8 +138,8 @@ describe('classify: modified states', () => {
   it('cloudModifiedContent — both exist, only cloud mtime changed (hash not available)', () => {
     const result = classify({
       local: makeLocal(),
-      cloud: makeCloud({ mtime: 2000 }),
-      meta: makeMeta({ cloudMtime: 1000 }),
+      cloud: makeCloud({ mtime: asEpochSeconds(2000) }),
+      meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
     expect(result.kind).toBe('cloudModifiedContent');
@@ -148,8 +148,8 @@ describe('classify: modified states', () => {
   it('conflict — both exist, both hash and cloud mtime changed', () => {
     const result = classify({
       local: makeLocal(),
-      cloud: makeCloud({ mtime: 2000 }),
-      meta: makeMeta({ cloudMtime: 1000 }),
+      cloud: makeCloud({ mtime: asEpochSeconds(2000) }),
+      meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: asContentHash('hash-changed'),
     });
     expect(result.kind).toBe('conflict');
@@ -168,8 +168,8 @@ describe('classify: modified states', () => {
   it('cloudModifiedContent — cloud mtime changed, local hash unchanged', () => {
     const result = classify({
       local: makeLocal(),
-      cloud: makeCloud({ mtime: 2000 }),
-      meta: makeMeta({ cloudMtime: 1000 }),
+      cloud: makeCloud({ mtime: asEpochSeconds(2000) }),
+      meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: asContentHash('hash-abc'),
     });
     expect(result.kind).toBe('cloudModifiedContent');

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { SyncEngine } from './engine.js';
 import { filterCloudSnap, filterByDirection } from './engine-helpers.js';
 import type { YoudaoNoteApi } from './api/client.js';
-import { asDirId, asFileId } from './types/common.js';
+import { asDirId, asEpochSeconds, asFileId, asRelPath } from './types/common.js';
 import type { NoteDomain } from './types/common.js';
 import type { CloudFile } from './types/scan.js';
 import type { FileState } from './types/state.js';
@@ -57,8 +57,8 @@ function fakeCloudFile(name: string): CloudFile {
     parentId: asDirId('root'),
     name,
     isDir: false,
-    mtime: 1000,
-    ctime: 900,
+    mtime: asEpochSeconds(1000),
+    ctime: asEpochSeconds(900),
     domain: 0 as NoteDomain,
   };
 }
@@ -118,7 +118,7 @@ describe('filterByDirection', () => {
       ['local-new.md', { kind: 'localNew' }],
       ['conflict.md', { kind: 'conflict' }],
       ['synced.md', { kind: 'synced' }],
-      ['moved.md', { kind: 'moved', oldPath: 'old.md' }],
+      ['moved.md', { kind: 'moved', oldPath: asRelPath('old.md') }],
     ]);
 
     filterByDirection(classified, 'pull');

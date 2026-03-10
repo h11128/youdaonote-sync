@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { handleMove, fallbackDeleteOldFiles } from './move-handler.js';
 import { emptyStats } from './executor.js';
 import { MetadataStore } from '../metadata/store.js';
-import { asDirId, asFileId } from '../types/common.js';
+import { asDirId, asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
 import type { FileId, NoteDomain } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { YoudaoNoteApi } from '../api/client.js';
@@ -24,8 +24,8 @@ function makeCloudFile(id: string, name: string): CloudFile {
     parentId: asDirId('root'),
     name,
     isDir: false,
-    mtime: 1000,
-    ctime: 900,
+    mtime: asEpochSeconds(1000),
+    ctime: asEpochSeconds(900),
     domain: 1 as NoteDomain,
   };
 }
@@ -56,14 +56,14 @@ describe('handleMove: local file operations', () => {
     writeFileSync(join(localDir, 'old-name.md'), oldContent);
     meta.setFileInfo('old-name.md', {
       fileId: asFileId('f1'),
-      cloudMtime: 1000,
-      localMtime: 1000,
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
     });
 
     const stats = emptyStats();
     await handleMove({
       relPath: 'new-name.md',
-      state: { kind: 'moved', oldPath: 'old-name.md' },
+      state: { kind: 'moved', oldPath: asRelPath('old-name.md') },
       cloudFile: makeCloudFile('f1', 'new-name.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
       stats,
@@ -78,14 +78,14 @@ describe('handleMove: local file operations', () => {
     writeFileSync(join(localDir, 'note.md'), 'content');
     meta.setFileInfo('note.md', {
       fileId: asFileId('f2'),
-      cloudMtime: 1000,
-      localMtime: 1000,
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
     });
 
     const stats = emptyStats();
     await handleMove({
       relPath: 'subdir/deep/note.md',
-      state: { kind: 'moved', oldPath: 'note.md' },
+      state: { kind: 'moved', oldPath: asRelPath('note.md') },
       cloudFile: makeCloudFile('f2', 'note.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
       stats,
@@ -99,14 +99,14 @@ describe('handleMove: local file operations', () => {
     writeFileSync(join(localDir, 'a.md'), 'data');
     meta.setFileInfo('a.md', {
       fileId: asFileId('f3'),
-      cloudMtime: 1000,
-      localMtime: 1000,
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
     });
 
     const stats = emptyStats();
     await handleMove({
       relPath: 'b.md',
-      state: { kind: 'moved', oldPath: 'a.md' },
+      state: { kind: 'moved', oldPath: asRelPath('a.md') },
       cloudFile: makeCloudFile('f3', 'b.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
       stats,
@@ -134,8 +134,8 @@ describe('handleMove: error handling and metadata', () => {
     writeFileSync(join(localDir, 'x.md'), 'data');
     meta.setFileInfo('x.md', {
       fileId: asFileId('f4'),
-      cloudMtime: 1000,
-      localMtime: 1000,
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
     });
 
     const stats = emptyStats();
@@ -146,7 +146,7 @@ describe('handleMove: error handling and metadata', () => {
 
     await handleMove({
       relPath: 'y.md',
-      state: { kind: 'moved', oldPath: 'x.md' },
+      state: { kind: 'moved', oldPath: asRelPath('x.md') },
       cloudFile: makeCloudFile('f4', 'y.md'),
       ctx: { api, meta, rootDirId: asDirId('root'), localDir },
       stats,
@@ -162,14 +162,14 @@ describe('handleMove: error handling and metadata', () => {
     writeFileSync(join(localDir, 'old.md'), 'data');
     meta.setFileInfo('old.md', {
       fileId: asFileId('f5'),
-      cloudMtime: 1000,
-      localMtime: 1000,
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
     });
 
     const stats = emptyStats();
     await handleMove({
       relPath: 'new.md',
-      state: { kind: 'moved', oldPath: 'old.md' },
+      state: { kind: 'moved', oldPath: asRelPath('old.md') },
       cloudFile: makeCloudFile('f5', 'new.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
       stats,
@@ -212,7 +212,11 @@ describe('fallbackDeleteOldFiles', () => {
   });
 
   it('deletes old cloud file when newPath is in uploadedPaths', async () => {
-    meta.setFileInfo('old.md', { fileId: asFileId('f-old'), cloudMtime: 1000, localMtime: 1000 });
+    meta.setFileInfo('old.md', {
+      fileId: asFileId('f-old'),
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
+    });
 
     const stats = emptyStats();
     stats.failedMoves.push({
@@ -235,7 +239,11 @@ describe('fallbackDeleteOldFiles', () => {
   });
 
   it('skips deletion when newPath is NOT in uploadedPaths', async () => {
-    meta.setFileInfo('old.md', { fileId: asFileId('f-old'), cloudMtime: 1000, localMtime: 1000 });
+    meta.setFileInfo('old.md', {
+      fileId: asFileId('f-old'),
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
+    });
 
     const stats = emptyStats();
     stats.failedMoves.push({
@@ -258,7 +266,11 @@ describe('fallbackDeleteOldFiles', () => {
   });
 
   it('handles deleteFile failure gracefully', async () => {
-    meta.setFileInfo('old.md', { fileId: asFileId('f-old'), cloudMtime: 1000, localMtime: 1000 });
+    meta.setFileInfo('old.md', {
+      fileId: asFileId('f-old'),
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
+    });
 
     const stats = emptyStats();
     stats.failedMoves.push({

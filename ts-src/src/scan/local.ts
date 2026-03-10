@@ -1,6 +1,7 @@
 import { readdirSync, statSync, type Dirent } from 'node:fs';
 import { join, relative, extname, dirname } from 'node:path';
 import type { LocalFile } from '../types/scan.js';
+import { asEpochSeconds } from '../types/common.js';
 import { normalizeSep, mapCloudName } from './name.js';
 
 const LOCAL_ARTIFACT_DIRS = new Set(['images', 'attachments']);
@@ -31,7 +32,7 @@ function processEntry(
       result.set(rel, {
         path: fullPath,
         isDir: true,
-        mtime: Math.floor(st.mtimeMs / 1000),
+        mtime: asEpochSeconds(Math.floor(st.mtimeMs / 1000)),
       });
     } catch {
       /* skip inaccessible dirs */
@@ -92,7 +93,7 @@ function processRecursiveEntry(
       target.set(rel, {
         path: fullPath,
         isDir: true,
-        mtime: Math.floor(st.mtimeMs / 1000),
+        mtime: asEpochSeconds(Math.floor(st.mtimeMs / 1000)),
       });
       const sub = scandirRecursive(fullPath, localDir);
       for (const [k, v] of sub) target.set(k, v);
@@ -138,7 +139,7 @@ function addLocalFile(
     target.set(rel, {
       path: fullPath,
       isDir: false,
-      mtime: Math.floor(st.mtimeMs / 1000),
+      mtime: asEpochSeconds(Math.floor(st.mtimeMs / 1000)),
       size: st.size,
     });
   } catch {
