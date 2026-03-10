@@ -1,20 +1,20 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { scanLocal, patternToRegex } from './local.js';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-describe('scanLocal', () => {
-  let tmpDir: string;
+let tmpDir: string;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'scan-test-'));
-  });
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), 'scan-test-'));
+});
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
+afterEach(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
+});
 
+describe('scanLocal: basic scanning', () => {
   it('scans files and directories', () => {
     mkdirSync(join(tmpDir, 'subdir'));
     writeFileSync(join(tmpDir, 'root.md'), 'hello');
@@ -86,6 +86,31 @@ describe('scanLocal', () => {
   it('returns empty map for non-existent directory', () => {
     const result = scanLocal(join(tmpDir, 'nonexistent'));
     expect(result.size).toBe(0);
+  });
+});
+
+describe('scanLocal: advanced filtering', () => {
+  it('skips symbolic links to files and directories', () => {
+    writeFileSync(join(tmpDir, 'real.md'), 'real content');
+    mkdirSync(join(tmpDir, 'realdir'));
+    writeFileSync(join(tmpDir, 'realdir', 'child.md'), 'child');
+
+    try {
+      symlinkSync(join(tmpDir, 'real.md'), join(tmpDir, 'link-file.md'));
+      symlinkSync(join(tmpDir, 'realdir'), join(tmpDir, 'link-dir'), 'junction');
+    } catch {
+      // symlink creation may fail without privileges on Windows — skip test
+      return;
+    }
+
+    const result = scanLocal(tmpDir);
+
+    expect(result.has('real.md')).toBe(true);
+    expect(result.has('realdir')).toBe(true);
+    expect(result.has('link-file.md')).toBe(false);
+    expect(result.has('link-dir')).toBe(false);
+    // child of symlinked dir should not appear
+    expect(result.has('link-dir/child.md')).toBe(false);
   });
 
   it('applies exclude filter', () => {

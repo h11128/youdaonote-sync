@@ -27,22 +27,26 @@ interface XmlElement {
   [key: string]: unknown;
 }
 
+function extractText(val: unknown): string {
+  if (typeof val === 'string') return val;
+  if (Array.isArray(val)) {
+    for (const item of val) {
+      if (typeof item === 'object' && item !== null && '#text' in (item as Record<string, unknown>))
+        return String((item as Record<string, unknown>)['#text']);
+    }
+    return '';
+  }
+  if (typeof val === 'object' && val !== null && '#text' in (val as Record<string, unknown>)) {
+    return String((val as Record<string, unknown>)['#text']);
+  }
+  return '';
+}
+
 function getTextByKey(children: XmlElement[], key = 'text'): string {
   for (const child of children) {
     const keys = Object.keys(child).filter((k) => k !== ':@');
     for (const k of keys) {
-      if (k.includes(key)) {
-        const val = child[k];
-        if (typeof val === 'string') return val;
-        if (
-          typeof val === 'object' &&
-          val !== null &&
-          '#text' in (val as Record<string, unknown>)
-        ) {
-          return String((val as Record<string, unknown>)['#text']);
-        }
-        return '';
-      }
+      if (k.includes(key)) return extractText(child[k]);
     }
   }
   return '';
@@ -180,7 +184,11 @@ export function xmlBytesToMarkdown(data: Buffer | Uint8Array): string {
   const xmlStr = typeof data === 'string' ? data : Buffer.from(data).toString('utf-8');
   const parsed: unknown[] = parser.parse(xmlStr) as unknown[];
 
-  const rootChildren = getChildren((parsed[0] ?? parsed) as unknown);
+  const rootEl =
+    parsed.find(
+      (el) => typeof el === 'object' && el !== null && !('?xml' in (el as Record<string, unknown>)),
+    ) ?? parsed[0];
+  const rootChildren = getChildren(rootEl);
   const listTypes = parseListTypes(rootChildren);
   const bodyChildren = getChildren(rootChildren[1] ?? {});
   const result: string[] = [];

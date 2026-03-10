@@ -184,6 +184,42 @@ describe('findCloudFileByHash', () => {
   });
 });
 
+describe('renamePath cascades to file_base and file_refs', () => {
+  it('migrates file_base entry to new path', () => {
+    meta.setFileInfo('old.md', { fileId: 'f1' as FileId, cloudMtime: 1, localMtime: 1 });
+    meta.saveBaseContent('old.md', Buffer.from('base content'), 'hash1');
+
+    meta.renamePath('old.md', 'new.md');
+
+    expect(meta.getBaseContent('old.md')).toBeNull();
+    const base = meta.getBaseContent('new.md');
+    expect(base).not.toBeNull();
+    expect(base!.content.toString()).toBe('base content');
+    expect(base!.hash).toBe('hash1');
+  });
+
+  it('migrates file_refs source_path to new path', () => {
+    meta.setFileInfo('old.md', { fileId: 'f1' as FileId, cloudMtime: 1, localMtime: 1 });
+    meta.setFileRefs('old.md', ['img/a.png', 'img/b.png']);
+
+    meta.renamePath('old.md', 'new.md');
+
+    expect(meta.getFileRefs('old.md')).toHaveLength(0);
+    expect(meta.getFileRefs('new.md').sort()).toEqual(['img/a.png', 'img/b.png']);
+  });
+
+  it('cleans up old entries on UNIQUE conflict', () => {
+    meta.setFileInfo('old.md', { fileId: 'f1' as FileId, cloudMtime: 1, localMtime: 1 });
+    meta.setFileInfo('new.md', { fileId: 'f2' as FileId, cloudMtime: 2, localMtime: 2 });
+    meta.saveBaseContent('old.md', Buffer.from('old base'), 'h1');
+
+    const ok = meta.renamePath('old.md', 'new.md');
+    expect(ok).toBe(false);
+    expect(meta.getFileInfo('old.md')).toBeNull();
+    expect(meta.getBaseContent('old.md')).toBeNull();
+  });
+});
+
 describe('file_refs', () => {
   it('roundtrip set and get', () => {
     meta.setFileRefs('doc.md', ['img/a.png', 'img/b.jpg']);

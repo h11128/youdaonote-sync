@@ -260,7 +260,7 @@ async function handleConflict(o: ConflictOpts): Promise<void> {
 async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
   const { relPath, state, action, cloud, ctx, stats, direction } = opts;
   const { localDir } = ctx;
-  const localPath = `${localDir}/${relPath}`;
+  const localPath = join(localDir, relPath);
   const cloudFile = cloud.get(relPath);
   const metaRecord = ctx.meta.getFileInfo(relPath);
 

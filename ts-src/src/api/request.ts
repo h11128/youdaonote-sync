@@ -3,10 +3,12 @@
  */
 
 export async function safeJson(resp: Response): Promise<Record<string, unknown>> {
+  const body = await resp.text();
   try {
-    return (await resp.json()) as Record<string, unknown>;
+    return JSON.parse(body) as Record<string, unknown>;
   } catch {
-    const text = await resp.text().catch(() => '(empty)');
-    throw new Error(`API returned non-JSON (HTTP ${resp.status}): ${text.slice(0, 200)}`);
+    throw new Error(
+      `API returned non-JSON (HTTP ${resp.status}): ${(body || '(empty)').slice(0, 200)}`,
+    );
   }
 }

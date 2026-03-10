@@ -130,10 +130,23 @@ export function removeFileInfo(db: Database.Database, path: string): void {
 export function renamePath(db: Database.Database, oldPath: string, newPath: string): boolean {
   try {
     const result = db.prepare('UPDATE files SET path = ? WHERE path = ?').run(newPath, oldPath);
-    return result.changes > 0;
+    if (result.changes === 0) return false;
+
+    db.prepare('UPDATE OR IGNORE file_base SET path = ? WHERE path = ?').run(newPath, oldPath);
+    db.prepare('DELETE FROM file_base WHERE path = ?').run(oldPath);
+
+    db.prepare('UPDATE OR IGNORE file_refs SET source_path = ? WHERE source_path = ?').run(
+      newPath,
+      oldPath,
+    );
+    db.prepare('DELETE FROM file_refs WHERE source_path = ?').run(oldPath);
+
+    return true;
   } catch (e: unknown) {
     if (String(e).includes('UNIQUE constraint')) {
       db.prepare('DELETE FROM files WHERE path = ?').run(oldPath);
+      db.prepare('DELETE FROM file_base WHERE path = ?').run(oldPath);
+      db.prepare('DELETE FROM file_refs WHERE source_path = ?').run(oldPath);
       return false;
     }
     throw e;

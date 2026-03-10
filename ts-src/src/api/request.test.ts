@@ -18,7 +18,11 @@ describe('safeJson', () => {
 
   it('throws when body is empty', async () => {
     const resp = new Response('', { status: 500 });
-    await expect(safeJson(resp)).rejects.toThrow(/API returned non-JSON/);
-    await expect(safeJson(resp)).rejects.toThrow(/HTTP 500/);
+    await expect(safeJson(resp)).rejects.toThrow(/API returned non-JSON.*HTTP 500/);
+  });
+
+  it('includes body text in non-JSON error message', async () => {
+    const resp = new Response('<!doctype html><html>Error</html>', { status: 502 });
+    await expect(safeJson(resp)).rejects.toThrow(/Error<\/html>/);
   });
 });

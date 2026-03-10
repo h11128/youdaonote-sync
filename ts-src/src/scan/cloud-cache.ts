@@ -7,6 +7,7 @@ import { basename } from 'node:path';
 import type { DirId, FileId, NoteDomain } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
+import { mapCloudName, sanitizeFilename } from '../scan/name.js';
 
 import { seedMetadataFromDesktop } from '../desktop-data.js';
 
@@ -178,21 +179,29 @@ function toStr(val: unknown): string {
   return '';
 }
 
+function resolveNewPath(meta: MetadataStore, parentId: string, name: string): string | null {
+  if (!parentId) return null;
+  const parentPath = meta.findByDirId(parentId as DirId);
+  if (parentPath == null) return null;
+  return parentPath ? `${parentPath}/${name}` : name;
+}
+
 function processDirEntry(opts: DirEntryParams): void {
   const { meta, cloudFiles, fid, name, parentId } = opts;
   const existingPath = meta.findByDirId(fid as DirId);
-  if (existingPath) {
-    cloudFiles.set(existingPath, {
-      id: fid as DirId,
-      parentId: parentId as DirId,
-      name,
-      isDir: true,
-      mtime: 0,
-      ctime: 0,
-      domain: 0 as NoteDomain,
-    });
-    meta.setDirInfo(existingPath, fid as DirId, parentId as DirId);
-  }
+  const relPath = existingPath ?? resolveNewPath(meta, parentId, sanitizeFilename(name));
+  if (!relPath) return;
+
+  cloudFiles.set(relPath, {
+    id: fid as DirId,
+    parentId: parentId as DirId,
+    name,
+    isDir: true,
+    mtime: 0,
+    ctime: 0,
+    domain: 0 as NoteDomain,
+  });
+  meta.setDirInfo(relPath, fid as DirId, parentId as DirId);
 }
 
 interface FileEntryParams extends DirEntryParams {
@@ -205,6 +214,9 @@ function processFileEntry(opts: FileEntryParams): void {
   const ctime = toNum(fe.createTimeForSort, 0);
   const domain = toNum(fe.domain, 0) as NoteDomain;
   const existingPath = meta.findByFileId(fid as FileId);
+  const relPath = existingPath ?? resolveNewPath(meta, parentId, mapCloudName(name));
+  if (!relPath) return;
+
   const info: CloudFile = {
     id: fid as FileId,
     parentId: parentId as DirId,
@@ -214,16 +226,14 @@ function processFileEntry(opts: FileEntryParams): void {
     ctime,
     domain,
   };
-  if (existingPath) {
-    cloudFiles.set(existingPath, info);
-    meta.cacheCloudFileInfo(existingPath, {
-      fileId: fid as FileId,
-      cloudMtime: mtime,
-      parentId: parentId as DirId,
-      domain,
-      createTime: ctime,
-    });
-  }
+  cloudFiles.set(relPath, info);
+  meta.cacheCloudFileInfo(relPath, {
+    fileId: fid as FileId,
+    cloudMtime: mtime,
+    parentId: parentId as DirId,
+    domain,
+    createTime: ctime,
+  });
 }
 
 function applyIncrementalChanges(

@@ -2,11 +2,11 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { handleMove } from './move-handler.js';
+import { handleMove, fallbackDeleteOldFiles } from './move-handler.js';
 import { emptyStats } from './executor.js';
 import { MetadataStore } from '../metadata/store.js';
 import { asDirId, asFileId } from '../types/common.js';
-import type { NoteDomain } from '../types/common.js';
+import type { FileId, NoteDomain } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 
@@ -195,5 +195,89 @@ describe('handleMove: error handling and metadata', () => {
 
     expect(stats.moved).toBe(0);
     expect(api.moveFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('fallbackDeleteOldFiles', () => {
+  let tmpDir: string;
+  let meta: MetadataStore;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'fallback-test-'));
+    meta = new MetadataStore(join(tmpDir, 'meta.db'));
+  });
+  afterEach(() => {
+    meta.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('deletes old cloud file when newPath is in uploadedPaths', async () => {
+    meta.setFileInfo('old.md', { fileId: asFileId('f-old'), cloudMtime: 1000, localMtime: 1000 });
+
+    const stats = emptyStats();
+    stats.failedMoves.push({
+      oldPath: 'old.md',
+      newPath: 'new.md',
+      fileId: asFileId('f-old'),
+      domain: 1,
+    });
+    stats.uploadedPaths.add('new.md');
+
+    const deleteFile = vi.fn().mockResolvedValue({});
+    await fallbackDeleteOldFiles(
+      stats,
+      { deleteFile: deleteFile as (id: FileId) => Promise<unknown> },
+      meta,
+    );
+
+    expect(deleteFile).toHaveBeenCalledWith('f-old');
+    expect(meta.getFileInfo('old.md')).toBeNull();
+  });
+
+  it('skips deletion when newPath is NOT in uploadedPaths', async () => {
+    meta.setFileInfo('old.md', { fileId: asFileId('f-old'), cloudMtime: 1000, localMtime: 1000 });
+
+    const stats = emptyStats();
+    stats.failedMoves.push({
+      oldPath: 'old.md',
+      newPath: 'new.md',
+      fileId: asFileId('f-old'),
+      domain: 1,
+    });
+    // uploadedPaths is empty — newPath was NOT uploaded
+
+    const deleteFile = vi.fn().mockResolvedValue({});
+    await fallbackDeleteOldFiles(
+      stats,
+      { deleteFile: deleteFile as (id: FileId) => Promise<unknown> },
+      meta,
+    );
+
+    expect(deleteFile).not.toHaveBeenCalled();
+    expect(meta.getFileInfo('old.md')).not.toBeNull();
+  });
+
+  it('handles deleteFile failure gracefully', async () => {
+    meta.setFileInfo('old.md', { fileId: asFileId('f-old'), cloudMtime: 1000, localMtime: 1000 });
+
+    const stats = emptyStats();
+    stats.failedMoves.push({
+      oldPath: 'old.md',
+      newPath: 'new.md',
+      fileId: asFileId('f-old'),
+      domain: 1,
+    });
+    stats.uploadedPaths.add('new.md');
+
+    const deleteFile = vi.fn().mockRejectedValue(new Error('cloud delete failed'));
+    await fallbackDeleteOldFiles(
+      stats,
+      { deleteFile: deleteFile as (id: FileId) => Promise<unknown> },
+      meta,
+    );
+
+    expect(deleteFile).toHaveBeenCalledWith('f-old');
+    // metadata should still exist (delete failed, best-effort)
+    expect(meta.getFileInfo('old.md')).not.toBeNull();
   });
 });

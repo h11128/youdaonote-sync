@@ -44,6 +44,17 @@ describe('htmlStringToMarkdown: inline elements', () => {
   it('converts images without alt text', () => {
     expect(htmlStringToMarkdown('<img src="pic.png" />')).toBe('![](pic.png)');
   });
+
+  it('converts images with single-quote src', () => {
+    expect(htmlStringToMarkdown("<img src='pic.png' alt='Photo' />")).toBe('![Photo](pic.png)');
+    expect(htmlStringToMarkdown("<img src='pic.png' />")).toBe('![](pic.png)');
+  });
+
+  it('converts links with single-quote href', () => {
+    expect(htmlStringToMarkdown("<a href='https://example.com'>Click</a>")).toBe(
+      '[Click](https://example.com)',
+    );
+  });
 });
 
 describe('htmlStringToMarkdown: block elements', () => {
@@ -90,6 +101,12 @@ describe('htmlStringToMarkdown: block elements', () => {
     const result = htmlStringToMarkdown('&amp; &lt; &gt; &quot; &#39; &nbsp;');
     expect(result).toContain('& < > "');
     expect(result).toContain("'");
+  });
+
+  it('decodes numeric HTML entities', () => {
+    expect(htmlStringToMarkdown('&#123;&#125;')).toBe('{}');
+    expect(htmlStringToMarkdown('&#x7B;&#x7D;')).toBe('{}');
+    expect(htmlStringToMarkdown('&#x4F60;&#x597D;')).toBe('你好');
   });
 
   it('strips unknown HTML tags', () => {
