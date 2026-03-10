@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -16,10 +16,7 @@ function stageChangedPaths(localDir: string, paths: string[]): void {
   for (let i = 0; i < paths.length; i += BATCH) {
     const batch = paths.slice(i, i + BATCH).filter((p) => existsSync(p));
     if (batch.length > 0) {
-      execSync(`git add -- ${batch.map((p) => `"${p}"`).join(' ')}`, {
-        cwd: localDir,
-        stdio: stdioPipe,
-      });
+      execFileSync('git', ['add', '--', ...batch], { cwd: localDir, stdio: stdioPipe });
     }
   }
 }
@@ -27,10 +24,7 @@ function stageChangedPaths(localDir: string, paths: string[]): void {
 function stageDedupDeletedPaths(localDir: string, paths: string[]): void {
   for (let i = 0; i < paths.length; i += BATCH) {
     const batch = paths.slice(i, i + BATCH);
-    execSync(`git add -u -- ${batch.map((p) => `"${p}"`).join(' ')}`, {
-      cwd: localDir,
-      stdio: stdioPipe,
-    });
+    execFileSync('git', ['add', '-u', '--', ...batch], { cwd: localDir, stdio: stdioPipe });
   }
 }
 
@@ -43,7 +37,7 @@ function stageFiles(localDir: string, opts: GitCommitOpts): void {
       stageDedupDeletedPaths(localDir, dedupDeletedPaths);
     }
   } else {
-    execSync('git add -A', { cwd: localDir, stdio: stdioPipe });
+    execFileSync('git', ['add', '-A'], { cwd: localDir, stdio: stdioPipe });
   }
 }
 
@@ -71,14 +65,14 @@ export function gitAutoCommit(localDir: string, opts?: GitCommitOpts): boolean {
   try {
     stageFiles(localDir, opts ?? {});
 
-    const status = execSync('git status --porcelain', {
+    const status = execFileSync('git', ['status', '--porcelain'], {
       cwd: localDir,
       encoding: 'utf-8',
     }).trim();
     if (!status) return false;
 
     const commitMsg = buildCommitMessage(opts);
-    execSync(`git commit --no-verify -m "${commitMsg}"`, {
+    execFileSync('git', ['commit', '--no-verify', '-m', commitMsg], {
       cwd: localDir,
       stdio: stdioPipe,
     });
@@ -99,7 +93,7 @@ export function getFileContentFromGit(
 ): Buffer | null {
   if (!existsSync(join(localDir, '.git'))) return null;
   try {
-    const result = execSync(`git show "${ref}:${relPath}"`, {
+    const result = execFileSync('git', ['show', `${ref}:${relPath}`], {
       cwd: localDir,
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: 10 * 1024 * 1024,
@@ -116,7 +110,7 @@ export function getFileContentFromGit(
 export function gitInit(localDir: string): boolean {
   if (existsSync(join(localDir, '.git'))) return true;
   try {
-    execSync('git init', { cwd: localDir, stdio: 'pipe' });
+    execFileSync('git', ['init'], { cwd: localDir, stdio: 'pipe' });
     return true;
   } catch {
     return false;

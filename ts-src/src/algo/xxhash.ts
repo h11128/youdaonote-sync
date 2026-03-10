@@ -1,4 +1,7 @@
-import type { XXHashAPI, XXHash } from 'xxhash-wasm';
+import type { XXHashAPI } from 'xxhash-wasm';
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { XXH3_128 } = require('xxh3-ts') as { XXH3_128: (data: Buffer, seed?: bigint) => bigint };
 
 let api: XXHashAPI | null = null;
 let initPromise: Promise<void> | null = null;
@@ -22,12 +25,14 @@ function ensureInit(): XXHashAPI {
   return api;
 }
 
-/** xxHash3 128-bit hex string (via h64 concat for 128-bit). */
-export function xxh128(data: string): string {
-  const h = ensureInit();
-  const hi = h.h64(data, 0n).toString(16).padStart(16, '0');
-  const lo = h.h64(data, 0x9e3779b97f4a7c15n).toString(16).padStart(16, '0');
-  return hi + lo;
+/**
+ * XXH3 128-bit hash, compatible with Python's xxhash.xxh3_128().
+ * Accepts string or Buffer. Returns 32-char hex string.
+ */
+export function xxh128(data: string | Buffer): string {
+  const buf = typeof data === 'string' ? Buffer.from(data, 'utf-8') : data;
+  const hash = XXH3_128(buf);
+  return hash.toString(16).padStart(32, '0');
 }
 
 /** xxHash64 of a string, returned as hex string. */
@@ -43,11 +48,6 @@ export function xxh64Raw(data: Uint8Array, seed = 0n): bigint {
 /** xxHash32 of a string, returned as hex string. */
 export function xxh32ToString(data: string, seed = 0): string {
   return ensureInit().h32(data, seed).toString(16).padStart(8, '0');
-}
-
-/** Streaming xxHash64 hasher. */
-export function createXxh64(seed = 0n): XXHash<bigint> {
-  return ensureInit().create64(seed);
 }
 
 /** Check if xxhash has been initialized. */

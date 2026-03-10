@@ -83,6 +83,7 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
   stats.uploaded++;
   stats.conflicts++;
   stats.changedPaths.push(localPath);
+  stats.uploadedPaths.add(relPath);
 }
 
 async function conflictPullFallback(opts: ConflictOpts): Promise<void> {

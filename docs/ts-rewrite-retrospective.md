@@ -730,3 +730,80 @@ Python 在文件名+祖先深度匹配后，还检查内容 hash：hash 不同�
 ### 12.4 修复验证
 
 `tsc --noEmit` 通过，271 测试全绿，0 lint 错误。
+
+---
+
+## §13 第七轮审查：move 检测实现偏离设计文档（2026-03-04）
+
+### 13.1 审查背景
+
+用户执行 dry-run 同步时发现：本地已移动/重命名的文件被判定为 `cloudNew` 并重新下载，产生重复文件。根因追踪发现 TS move 检测的 hash 数据源被切断，导致基于 hash 的移动配对完全失效。
+
+### 13.2 核心问题：实现偏离了设计文档
+
+项目有两份设计文档明确定义了 move 检测的目标架构：
+
+- **sync-engine-overhaul.md §五 第 159 行**："moves (content hash matching) ~200行 | 纯 hash 匹配，不依赖文件名"
+- **typescript-rewrite-design.md §3.5**：`detectMoves` 签名接收 `hash: ContentHash | null`，注释写明"纯 hash 匹配，不依赖文件名"
+
+但 `moves.ts` 的注释直接写着 "Three-phase move detection **(matches Python moves.py)**"——实现选择了移植 Python 的复杂三阶段方法，而非设计文档定义的纯 hash 方案。Python 的 move 检测正是设计文档指出需要被替换的（overhaul.md 第 16 行："移动检测依赖文件名相似度，改名太大就失效"）。
+
+三阶段本身不是问题（file_id、文件名归一化、跨目录 hash+文件名各有价值），但关键的 hash 数据源被切断了。
+
+### 13.3 为什么 metadata hash 没有被使用
+
+Bug 在 `engine.ts` 第 178-180 行：
+
+```typescript
+const classifiedWithHash = new Map();
+for (const [path, state] of classified) {
+  classifiedWithHash.set(path, { state, hash: localHashes.get(path) ?? null });
+}
+```
+
+`localHashes` 只包含本地磁盘上存在的文件的 hash。已删除/已移动的文件（`localDeleted`、`cloudNew` 等）在 `localHashes` 中不存在，hash 永远是 null。
+
+而 `metaSnap`（同一函数第 176 行已经获取）里存着每个路径上次同步时的 `contentHash`——这正是已删除文件的唯一 hash 来源——但从未被传递给 `classifiedWithHash`。
+
+### 13.4 架构教训：metadata hash 不是 "fallback"
+
+之前的讨论中曾将 metadata hash 称为 "fallback"。这个措辞本身就揭示了认知偏差：
+
+- 对于本地存在的文件：`localHash`（磁盘实时计算）是最准确的，metadata hash 确实是备选
+- 对于本地不存在的文件：metadata hash 是**唯一的 hash 来源**，不是"备选"
+
+正确的模型是：
+
+| 文件状态 | hash 来源 | 原因 |
+|---------|----------|------|
+| 本地存在 | localHash（实时） | 文件在磁盘上，可以直接计算 |
+| 本地不存在 | meta.contentHash（历史快照） | 文件已删除/移动，只有上次同步时的记录 |
+| 两者都无 | null | 无法做 hash 匹配 |
+
+设计文档 `typescript-rewrite-design.md` 第 39 行写明 "content hash 作为核心决策驱动"。hash 的来源（实时 vs 历史）是实现细节，核心原则是：**每个参与 move 检测的路径都应该有 hash**。
+
+### 13.5 第二个缺失：cross-side 匹配
+
+当文件在两端同时被移动/重命名时，原路径消失（classify 为 `gone`），两边各出现新路径（`cloudNew` 和 `localNew`）。现有的 Phase 3 只匹配同侧（cloudDeleted↔cloudNew、localDeleted↔localNew），不匹配跨侧（cloudNew↔localNew）。
+
+### 13.6 修复
+
+| # | 修复 | 文件 |
+|---|------|------|
+| 1 | `classifiedWithHash` 构建时，`localHash` 缺失则使用 `metaSnap.contentHash` | engine.ts |
+| 2 | Phase 4：cloudNew↔localNew cross-side hash/filename 匹配 | moves.ts |
+| 3 | 4 个新测试覆盖 cross-side 匹配场景 | moves.test.ts |
+
+### 13.7 为什么前六轮审查没有发现
+
+| 盲区 | 原因 |
+|------|------|
+| hash 数据源 | 前几轮审查验证了"detectMoves 是否被调用"和"Phase 1/2/3 是否实现"，没有追踪"hash 从哪里来、对于 deleted 路径是否有值" |
+| cross-side 匹配 | Phase 3 的两次 `crossDirMatch` 调用看起来覆盖了所有组合，实际只覆盖了同侧 |
+| 设计文档对比 | 前几轮审查都是 Python↔TS 对比，没有回头对比 TS 设计文档↔TS 实现——设计文档写的是"纯 hash"，实现注释写的是"matches Python moves.py"，这个偏离没有被发现 |
+
+### 13.8 教训
+
+1. **实现应该对照设计文档，不只是对照旧代码。** 当设计文档说"纯 hash 匹配"而实现注释说"matches Python"时，说明开发者选择了移植旧实现而非执行新设计。
+2. **数据流的"最后一英里"容易断裂。** `metaSnap` 被正确获取并传给了 `classifyAll`，但没有传给 `classifiedWithHash`——从获取到使用只差一行代码，但这一行的缺失让整个 hash 匹配系统失效。
+3. **"fallback" 这个词暗示了可选性。** 对于已删除文件，metadata hash 不是可选的 fallback，是唯一来源。命名和措辞会影响实现者的优先级判断。

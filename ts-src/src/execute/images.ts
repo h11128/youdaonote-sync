@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, relative } from 'node:path';
 
 const IMAGE_URL_RE = /!\[.*?\]\((.*?note\.youdao\.com.*?)\)/g;
 const ATTACH_URL_RE = /\[(.*?)\]\(((https?):\/\/note\.youdao\.com.*?)\)/g;
@@ -42,13 +42,16 @@ export async function migrateImages(
   let content = readFileSync(filePath, 'utf-8');
   let count = 0;
 
+  const fileDir = dirname(filePath);
+
   const imageMatches = [...content.matchAll(IMAGE_URL_RE)];
   for (const match of imageMatches) {
     const url = match[1] ?? match[2];
     if (!url) continue;
     const localPath = await downloadAsset(url, imagesDir, headers);
     if (localPath) {
-      content = content.replace(url, localPath);
+      const relPath = relative(fileDir, localPath).replace(/\\/g, '/');
+      content = content.replace(url, relPath);
       count++;
     }
   }
@@ -59,7 +62,8 @@ export async function migrateImages(
     if (!url) continue;
     const localPath = await downloadAsset(url, attachDir, headers);
     if (localPath) {
-      content = content.replace(url, localPath);
+      const relPath = relative(fileDir, localPath).replace(/\\/g, '/');
+      content = content.replace(url, relPath);
       count++;
     }
   }

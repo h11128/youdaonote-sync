@@ -20,6 +20,7 @@ function processEntry(
   result: Map<string, LocalFile>,
 ): void {
   if (entry.name.startsWith('.')) return;
+  if (entry.isSymbolicLink()) return;
 
   if (entry.isDirectory()) {
     if (LOCAL_ARTIFACT_DIRS.has(entry.name)) return;
@@ -81,6 +82,7 @@ function processRecursiveEntry(
   target: Map<string, LocalFile>,
 ): void {
   if (entry.name.startsWith('.')) return;
+  if (entry.isSymbolicLink()) return;
   try {
     if (entry.isDirectory()) {
       if (LOCAL_ARTIFACT_DIRS.has(entry.name)) return;

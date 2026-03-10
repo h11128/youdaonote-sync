@@ -161,6 +161,50 @@ describe('Engine integration: classify and refine', () => {
     expect(result.classified).toBeInstanceOf(Map);
     engine.close();
   });
+
+  it('detect moves via metadata hash: local rename recognized as moved', async () => {
+    const meta = new MetadataStore(metaPath);
+    const content = 'unique diary content for move test';
+
+    // File was synced at old path, now renamed locally to new path
+    writeFileSync(join(localDir, 'renamed-diary.md'), content);
+    const hash = computeContentHashFromFile(join(localDir, 'renamed-diary.md'));
+
+    // Metadata records the old path with its contentHash (file no longer exists locally at old path)
+    meta.setFileInfo('old-diary.md', {
+      fileId: 'f-diary' as FileId,
+      cloudMtime: 1000,
+      localMtime: 1000,
+      contentHash: hash,
+      lastSyncAt: 1000,
+    });
+    meta.save();
+
+    // Cloud still has file at old path
+    const cloudEntries = [makeCloudEntry('f-diary', 'old-diary.md', 1000)];
+    const mockApi = buildMockApi(cloudEntries, new Map());
+
+    const engine = new SyncEngine({
+      cookiesPath: '',
+      metadataPath: metaPath,
+      localDir,
+      dryRun: true,
+      api: mockApi,
+      meta,
+    });
+
+    const result = await engine.sync();
+
+    // old path should be gone (matched as source of the move)
+    const oldState = result.classified.get('old-diary.md');
+    expect(oldState?.kind).toBe('gone');
+
+    // new path should be recognized as moved (not uploaded as localNew)
+    const newState = result.classified.get('renamed-diary.md');
+    expect(newState?.kind).toBe('moved');
+
+    engine.close();
+  });
 });
 
 describe('Engine integration: refine and lock', () => {

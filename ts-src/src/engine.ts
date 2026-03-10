@@ -3,7 +3,7 @@ import type { CloudFile, LocalFile } from './types/scan.js';
 import type { FileState } from './types/state.js';
 import { YoudaoNoteApi } from './api/client.js';
 import { MetadataStore } from './metadata/store.js';
-import { heal } from './metadata/health.js';
+import { gc, heal } from './metadata/health.js';
 import { scanCloud } from './scan/cloud.js';
 import { scanLocal } from './scan/local.js';
 import { classifyAll } from './classify/classify.js';
@@ -54,7 +54,7 @@ export interface SyncResult {
 
 /**
  * The sync engine: Init → Heal → Scan → Calibrate → Moves → Orphan Discard
- *   → Warmup → Classify → Refine → Filter → Execute → Cleanup → Dedup → Git.
+ *   → Warmup → Classify → Refine → Filter → Execute → Cleanup → GC → Dedup → Git.
  */
 export class SyncEngine {
   private api: YoudaoNoteApi;
@@ -177,7 +177,8 @@ export class SyncEngine {
     const classified = classifyAll(cloudSnap, localSnap, metaSnap, localHashes);
     const classifiedWithHash = new Map<string, { state: FileState; hash: ContentHash | null }>();
     for (const [path, state] of classified) {
-      classifiedWithHash.set(path, { state, hash: localHashes.get(path) ?? null });
+      const hash = localHashes.get(path) ?? metaSnap.get(path)?.contentHash ?? null;
+      classifiedWithHash.set(path, { state, hash });
     }
     for (const [path, movedState] of detectMoves(classifiedWithHash, this.meta, cloudSnap)) {
       classified.set(path, movedState);
@@ -240,6 +241,7 @@ export class SyncEngine {
   }): Promise<void> {
     const { cloudSnap, localSnap, localHashes, stats, didFullScan } = opts;
     if (didFullScan) cleanupStalePaths(this.meta, cloudSnap);
+    gc(this.meta, this.config.localDir);
 
     const { deletedPaths: dedupDeletedPaths, deletedCount: dedupDeletedCount } =
       await this.runDedupIfEnabled(localSnap, localHashes);

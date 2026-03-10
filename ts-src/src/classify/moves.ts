@@ -44,13 +44,17 @@ interface MoveDetectionContext {
 }
 
 /**
- * Three-phase move detection (matches Python moves.py):
+ * Four-phase move detection:
  *
  * Phase 1: file_id matching — metadata file_id → cloud ID lookup
  * Phase 2: Filename normalization — same dir, sanitized names match
  * Phase 3: Cross-directory — content hash + filename + common ancestor depth
+ *          (same-side: cloudDeleted↔cloudNew, localDeleted↔localNew)
+ * Phase 4: Cross-side — cloudNew↔localNew hash/filename matching
+ *          (handles simultaneous rename on both sides)
  *
- * Pure hash matching (the old approach) is subsumed by phase 3.
+ * Hash source: localHash (from disk) with metadata contentHash as fallback
+ * for paths where the local file no longer exists.
  */
 export function detectMoves(
   classified: ReadonlyMap<string, ClassifiedEntry>,
@@ -100,6 +104,11 @@ export function detectMoves(
 
   // Phase 3: Cross-directory matching (hash + filename + ancestor depth)
   detectCrossDirectory(ctx);
+
+  // Phase 4: Cross-side matching (cloudNew ↔ localNew)
+  // Handles the case where a file was moved/renamed on both sides simultaneously:
+  // the original path disappears, and each side has a "new" path.
+  detectCrossSide(ctx);
 
   return result;
 }
@@ -212,6 +221,18 @@ function detectCrossDirectory(ctx: MoveDetectionContext): void {
   });
   crossDirMatch({
     deletedPaths: localDeletedPaths,
+    newPaths: localNewPaths,
+    classified,
+    meta,
+    result,
+  });
+}
+
+function detectCrossSide(ctx: MoveDetectionContext): void {
+  const { cloudNewPaths, localNewPaths, classified, meta, result } = ctx;
+  if (cloudNewPaths.size === 0 || localNewPaths.size === 0) return;
+  crossDirMatch({
+    deletedPaths: cloudNewPaths,
     newPaths: localNewPaths,
     classified,
     meta,

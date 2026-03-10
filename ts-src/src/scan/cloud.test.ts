@@ -91,7 +91,7 @@ describe('scanCloud', () => {
       getDirInfoById: () => Promise.reject(new Error('network error')),
     };
 
-    const result = await scanCloud(api, asDirId('root'));
+    const result = await scanCloud(api, asDirId('root'), { retryOpts: { maxRetries: 0 } });
 
     expect(result.size).toBe(0);
   });

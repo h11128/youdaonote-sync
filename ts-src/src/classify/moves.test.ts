@@ -173,6 +173,58 @@ describe('detectMoves phase 3B cross-directory', () => {
   });
 });
 
+describe('detectMoves phase 4 cross-side matching', () => {
+  it('matches cloudNew + localNew with same hash (simultaneous rename)', () => {
+    const classified = new Map([
+      ['cloud/renamed.md', entry('cloudNew', 'hash-abc')],
+      ['local/renamed.md', entry('localNew', 'hash-abc')],
+    ]);
+
+    const result = detectMoves(classified);
+
+    expect(result.get('local/renamed.md')).toEqual({
+      kind: 'moved',
+      oldPath: 'cloud/renamed.md',
+    });
+    expect(result.get('cloud/renamed.md')).toEqual({ kind: 'gone' });
+  });
+
+  it('does not match cloudNew + localNew when hashes differ', () => {
+    const classified = new Map([
+      ['cloud/a.md', entry('cloudNew', 'hash-1')],
+      ['local/b.md', entry('localNew', 'hash-2')],
+    ]);
+
+    const result = detectMoves(classified);
+
+    expect(result.size).toBe(0);
+  });
+
+  it('does not match cloudNew + localNew when both hashes are null', () => {
+    const classified = new Map([
+      ['cloud/a.md', entry('cloudNew', null)],
+      ['local/b.md', entry('localNew', null)],
+    ]);
+
+    const result = detectMoves(classified);
+
+    expect(result.size).toBe(0);
+  });
+
+  it('cross-side: pairs 1:1 when multiple candidates share same hash', () => {
+    const classified = new Map([
+      ['cloud/file1.md', entry('cloudNew', 'hash-dup')],
+      ['cloud/file2.md', entry('cloudNew', 'hash-dup')],
+      ['local/file1.md', entry('localNew', 'hash-dup')],
+    ]);
+
+    const result = detectMoves(classified);
+
+    const moved = [...result.entries()].filter(([, s]) => s.kind === 'moved');
+    expect(moved.length).toBe(1);
+  });
+});
+
 describe('commonAncestorDepth', () => {
   it('returns 0 for unrelated paths', () => {
     expect(commonAncestorDepth('a/file.md', 'b/file.md')).toBe(0);

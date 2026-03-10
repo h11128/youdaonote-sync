@@ -11,6 +11,5 @@ export {
   xxh64ToString,
   xxh64Raw,
   xxh32ToString,
-  createXxh64,
   isXxhashReady,
 } from './xxhash.js';

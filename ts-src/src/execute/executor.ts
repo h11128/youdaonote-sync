@@ -69,6 +69,32 @@ export interface ExecuteContext {
  * 4. Conflicts (try diff3 merge for .md/.txt, fallback to backup + download)
  * 5. Moves
  */
+function partitionEntries(
+  classified: ReadonlyMap<string, FileState>,
+  cloud: ReadonlyMap<string, CloudFile>,
+  stats: SyncStats,
+): {
+  dirEntries: [string, FileState, SyncAction][];
+  fileEntries: [string, FileState, SyncAction][];
+} {
+  const dirEntries: [string, FileState, SyncAction][] = [];
+  const fileEntries: [string, FileState, SyncAction][] = [];
+  for (const [relPath, state] of classified) {
+    const action = stateToAction(state);
+    if (action === 'skip') {
+      stats.skipped++;
+      continue;
+    }
+    const isDir = cloud.get(relPath)?.isDir ?? false;
+    (isDir ? dirEntries : fileEntries).push([relPath, state, action]);
+  }
+  return { dirEntries, fileEntries };
+}
+
+function formatError(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 export async function executeAll(
   classified: ReadonlyMap<string, FileState>,
   cloud: ReadonlyMap<string, CloudFile>,
@@ -76,46 +102,23 @@ export async function executeAll(
   direction: SyncDirection = 'both',
 ): Promise<SyncStats> {
   const stats = emptyStats();
+  const { dirEntries, fileEntries } = partitionEntries(classified, cloud, stats);
 
-  // Separate dirs and files (matches Python _execute_dir / _execute_file)
-  const dirEntries: [string, FileState, SyncAction][] = [];
-  const fileEntries: [string, FileState, SyncAction][] = [];
-
-  for (const [relPath, state] of classified) {
-    const action = stateToAction(state);
-    if (action === 'skip') {
-      stats.skipped++;
-      continue;
-    }
-
-    const cf = cloud.get(relPath);
-    const isDir = cf?.isDir ?? false;
-    (isDir ? dirEntries : fileEntries).push([relPath, state, action]);
-  }
-
-  // Process dirs first (create parent dirs before files)
   for (const [relPath, _state, action] of dirEntries) {
     try {
       await executeDir(relPath, action, ctx, stats);
-    } catch {
+    } catch (e: unknown) {
       stats.errors++;
+      console.error(`Error processing dir ${relPath}: ${formatError(e)}`);
     }
   }
 
   for (const [relPath, state, action] of fileEntries) {
     try {
-      await executeSingle({
-        relPath,
-        state,
-        action,
-        cloud,
-        ctx,
-        stats,
-        direction,
-      });
+      await executeSingle({ relPath, state, action, cloud, ctx, stats, direction });
     } catch (e: unknown) {
       stats.errors++;
-      console.error(`Error processing ${relPath}: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(`Error processing ${relPath}: ${formatError(e)}`);
     }
   }
 
@@ -247,6 +250,7 @@ async function handleConflict(o: ConflictOpts): Promise<void> {
     if (merged) {
       stats.merged++;
       stats.changedPaths.push(localPath);
+      stats.uploadedPaths.add(relPath);
       return;
     }
   }
@@ -261,8 +265,14 @@ async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
   const metaRecord = ctx.meta.getFileInfo(relPath);
 
   const handlers: Record<SyncAction, () => Promise<void>> = {
-    download: () =>
-      cloudFile ? handleDownload({ relPath, localPath, cloudFile, ctx, stats }) : Promise.resolve(),
+    download: () => {
+      if (!cloudFile) {
+        console.error(`Skip download ${relPath}: missing cloud file info`);
+        stats.errors++;
+        return Promise.resolve();
+      }
+      return handleDownload({ relPath, localPath, cloudFile, ctx, stats });
+    },
     upload: () =>
       handleUpload({ relPath, localPath, metaRecord: metaRecord ?? undefined, ctx, stats }),
     conflict: () => handleConflict({ relPath, localPath, cloudFile, ctx, stats, direction }),
