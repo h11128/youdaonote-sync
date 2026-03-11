@@ -213,6 +213,40 @@ function registerDiagnoseCommands(program: Command): void {
         cmdLocalStats(diagnoseCfg().localDir);
       });
     });
+
+  registerDiagnoseCacheCommands(diagnose);
+}
+
+function registerDiagnoseCacheCommands(diagnose: Command): void {
+  diagnose
+    .command('cache')
+    .description('Report metadata cache stats: file counts, file_id, cloud_mtime, local existence')
+    .action(() => {
+      void import('./tools/diagnose.js').then(({ cmdCache }) => {
+        cmdCache(diagnoseCfg());
+      });
+    });
+
+  diagnose
+    .command('rebuild')
+    .description('Rebuild metadata from cloud + local scan')
+    .option('--dry-run', 'Preview changes without writing')
+    .action((opts: { dryRun?: boolean }) => {
+      void import('./tools/diagnose.js').then(({ cmdRebuild }) => {
+        void cmdRebuild(diagnoseCfg(), opts.dryRun ?? false);
+      });
+    });
+
+  diagnose
+    .command('duplicates')
+    .description('Scan for duplicate files by content hash')
+    .option('--dir <path>', 'Directory to scan (default: config local_dir)')
+    .action((opts: { dir?: string }) => {
+      void import('./tools/diagnose.js').then(({ cmdDuplicates }) => {
+        const cfg = diagnoseCfg();
+        cmdDuplicates(opts.dir ?? cfg.localDir);
+      });
+    });
 }
 
 function diagnoseCfg(): { cookiesPath: string; metadataPath: string; localDir: string } {

@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { scanLocal, patternToRegex } from './local.js';
+import { scanLocal, scanLocalParallel, patternToRegex } from './local.js';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -87,6 +87,35 @@ describe('scanLocal: basic scanning', () => {
   it('returns empty map for non-existent directory', () => {
     const result = scanLocal(join(tmpDir, 'nonexistent'));
     expect(result.size).toBe(0);
+  });
+});
+
+describe('scanLocalParallel', () => {
+  it('produces same results as scanLocal', async () => {
+    mkdirSync(join(tmpDir, 'subdir'));
+    writeFileSync(join(tmpDir, 'root.md'), 'hello');
+    writeFileSync(join(tmpDir, 'subdir', 'child.md'), 'world');
+
+    const syncResult = scanLocal(tmpDir);
+    const asyncResult = await scanLocalParallel(tmpDir);
+
+    expect(asyncResult.size).toBe(syncResult.size);
+    for (const [k, v] of syncResult) {
+      expect(asyncResult.has(k)).toBe(true);
+      expect(asyncResult.get(k)!.path).toBe(v.path);
+      expect(asyncResult.get(k)!.isDir).toBe(v.isDir);
+      expect(asyncResult.get(k)!.mtime).toBe(v.mtime);
+    }
+  });
+
+  it('respects include/exclude filters', async () => {
+    writeFileSync(join(tmpDir, 'keep.md'), '');
+    writeFileSync(join(tmpDir, 'secret.md'), '');
+
+    const result = await scanLocalParallel(tmpDir, '', { exclude: ['secret*'] });
+
+    expect(result.has(asRelPath('keep.md'))).toBe(true);
+    expect(result.has(asRelPath('secret.md'))).toBe(false);
   });
 });
 

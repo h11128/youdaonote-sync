@@ -6,6 +6,9 @@
  *   decision    - Re-run classify for a specific file, show details
  *   summary     - Dry-run summary showing all non-SKIP items
  *   reset-cache - Reset scan cache version to force full cloud scan
+ *   cache       - Report metadata cache stats
+ *   rebuild     - Rebuild metadata from cloud + local scan
+ *   duplicates  - Scan for duplicate files by content hash
  */
 
 import { basename, extname, dirname, join } from 'node:path';
@@ -15,6 +18,8 @@ import type { RelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { MetadataStore } from '../metadata/store.js';
 import { YoudaoNoteApi } from '../api/client.js';
+
+export { cmdCache, cmdRebuild, cmdDuplicates } from './diagnose-commands.js';
 
 export interface DiagnoseConfig {
   cookiesPath: string;
