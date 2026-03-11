@@ -6,6 +6,7 @@ export interface DirFileEntry {
   id: string;
   name: string;
   dir?: boolean;
+  size?: number;
   modifyTimeForSort?: number;
   createTimeForSort?: number;
   domain?: number;

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { SyncEngine } from './engine.js';
 import { SyncWatcher } from './watcher.js';
+import { registerBrowseCommands } from './cli-browse.js';
 
 interface Config {
   local_dir: string;
@@ -20,6 +21,9 @@ function loadConfig(configDir: string): Config {
   }
   return JSON.parse(readFileSync(configPath, 'utf-8')) as Config;
 }
+
+const COOKIES_FILE = 'cookies.json';
+const METADATA_FILE = 'sync_metadata.db';
 
 function getConfigDir(): string {
   return join(process.cwd(), 'config');
@@ -49,8 +53,8 @@ async function runSyncAction(opts: SyncActionOpts): Promise<void> {
     process.exit(1);
   }
   const engine = new SyncEngine({
-    cookiesPath: join(configDir, 'cookies.json'),
-    metadataPath: join(configDir, 'sync_metadata.db'),
+    cookiesPath: join(configDir, COOKIES_FILE),
+    metadataPath: join(configDir, METADATA_FILE),
     localDir,
     syncInclude: config.sync_include,
     syncExclude: config.sync_exclude,
@@ -79,8 +83,8 @@ function runWatchAction(opts: { interval: string; git?: boolean }): void {
   }
   const watcher = new SyncWatcher(
     {
-      cookiesPath: join(configDir, 'cookies.json'),
-      metadataPath: join(configDir, 'sync_metadata.db'),
+      cookiesPath: join(configDir, COOKIES_FILE),
+      metadataPath: join(configDir, METADATA_FILE),
       localDir: config.local_dir,
       syncInclude: config.sync_include,
       syncExclude: config.sync_exclude,
@@ -101,6 +105,14 @@ export function createCli(): Command {
     .description('Youdao Note sync tool (TypeScript)')
     .version('0.1.0');
 
+  registerSyncCommands(program);
+  registerBrowseCommands(program, getConfigDir, loadConfig);
+  registerDiagnoseCommands(program);
+
+  return program;
+}
+
+function registerSyncCommands(program: Command): void {
   program
     .command('sync')
     .description('Run sync once')
@@ -125,14 +137,78 @@ export function createCli(): Command {
 
   program
     .command('login')
-    .description('Login via browser (delegates to Python CLI for now)')
+    .description('Login via browser (Playwright)')
     .action(() => {
-      console.log(
-        'Browser login is not yet implemented in TypeScript.\n' +
-          'Use: python -m src login\n' +
-          'The cookies.json will be shared between Python and TS.',
+      void import('./api/auth.js').then(({ browserLogin }) =>
+        browserLogin().then((code) => process.exit(code)),
       );
     });
 
-  return program;
+  program
+    .command('gui')
+    .description('Open web-based GUI for browsing and downloading notes')
+    .option('--port <number>', 'HTTP server port', '3456')
+    .action((opts: { port: string }) => {
+      const cfgDir = getConfigDir();
+      const cfg = loadConfig(cfgDir);
+      void import('./gui/server.js').then(({ startGuiServer }) => {
+        startGuiServer({
+          cookiesPath: join(cfgDir, COOKIES_FILE),
+          defaultDownloadDir: cfg.local_dir || join(process.cwd(), 'youdaonote-sync'),
+          port: parseInt(opts.port, 10),
+        });
+      });
+    });
+}
+
+function registerDiagnoseCommands(program: Command): void {
+  const diagnose = program.command('diagnose').description('Sync diagnostic tools');
+
+  diagnose
+    .command('path')
+    .description('Search for paths in cloud scan results')
+    .requiredOption('--target <paths...>', 'File paths to look up')
+    .action((opts: { target: string[] }) => {
+      void import('./tools/diagnose.js').then(({ cmdPath }) => cmdPath(diagnoseCfg(), opts.target));
+    });
+
+  diagnose
+    .command('decision')
+    .description('Re-run classify for specific files and show details')
+    .requiredOption('--target <paths...>', 'File paths to analyze')
+    .action((opts: { target: string[] }) => {
+      void import('./tools/diagnose.js').then(({ cmdDecision }) =>
+        cmdDecision(diagnoseCfg(), opts.target),
+      );
+    });
+
+  diagnose
+    .command('summary')
+    .description('Dry-run summary: classify all files and show stats')
+    .action(() => {
+      void import('./tools/diagnose.js').then(({ cmdSummary }) => cmdSummary(diagnoseCfg()));
+    });
+
+  diagnose
+    .command('reset-cache')
+    .description('Reset scan cache version to force full cloud scan')
+    .action(() => {
+      void import('./tools/diagnose.js').then(({ cmdResetCache }) => {
+        cmdResetCache(diagnoseCfg());
+      });
+    });
+}
+
+function diagnoseCfg(): { cookiesPath: string; metadataPath: string; localDir: string } {
+  const configDir = getConfigDir();
+  const config = loadConfig(configDir);
+  if (!config.local_dir) {
+    console.error('Error: local_dir not set in config.json');
+    process.exit(1);
+  }
+  return {
+    cookiesPath: join(configDir, COOKIES_FILE),
+    metadataPath: join(configDir, METADATA_FILE),
+    localDir: config.local_dir,
+  };
 }

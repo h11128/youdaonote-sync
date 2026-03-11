@@ -4,18 +4,15 @@
 *.iml
 .history
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.Python
-venv/
-.venv/
-.python-version
-*.egg-info/
-.eggs/
+# Node.js
+node_modules/
 
-# 项目特定
+# Build artifacts
+build/
+dist/
+ts-src/dist/
+
+# Project config (auto-generated, user-specific)
 config/cookies.json
 config/browser_data/
 config/sync_metadata.json
@@ -27,29 +24,19 @@ backups/
 *.backup.*
 test-pull/
 
-# 导出目录（用户生成的笔记文件，非源码）
+# Export directory (user-generated note files)
 youdaonote-export/
 
-# src/ 是 Python 源码包，不能忽略
-# 但包目录下的用户运行时产物需要忽略
-src/**/*.pyc
-
-# Node.js
-node_modules/
-
-# 构建产物
-build/
-dist/
-*.spec
-*.egg
-
-# 本地调试脚本（临时用，不入库）
+# Local debug scripts
 .local-scripts/
 
-# 性能分析
+# Performance profiling
 profiles/
 
-# 测试
+# Python legacy (can be removed once .venv is deleted)
+__pycache__/
+*.py[cod]
+.venv/
 .pytest_cache/
 .coverage
 htmlcov/
