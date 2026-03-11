@@ -13,7 +13,7 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from '../metadata/store.js';
-import { asDirId, asEpochSeconds, asFileId } from '../types/common.js';
+import { asDirId, asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
 import type { NoteDomain } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { YoudaoNoteApi } from '../api/client.js';
@@ -88,7 +88,7 @@ describe('conflictFallback: push direction', () => {
 
     const stats = emptyStats();
     await conflictFallback({
-      relPath: 'doc.md',
+      relPath: asRelPath('doc.md'),
       localPath,
       cloudFile: makeCloudFile('cf1', 'doc.md'),
       ctx: { api, meta, rootDirId: asDirId('root'), localDir },
@@ -130,7 +130,7 @@ describe('conflictFallback: pull direction', () => {
 
     const stats = emptyStats();
     await conflictFallback({
-      relPath: 'doc.md',
+      relPath: asRelPath('doc.md'),
       localPath,
       cloudFile: makeCloudFile('cf2', 'doc.md'),
       ctx: { api, meta, rootDirId: asDirId('root'), localDir },
@@ -153,7 +153,7 @@ describe('conflictFallback: pull direction', () => {
 
     const stats = emptyStats();
     await conflictFallback({
-      relPath: 'doc.md',
+      relPath: asRelPath('doc.md'),
       localPath,
       cloudFile: makeCloudFile('cf3', 'doc.md'),
       ctx: { api, meta, rootDirId: asDirId('root'), localDir },
@@ -175,7 +175,7 @@ describe('conflictFallback: pull direction', () => {
 
     const stats = emptyStats();
     await conflictFallback({
-      relPath: 'doc.md',
+      relPath: asRelPath('doc.md'),
       localPath,
       cloudFile: makeCloudFile('cf4', 'doc.md'),
       ctx: { api, meta, rootDirId: asDirId('root'), localDir },

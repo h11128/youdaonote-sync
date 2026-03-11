@@ -3,6 +3,7 @@ import { scanLocal, patternToRegex } from './local.js';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { asRelPath } from '../types/common.js';
 
 let tmpDir: string;
 
@@ -22,11 +23,11 @@ describe('scanLocal: basic scanning', () => {
 
     const result = scanLocal(tmpDir);
 
-    expect(result.has('root.md')).toBe(true);
-    expect(result.has('subdir')).toBe(true);
-    expect(result.has('subdir/child.md')).toBe(true);
-    expect(result.get('root.md')!.isDir).toBe(false);
-    expect(result.get('subdir')!.isDir).toBe(true);
+    expect(result.has(asRelPath('root.md'))).toBe(true);
+    expect(result.has(asRelPath('subdir'))).toBe(true);
+    expect(result.has(asRelPath('subdir/child.md'))).toBe(true);
+    expect(result.get(asRelPath('root.md'))!.isDir).toBe(false);
+    expect(result.get(asRelPath('subdir'))!.isDir).toBe(true);
   });
 
   it('maps .note extension to .md', () => {
@@ -34,8 +35,8 @@ describe('scanLocal: basic scanning', () => {
 
     const result = scanLocal(tmpDir);
 
-    expect(result.has('document.md')).toBe(true);
-    expect(result.has('document.note')).toBe(false);
+    expect(result.has(asRelPath('document.md'))).toBe(true);
+    expect(result.has(asRelPath('document.note'))).toBe(false);
   });
 
   it('skips dot-files and dot-dirs', () => {
@@ -45,9 +46,9 @@ describe('scanLocal: basic scanning', () => {
 
     const result = scanLocal(tmpDir);
 
-    expect(result.has('.hidden')).toBe(false);
-    expect(result.has('.gitignore')).toBe(false);
-    expect(result.has('visible.md')).toBe(true);
+    expect(result.has(asRelPath('.hidden'))).toBe(false);
+    expect(result.has(asRelPath('.gitignore'))).toBe(false);
+    expect(result.has(asRelPath('visible.md'))).toBe(true);
   });
 
   it('skips images/ and attachments/ artifact dirs', () => {
@@ -58,8 +59,8 @@ describe('scanLocal: basic scanning', () => {
 
     const result = scanLocal(tmpDir);
 
-    expect(result.has('images')).toBe(false);
-    expect(result.has('attachments')).toBe(false);
+    expect(result.has(asRelPath('images'))).toBe(false);
+    expect(result.has(asRelPath('attachments'))).toBe(false);
   });
 
   it('skips .conflict. files', () => {
@@ -69,7 +70,7 @@ describe('scanLocal: basic scanning', () => {
     const result = scanLocal(tmpDir);
 
     expect([...result.keys()].some((k) => k.includes('conflict'))).toBe(false);
-    expect(result.has('normal.md')).toBe(true);
+    expect(result.has(asRelPath('normal.md'))).toBe(true);
   });
 
   it('when .note and .md both exist, .md wins', () => {
@@ -78,7 +79,7 @@ describe('scanLocal: basic scanning', () => {
 
     const result = scanLocal(tmpDir);
 
-    const entry = result.get('doc.md');
+    const entry = result.get(asRelPath('doc.md'));
     expect(entry).toBeDefined();
     expect(entry!.path).toContain('doc.md');
   });
@@ -105,12 +106,12 @@ describe('scanLocal: advanced filtering', () => {
 
     const result = scanLocal(tmpDir);
 
-    expect(result.has('real.md')).toBe(true);
-    expect(result.has('realdir')).toBe(true);
-    expect(result.has('link-file.md')).toBe(false);
-    expect(result.has('link-dir')).toBe(false);
+    expect(result.has(asRelPath('real.md'))).toBe(true);
+    expect(result.has(asRelPath('realdir'))).toBe(true);
+    expect(result.has(asRelPath('link-file.md'))).toBe(false);
+    expect(result.has(asRelPath('link-dir'))).toBe(false);
     // child of symlinked dir should not appear
-    expect(result.has('link-dir/child.md')).toBe(false);
+    expect(result.has(asRelPath('link-dir/child.md'))).toBe(false);
   });
 
   it('applies exclude filter', () => {
@@ -119,8 +120,8 @@ describe('scanLocal: advanced filtering', () => {
 
     const result = scanLocal(tmpDir, '', { exclude: ['secret*'] });
 
-    expect(result.has('keep.md')).toBe(true);
-    expect(result.has('secret.md')).toBe(false);
+    expect(result.has(asRelPath('keep.md'))).toBe(true);
+    expect(result.has(asRelPath('secret.md'))).toBe(false);
   });
 });
 

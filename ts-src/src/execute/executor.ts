@@ -5,7 +5,15 @@ import { stateToAction } from '../types/state.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { NoteDomain } from '../types/common.js';
-import type { ContentHash, DirId, FileId, SyncDirection } from '../types/common.js';
+import type {
+  ContentHash,
+  DirId,
+  EpochSeconds,
+  FileId,
+  RelPath,
+  SyncDirection,
+} from '../types/common.js';
+import { asEpochSeconds, joinRelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { downloadFile } from './download.js';
 import { uploadFile, ensureParentDir, type UploadFileOpts } from './upload.js';
@@ -24,8 +32,8 @@ export interface SyncStats {
   moved: number;
   merged: number;
   readonly changedPaths: string[];
-  readonly failedMoves: { oldPath: string; newPath: string; fileId: FileId; domain: number }[];
-  readonly uploadedPaths: Set<string>;
+  readonly failedMoves: { oldPath: RelPath; newPath: RelPath; fileId: FileId; domain: number }[];
+  readonly uploadedPaths: Set<RelPath>;
 }
 
 export function emptyStats(): SyncStats {
@@ -39,7 +47,7 @@ export function emptyStats(): SyncStats {
     merged: 0,
     changedPaths: [],
     failedMoves: [],
-    uploadedPaths: new Set(),
+    uploadedPaths: new Set<RelPath>(),
   };
 }
 
@@ -70,15 +78,15 @@ export interface ExecuteContext {
  * 5. Moves
  */
 function partitionEntries(
-  classified: ReadonlyMap<string, FileState>,
-  cloud: ReadonlyMap<string, CloudFile>,
+  classified: ReadonlyMap<RelPath, FileState>,
+  cloud: ReadonlyMap<RelPath, CloudFile>,
   stats: SyncStats,
 ): {
-  dirEntries: [string, FileState, SyncAction][];
-  fileEntries: [string, FileState, SyncAction][];
+  dirEntries: [RelPath, FileState, SyncAction][];
+  fileEntries: [RelPath, FileState, SyncAction][];
 } {
-  const dirEntries: [string, FileState, SyncAction][] = [];
-  const fileEntries: [string, FileState, SyncAction][] = [];
+  const dirEntries: [RelPath, FileState, SyncAction][] = [];
+  const fileEntries: [RelPath, FileState, SyncAction][] = [];
   for (const [relPath, state] of classified) {
     const action = stateToAction(state);
     if (action === 'skip') {
@@ -96,8 +104,8 @@ function formatError(e: unknown): string {
 }
 
 export async function executeAll(
-  classified: ReadonlyMap<string, FileState>,
-  cloud: ReadonlyMap<string, CloudFile>,
+  classified: ReadonlyMap<RelPath, FileState>,
+  cloud: ReadonlyMap<RelPath, CloudFile>,
   ctx: ExecuteContext,
   direction: SyncDirection = 'both',
 ): Promise<SyncStats> {
@@ -130,7 +138,7 @@ export async function executeAll(
  * Matches Python _execute_dir.
  */
 async function executeDir(
-  relPath: string,
+  relPath: RelPath,
   action: SyncAction,
   ctx: ExecuteContext,
   stats: SyncStats,
@@ -139,7 +147,7 @@ async function executeDir(
     mkdirSync(join(ctx.localDir, relPath), { recursive: true });
     stats.downloaded++;
   } else if (action === 'upload') {
-    await ensureParentDir(ctx.api, ctx.meta, relPath + '/_placeholder', ctx.rootDirId);
+    await ensureParentDir(ctx.api, ctx.meta, joinRelPath(relPath, '_placeholder'), ctx.rootDirId);
     stats.uploaded++;
   } else {
     stats.skipped++;
@@ -147,17 +155,17 @@ async function executeDir(
 }
 
 interface ExecuteSingleOpts {
-  relPath: string;
+  relPath: RelPath;
   state: FileState;
   action: SyncAction;
-  cloud: ReadonlyMap<string, CloudFile>;
+  cloud: ReadonlyMap<RelPath, CloudFile>;
   ctx: ExecuteContext;
   stats: SyncStats;
   direction: SyncDirection;
 }
 
 interface HandleDownloadOpts {
-  relPath: string;
+  relPath: RelPath;
   localPath: string;
   cloudFile: CloudFile;
   ctx: ExecuteContext;
@@ -168,7 +176,7 @@ async function handleDownload(o: HandleDownloadOpts): Promise<void> {
   const { relPath, localPath, cloudFile, ctx, stats } = o;
   const { api, meta } = ctx;
   const dlOpts: {
-    cloudMtime?: number;
+    cloudMtime?: EpochSeconds;
     hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
   } = { cloudMtime: cloudFile.mtime };
   if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
@@ -178,7 +186,7 @@ async function handleDownload(o: HandleDownloadOpts): Promise<void> {
   meta.recordSync(relPath, {
     fileId: cloudFile.id as FileId,
     cloudMtime: cloudFile.mtime,
-    localMtime: readFileMtime(localPath, cloudFile.mtime),
+    localMtime: asEpochSeconds(readFileMtime(localPath, cloudFile.mtime)),
     parentId: cloudFile.parentId,
     domain: cloudFile.domain,
     contentHash: result.contentHash,
@@ -202,7 +210,7 @@ async function handleDownload(o: HandleDownloadOpts): Promise<void> {
 }
 
 interface HandleUploadOpts {
-  relPath: string;
+  relPath: RelPath;
   localPath: string;
   metaRecord: { fileId?: FileId } | undefined;
   ctx: ExecuteContext;
@@ -233,7 +241,7 @@ async function handleUpload(o: HandleUploadOpts): Promise<void> {
   meta.recordSync(relPath, {
     fileId: result.fileId,
     cloudMtime: result.cloudMtime,
-    localMtime: readFileMtime(localPath),
+    localMtime: asEpochSeconds(readFileMtime(localPath)),
     contentHash: uploadHash,
     action: 'upload',
     direction: 'push',

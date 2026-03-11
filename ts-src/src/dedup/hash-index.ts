@@ -1,12 +1,12 @@
 import { basename } from 'node:path';
-import type { ContentHash } from '../types/common.js';
+import { type ContentHash, type EpochSeconds, type RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { computeContentHashFromFile } from '../hash.js';
 import { walkFiles } from './walk.js';
 
 export interface BuildIndexOpts {
   hashCache?: Map<string, ContentHash> | undefined;
-  localFiles?: Map<string, { path: string; mtime: number; isDir: boolean }> | undefined;
+  localFiles?: Map<RelPath, { path: string; mtime: EpochSeconds; isDir: boolean }> | undefined;
 }
 
 /**
@@ -18,16 +18,16 @@ export function buildHashIndex(
   root: string,
   meta: MetadataStore,
   opts?: BuildIndexOpts,
-): Map<ContentHash, string[]> {
+): Map<ContentHash, RelPath[]> {
   if (!root || typeof root !== 'string') {
     throw new Error('buildHashIndex: root must be a non-empty string');
   }
-  const index = new Map<ContentHash, string[]>();
+  const index = new Map<ContentHash, RelPath[]>();
   const hashCache = opts?.hashCache;
   const allMeta = meta.getAllFiles();
   let updated = 0;
 
-  const processFile = (rel: string, absPath: string, mtime: number): void => {
+  const processFile = (rel: RelPath, absPath: string, mtime: EpochSeconds): void => {
     if (basename(rel).startsWith('.') || rel.includes('.conflict.')) return;
 
     let h: ContentHash | null = hashCache?.get(absPath) ?? null;

@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { printPreview, printDryrunSummary, diagnoseDryrun } from './engine-helpers.js';
 import type { FileState } from './types/state.js';
 import type { MetadataStore } from './metadata/store.js';
+import { asRelPath } from './types/common.js';
+import type { RelPath } from './types/common.js';
 
 const noop = vi.fn();
 
@@ -16,11 +18,11 @@ describe('printPreview', () => {
   });
 
   it('prints grouped actions for non-skip entries', () => {
-    const classified = new Map<string, FileState>([
-      ['cloud.md', { kind: 'cloudNew' }],
-      ['local.md', { kind: 'localNew' }],
-      ['both.md', { kind: 'conflict' }],
-      ['synced.md', { kind: 'synced' }],
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('cloud.md'), { kind: 'cloudNew' }],
+      [asRelPath('local.md'), { kind: 'localNew' }],
+      [asRelPath('both.md'), { kind: 'conflict' }],
+      [asRelPath('synced.md'), { kind: 'synced' }],
     ]);
 
     printPreview(classified);
@@ -36,7 +38,7 @@ describe('printPreview', () => {
   });
 
   it('prints nothing for all-skip entries', () => {
-    const classified = new Map<string, FileState>([['a.md', { kind: 'synced' }]]);
+    const classified = new Map<RelPath, FileState>([[asRelPath('a.md'), { kind: 'synced' }]]);
 
     printPreview(classified);
 
@@ -58,12 +60,12 @@ describe('printDryrunSummary', () => {
   });
 
   it('prints correct counts', () => {
-    const classified = new Map<string, FileState>([
-      ['a.md', { kind: 'cloudNew' }],
-      ['b.md', { kind: 'cloudNew' }],
-      ['c.md', { kind: 'localNew' }],
-      ['d.md', { kind: 'conflict' }],
-      ['e.md', { kind: 'synced' }],
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('a.md'), { kind: 'cloudNew' }],
+      [asRelPath('b.md'), { kind: 'cloudNew' }],
+      [asRelPath('c.md'), { kind: 'localNew' }],
+      [asRelPath('d.md'), { kind: 'conflict' }],
+      [asRelPath('e.md'), { kind: 'synced' }],
     ]);
 
     printDryrunSummary(classified);
@@ -77,7 +79,7 @@ describe('printDryrunSummary', () => {
   });
 
   it('omits zero-count categories', () => {
-    const classified = new Map<string, FileState>([['a.md', { kind: 'localNew' }]]);
+    const classified = new Map<RelPath, FileState>([[asRelPath('a.md'), { kind: 'localNew' }]]);
 
     printDryrunSummary(classified);
 
@@ -99,7 +101,9 @@ describe('diagnoseDryrun', () => {
   });
 
   it('outputs preview, summary, and warnings together', () => {
-    const classified = new Map<string, FileState>([['upload.md', { kind: 'localNew' }]]);
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('upload.md'), { kind: 'localNew' }],
+    ]);
     const meta = {
       getFileInfo: () => null,
     } as unknown as MetadataStore;

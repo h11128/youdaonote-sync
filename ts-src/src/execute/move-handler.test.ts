@@ -54,7 +54,7 @@ describe('handleMove: local file operations', () => {
   it('moves local file from old path to new path after cloud move', async () => {
     const oldContent = 'file content here';
     writeFileSync(join(localDir, 'old-name.md'), oldContent);
-    meta.setFileInfo('old-name.md', {
+    meta.setFileInfo(asRelPath('old-name.md'), {
       fileId: asFileId('f1'),
       cloudMtime: asEpochSeconds(1000),
       localMtime: asEpochSeconds(1000),
@@ -62,7 +62,7 @@ describe('handleMove: local file operations', () => {
 
     const stats = emptyStats();
     await handleMove({
-      relPath: 'new-name.md',
+      relPath: asRelPath('new-name.md'),
       state: { kind: 'moved', oldPath: asRelPath('old-name.md') },
       cloudFile: makeCloudFile('f1', 'new-name.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
@@ -76,7 +76,7 @@ describe('handleMove: local file operations', () => {
 
   it('creates parent directories when moving to a subdirectory', async () => {
     writeFileSync(join(localDir, 'note.md'), 'content');
-    meta.setFileInfo('note.md', {
+    meta.setFileInfo(asRelPath('note.md'), {
       fileId: asFileId('f2'),
       cloudMtime: asEpochSeconds(1000),
       localMtime: asEpochSeconds(1000),
@@ -84,7 +84,7 @@ describe('handleMove: local file operations', () => {
 
     const stats = emptyStats();
     await handleMove({
-      relPath: 'subdir/deep/note.md',
+      relPath: asRelPath('subdir/deep/note.md'),
       state: { kind: 'moved', oldPath: asRelPath('note.md') },
       cloudFile: makeCloudFile('f2', 'note.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
@@ -97,7 +97,7 @@ describe('handleMove: local file operations', () => {
 
   it('records moved path in changedPaths for git commit', async () => {
     writeFileSync(join(localDir, 'a.md'), 'data');
-    meta.setFileInfo('a.md', {
+    meta.setFileInfo(asRelPath('a.md'), {
       fileId: asFileId('f3'),
       cloudMtime: asEpochSeconds(1000),
       localMtime: asEpochSeconds(1000),
@@ -105,7 +105,7 @@ describe('handleMove: local file operations', () => {
 
     const stats = emptyStats();
     await handleMove({
-      relPath: 'b.md',
+      relPath: asRelPath('b.md'),
       state: { kind: 'moved', oldPath: asRelPath('a.md') },
       cloudFile: makeCloudFile('f3', 'b.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
@@ -132,7 +132,7 @@ describe('handleMove: error handling and metadata', () => {
 
   it('records failedMoves when cloud move throws', async () => {
     writeFileSync(join(localDir, 'x.md'), 'data');
-    meta.setFileInfo('x.md', {
+    meta.setFileInfo(asRelPath('x.md'), {
       fileId: asFileId('f4'),
       cloudMtime: asEpochSeconds(1000),
       localMtime: asEpochSeconds(1000),
@@ -145,7 +145,7 @@ describe('handleMove: error handling and metadata', () => {
     );
 
     await handleMove({
-      relPath: 'y.md',
+      relPath: asRelPath('y.md'),
       state: { kind: 'moved', oldPath: asRelPath('x.md') },
       cloudFile: makeCloudFile('f4', 'y.md'),
       ctx: { api, meta, rootDirId: asDirId('root'), localDir },
@@ -155,12 +155,12 @@ describe('handleMove: error handling and metadata', () => {
     expect(existsSync(join(localDir, 'x.md'))).toBe(true);
     expect(stats.moved).toBe(0);
     expect(stats.failedMoves).toHaveLength(1);
-    expect(stats.failedMoves[0]?.oldPath).toBe('x.md');
+    expect(stats.failedMoves[0]?.oldPath).toBe(asRelPath('x.md'));
   });
 
   it('updates metadata to new path after move', async () => {
     writeFileSync(join(localDir, 'old.md'), 'data');
-    meta.setFileInfo('old.md', {
+    meta.setFileInfo(asRelPath('old.md'), {
       fileId: asFileId('f5'),
       cloudMtime: asEpochSeconds(1000),
       localMtime: asEpochSeconds(1000),
@@ -168,15 +168,15 @@ describe('handleMove: error handling and metadata', () => {
 
     const stats = emptyStats();
     await handleMove({
-      relPath: 'new.md',
+      relPath: asRelPath('new.md'),
       state: { kind: 'moved', oldPath: asRelPath('old.md') },
       cloudFile: makeCloudFile('f5', 'new.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
       stats,
     });
 
-    expect(meta.getFileInfo('old.md')).toBeNull();
-    const newRecord = meta.getFileInfo('new.md');
+    expect(meta.getFileInfo(asRelPath('old.md'))).toBeNull();
+    const newRecord = meta.getFileInfo(asRelPath('new.md'));
     expect(newRecord).not.toBeNull();
     expect(newRecord?.fileId).toBe('f5');
   });
@@ -186,7 +186,7 @@ describe('handleMove: error handling and metadata', () => {
     const api = makeMockApi();
 
     await handleMove({
-      relPath: 'x.md',
+      relPath: asRelPath('x.md'),
       state: { kind: 'localNew' },
       cloudFile: makeCloudFile('f6', 'x.md'),
       ctx: { api, meta, rootDirId: asDirId('root'), localDir },
@@ -212,7 +212,7 @@ describe('fallbackDeleteOldFiles', () => {
   });
 
   it('deletes old cloud file when newPath is in uploadedPaths', async () => {
-    meta.setFileInfo('old.md', {
+    meta.setFileInfo(asRelPath('old.md'), {
       fileId: asFileId('f-old'),
       cloudMtime: asEpochSeconds(1000),
       localMtime: asEpochSeconds(1000),
@@ -220,12 +220,12 @@ describe('fallbackDeleteOldFiles', () => {
 
     const stats = emptyStats();
     stats.failedMoves.push({
-      oldPath: 'old.md',
-      newPath: 'new.md',
+      oldPath: asRelPath('old.md'),
+      newPath: asRelPath('new.md'),
       fileId: asFileId('f-old'),
       domain: 1,
     });
-    stats.uploadedPaths.add('new.md');
+    stats.uploadedPaths.add(asRelPath('new.md'));
 
     const deleteFile = vi.fn().mockResolvedValue({});
     await fallbackDeleteOldFiles(
@@ -235,11 +235,11 @@ describe('fallbackDeleteOldFiles', () => {
     );
 
     expect(deleteFile).toHaveBeenCalledWith('f-old');
-    expect(meta.getFileInfo('old.md')).toBeNull();
+    expect(meta.getFileInfo(asRelPath('old.md'))).toBeNull();
   });
 
   it('skips deletion when newPath is NOT in uploadedPaths', async () => {
-    meta.setFileInfo('old.md', {
+    meta.setFileInfo(asRelPath('old.md'), {
       fileId: asFileId('f-old'),
       cloudMtime: asEpochSeconds(1000),
       localMtime: asEpochSeconds(1000),
@@ -247,8 +247,8 @@ describe('fallbackDeleteOldFiles', () => {
 
     const stats = emptyStats();
     stats.failedMoves.push({
-      oldPath: 'old.md',
-      newPath: 'new.md',
+      oldPath: asRelPath('old.md'),
+      newPath: asRelPath('new.md'),
       fileId: asFileId('f-old'),
       domain: 1,
     });
@@ -262,11 +262,11 @@ describe('fallbackDeleteOldFiles', () => {
     );
 
     expect(deleteFile).not.toHaveBeenCalled();
-    expect(meta.getFileInfo('old.md')).not.toBeNull();
+    expect(meta.getFileInfo(asRelPath('old.md'))).not.toBeNull();
   });
 
   it('handles deleteFile failure gracefully', async () => {
-    meta.setFileInfo('old.md', {
+    meta.setFileInfo(asRelPath('old.md'), {
       fileId: asFileId('f-old'),
       cloudMtime: asEpochSeconds(1000),
       localMtime: asEpochSeconds(1000),
@@ -274,12 +274,12 @@ describe('fallbackDeleteOldFiles', () => {
 
     const stats = emptyStats();
     stats.failedMoves.push({
-      oldPath: 'old.md',
-      newPath: 'new.md',
+      oldPath: asRelPath('old.md'),
+      newPath: asRelPath('new.md'),
       fileId: asFileId('f-old'),
       domain: 1,
     });
-    stats.uploadedPaths.add('new.md');
+    stats.uploadedPaths.add(asRelPath('new.md'));
 
     const deleteFile = vi.fn().mockRejectedValue(new Error('cloud delete failed'));
     await fallbackDeleteOldFiles(
@@ -290,6 +290,6 @@ describe('fallbackDeleteOldFiles', () => {
 
     expect(deleteFile).toHaveBeenCalledWith('f-old');
     // metadata should still exist (delete failed, best-effort)
-    expect(meta.getFileInfo('old.md')).not.toBeNull();
+    expect(meta.getFileInfo(asRelPath('old.md'))).not.toBeNull();
   });
 });

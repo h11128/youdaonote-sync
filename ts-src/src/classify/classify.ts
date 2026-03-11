@@ -1,3 +1,4 @@
+import type { RelPath } from '../types/common.js';
 import type { FileState } from '../types/state.js';
 import type { ClassifyInput } from './conditions.js';
 import { extractConditions } from './conditions.js';
@@ -32,22 +33,22 @@ export function classify(input: ClassifyInput | null): FileState {
  * Bulk classify: given all paths from cloud + local + metadata,
  * produce a map of path → FileState.
  */
-type ClassifyInputMap = ReadonlyMap<string, ClassifyInput['cloud']>;
-type LocalMap = ReadonlyMap<string, ClassifyInput['local']>;
-type MetaMap = ReadonlyMap<string, ClassifyInput['meta']>;
-type LocalHashMap = ReadonlyMap<string, ClassifyInput['localHash']>;
+type ClassifyInputMap = ReadonlyMap<RelPath, ClassifyInput['cloud']>;
+type LocalMap = ReadonlyMap<RelPath, ClassifyInput['local']>;
+type MetaMap = ReadonlyMap<RelPath, ClassifyInput['meta']>;
+type LocalHashMap = ReadonlyMap<RelPath, ClassifyInput['localHash']>;
 
 export function classifyAll(
   cloud: ClassifyInputMap | null,
   local: LocalMap | null,
   meta: MetaMap | null,
   localHashes: LocalHashMap | null,
-): Map<string, FileState> {
+): Map<RelPath, FileState> {
   if (cloud == null || local == null || meta == null || localHashes == null) {
     throw new Error('classifyAll: cloud, local, meta, localHashes must not be null');
   }
-  const allPaths = new Set([...cloud.keys(), ...local.keys(), ...meta.keys()]);
-  const result = new Map<string, FileState>();
+  const allPaths = new Set<RelPath>([...cloud.keys(), ...local.keys(), ...meta.keys()]);
+  const result = new Map<RelPath, FileState>();
   for (const path of allPaths) {
     const input: ClassifyInput = {
       cloud: cloud.get(path) ?? null,

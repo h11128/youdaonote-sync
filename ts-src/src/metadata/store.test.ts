@@ -1,6 +1,13 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { MetadataStore } from './store.js';
-import { asFileId, asDirId, asContentHash, NoteDomain } from '../types/common.js';
+import {
+  asFileId,
+  asDirId,
+  asContentHash,
+  asRelPath,
+  asEpochSeconds,
+  NoteDomain,
+} from '../types/common.js';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,15 +16,15 @@ function fileInfoBasicTests(getStore: () => MetadataStore): void {
   describe('file info basic', () => {
     it('setFileInfo + getFileInfo round-trip', () => {
       const store = getStore();
-      store.setFileInfo('notes/hello.md', {
+      store.setFileInfo(asRelPath('notes/hello.md'), {
         fileId: asFileId('f-1'),
-        cloudMtime: 1000,
-        localMtime: 2000,
+        cloudMtime: asEpochSeconds(1000),
+        localMtime: asEpochSeconds(2000),
         parentId: asDirId('d-1'),
         domain: NoteDomain.MARKDOWN,
         contentHash: asContentHash('hash-abc'),
       });
-      const info = store.getFileInfo('notes/hello.md');
+      const info = store.getFileInfo(asRelPath('notes/hello.md'));
       expect(info).not.toBeNull();
       expect(info!.fileId).toBe('f-1');
       expect(info!.cloudMtime).toBe(1000);
@@ -28,39 +35,39 @@ function fileInfoBasicTests(getStore: () => MetadataStore): void {
     });
 
     it('getFileInfo returns null for non-existent path', () => {
-      expect(getStore().getFileInfo('nonexistent.md')).toBeNull();
+      expect(getStore().getFileInfo(asRelPath('nonexistent.md'))).toBeNull();
     });
 
     it('getFileId returns the file ID', () => {
       const store = getStore();
-      store.setFileInfo('test.md', {
+      store.setFileInfo(asRelPath('test.md'), {
         fileId: asFileId('f-2'),
-        cloudMtime: 500,
-        localMtime: 600,
+        cloudMtime: asEpochSeconds(500),
+        localMtime: asEpochSeconds(600),
       });
-      expect(store.getFileId('test.md')).toBe('f-2');
+      expect(store.getFileId(asRelPath('test.md'))).toBe('f-2');
     });
 
     it('markSynced updates last_sync_at', () => {
       const store = getStore();
-      store.setFileInfo('sync.md', {
+      store.setFileInfo(asRelPath('sync.md'), {
         fileId: asFileId('f-3'),
-        cloudMtime: 100,
-        localMtime: 100,
+        cloudMtime: asEpochSeconds(100),
+        localMtime: asEpochSeconds(100),
       });
-      store.markSynced('sync.md', 9999);
-      expect(store.getFileInfo('sync.md')!.lastSyncAt).toBe(9999);
+      store.markSynced(asRelPath('sync.md'), asEpochSeconds(9999));
+      expect(store.getFileInfo(asRelPath('sync.md'))!.lastSyncAt).toBe(9999);
     });
 
     it('removeFileInfo deletes the record', () => {
       const store = getStore();
-      store.setFileInfo('del.md', {
+      store.setFileInfo(asRelPath('del.md'), {
         fileId: asFileId('f-4'),
-        cloudMtime: 100,
-        localMtime: 100,
+        cloudMtime: asEpochSeconds(100),
+        localMtime: asEpochSeconds(100),
       });
-      store.removeFileInfo('del.md');
-      expect(store.getFileInfo('del.md')).toBeNull();
+      store.removeFileInfo(asRelPath('del.md'));
+      expect(store.getFileInfo(asRelPath('del.md'))).toBeNull();
     });
   });
 }
@@ -69,23 +76,23 @@ function fileInfoAdvancedTests(getStore: () => MetadataStore): void {
   describe('file info advanced', () => {
     it('renamePath migrates metadata', () => {
       const store = getStore();
-      store.setFileInfo('old.md', {
+      store.setFileInfo(asRelPath('old.md'), {
         fileId: asFileId('f-5'),
-        cloudMtime: 100,
-        localMtime: 200,
+        cloudMtime: asEpochSeconds(100),
+        localMtime: asEpochSeconds(200),
       });
-      const ok = store.renamePath('old.md', 'new.md');
+      const ok = store.renamePath(asRelPath('old.md'), asRelPath('new.md'));
       expect(ok).toBe(true);
-      expect(store.getFileInfo('old.md')).toBeNull();
-      expect(store.getFileInfo('new.md')!.fileId).toBe('f-5');
+      expect(store.getFileInfo(asRelPath('old.md'))).toBeNull();
+      expect(store.getFileInfo(asRelPath('new.md'))!.fileId).toBe('f-5');
     });
 
     it('findByFileId reverse lookup', () => {
       const store = getStore();
-      store.setFileInfo('lookup.md', {
+      store.setFileInfo(asRelPath('lookup.md'), {
         fileId: asFileId('f-lookup'),
-        cloudMtime: 100,
-        localMtime: 200,
+        cloudMtime: asEpochSeconds(100),
+        localMtime: asEpochSeconds(200),
       });
       expect(store.findByFileId(asFileId('f-lookup'))).toBe('lookup.md');
       expect(store.findByFileId(asFileId('nonexistent'))).toBeNull();
@@ -93,15 +100,15 @@ function fileInfoAdvancedTests(getStore: () => MetadataStore): void {
 
     it('content hash CRUD', () => {
       const store = getStore();
-      store.setFileInfo('hash.md', {
+      store.setFileInfo(asRelPath('hash.md'), {
         fileId: asFileId('f-h'),
-        cloudMtime: 100,
-        localMtime: 200,
+        cloudMtime: asEpochSeconds(100),
+        localMtime: asEpochSeconds(200),
         contentHash: asContentHash('v1'),
       });
-      expect(store.getContentHash('hash.md')).toBe('v1');
-      store.updateContentHash('hash.md', asContentHash('v2'));
-      expect(store.getContentHash('hash.md')).toBe('v2');
+      expect(store.getContentHash(asRelPath('hash.md'))).toBe('v1');
+      store.updateContentHash(asRelPath('hash.md'), asContentHash('v2'));
+      expect(store.getContentHash(asRelPath('hash.md'))).toBe('v2');
     });
   });
 }
@@ -110,12 +117,12 @@ function directoryTests(getStore: () => MetadataStore): void {
   describe('directory operations', () => {
     it('directory CRUD', () => {
       const store = getStore();
-      store.setDirInfo('my-folder', asDirId('d-100'), asDirId('d-root'));
-      expect(store.getDirId('my-folder')).toBe('d-100');
+      store.setDirInfo(asRelPath('my-folder'), asDirId('d-100'), asDirId('d-root'));
+      expect(store.getDirId(asRelPath('my-folder'))).toBe('d-100');
       expect(store.findByDirId(asDirId('d-100'))).toBe('my-folder');
-      expect(store.getAllDirs().get('my-folder')?.dirId).toBe('d-100');
-      store.removeDir('my-folder');
-      expect(store.getDirId('my-folder')).toBeNull();
+      expect(store.getAllDirs().get(asRelPath('my-folder'))?.dirId).toBe('d-100');
+      store.removeDir(asRelPath('my-folder'));
+      expect(store.getDirId(asRelPath('my-folder'))).toBeNull();
     });
   });
 }
@@ -134,15 +141,15 @@ function syncStateTests(getStore: () => MetadataStore): void {
 
     it('recordSync creates sync log entry', () => {
       const store = getStore();
-      store.recordSync('logged.md', {
+      store.recordSync(asRelPath('logged.md'), {
         fileId: asFileId('f-log'),
-        cloudMtime: 300,
-        localMtime: 400,
+        cloudMtime: asEpochSeconds(300),
+        localMtime: asEpochSeconds(400),
         action: 'download',
         direction: 'pull',
         contentHash: asContentHash('h-new'),
       });
-      const info = store.getFileInfo('logged.md');
+      const info = store.getFileInfo(asRelPath('logged.md'));
       expect(info!.fileId).toBe('f-log');
       expect(info!.lastSyncAt).toBeGreaterThan(0);
     });
@@ -153,29 +160,37 @@ function queriesAndUpsertTests(getStore: () => MetadataStore): void {
   describe('queries and upsert', () => {
     it('getAllFiles returns all records', () => {
       const store = getStore();
-      store.setFileInfo('a.md', { fileId: asFileId('fa'), cloudMtime: 1, localMtime: 1 });
-      store.setFileInfo('b.md', { fileId: asFileId('fb'), cloudMtime: 2, localMtime: 2 });
+      store.setFileInfo(asRelPath('a.md'), {
+        fileId: asFileId('fa'),
+        cloudMtime: asEpochSeconds(1),
+        localMtime: asEpochSeconds(1),
+      });
+      store.setFileInfo(asRelPath('b.md'), {
+        fileId: asFileId('fb'),
+        cloudMtime: asEpochSeconds(2),
+        localMtime: asEpochSeconds(2),
+      });
       const all = store.getAllFiles();
       expect(all.size).toBe(2);
-      expect(all.get('a.md')!.fileId).toBe('fa');
-      expect(all.get('b.md')!.fileId).toBe('fb');
+      expect(all.get(asRelPath('a.md'))!.fileId).toBe('fa');
+      expect(all.get(asRelPath('b.md'))!.fileId).toBe('fb');
     });
 
     it('upsert preserves existing values via COALESCE', () => {
       const store = getStore();
-      store.setFileInfo('coalesce.md', {
+      store.setFileInfo(asRelPath('coalesce.md'), {
         fileId: asFileId('f-c'),
-        cloudMtime: 100,
-        localMtime: 200,
+        cloudMtime: asEpochSeconds(100),
+        localMtime: asEpochSeconds(200),
         parentId: asDirId('d-orig'),
         contentHash: asContentHash('original'),
       });
-      store.setFileInfo('coalesce.md', {
+      store.setFileInfo(asRelPath('coalesce.md'), {
         fileId: asFileId('f-c'),
-        cloudMtime: 300,
-        localMtime: 400,
+        cloudMtime: asEpochSeconds(300),
+        localMtime: asEpochSeconds(400),
       });
-      const info = store.getFileInfo('coalesce.md');
+      const info = store.getFileInfo(asRelPath('coalesce.md'));
       expect(info!.cloudMtime).toBe(300);
       expect(info!.localMtime).toBe(400);
       expect(info!.parentId).toBe('d-orig');
@@ -188,13 +203,13 @@ function cloudCacheTests(getStore: () => MetadataStore): void {
   describe('cloud cache', () => {
     it('cacheCloudFileInfo sets cloud fields without touching local_mtime', () => {
       const store = getStore();
-      store.cacheCloudFileInfo('cached.md', {
+      store.cacheCloudFileInfo(asRelPath('cached.md'), {
         fileId: asFileId('f-cache'),
-        cloudMtime: 5000,
+        cloudMtime: asEpochSeconds(5000),
         parentId: asDirId('d-p'),
         domain: NoteDomain.NOTE,
       });
-      const info = store.getFileInfo('cached.md');
+      const info = store.getFileInfo(asRelPath('cached.md'));
       expect(info).not.toBeNull();
       expect(info!.fileId).toBe('f-cache');
       expect(info!.localMtime).toBe(0);

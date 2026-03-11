@@ -13,7 +13,7 @@ import { SyncEngine } from './engine.js';
 import { MetadataStore } from './metadata/store.js';
 import type { YoudaoNoteApi } from './api/client.js';
 import type { DirInfoByIdResponse } from './types/dir.js';
-import { asDirId } from './types/common.js';
+import { asDirId, asEpochSeconds, asFileId, asRelPath } from './types/common.js';
 import type { FileId } from './types/common.js';
 import { computeContentHashFromFile } from './hash.js';
 
@@ -87,10 +87,10 @@ describe('Engine integration: heal and classify', () => {
   it('heal runs before sync (fixes orphan records)', async () => {
     const meta = new MetadataStore(metaPath);
     // Create an orphan record (no file_id, no local file)
-    meta.setFileInfo('phantom.md', {
-      fileId: '' as FileId,
-      cloudMtime: 0,
-      localMtime: 100,
+    meta.setFileInfo(asRelPath('phantom.md'), {
+      fileId: asFileId(''),
+      cloudMtime: asEpochSeconds(0),
+      localMtime: asEpochSeconds(100),
     });
     meta.save();
 
@@ -107,7 +107,7 @@ describe('Engine integration: heal and classify', () => {
     await engine.sync();
 
     // heal should have removed the orphan
-    expect(meta.getFileInfo('phantom.md')).toBeNull();
+    expect(meta.getFileInfo(asRelPath('phantom.md'))).toBeNull();
     engine.close();
   });
 });
@@ -135,12 +135,12 @@ describe('Engine integration: classify and refine', () => {
     const localHash = computeContentHashFromFile(join(localDir, 'new-name.md'));
 
     // Metadata knows old path
-    meta.setFileInfo('old-name.md', {
-      fileId: 'f1' as FileId,
-      cloudMtime: 1000,
-      localMtime: 1000,
+    meta.setFileInfo(asRelPath('old-name.md'), {
+      fileId: asFileId('f1'),
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
       contentHash: localHash,
-      lastSyncAt: 1000,
+      lastSyncAt: asEpochSeconds(1000),
     });
     meta.save();
 
@@ -171,12 +171,12 @@ describe('Engine integration: classify and refine', () => {
     const hash = computeContentHashFromFile(join(localDir, 'renamed-diary.md'));
 
     // Metadata records the old path with its contentHash (file no longer exists locally at old path)
-    meta.setFileInfo('old-diary.md', {
-      fileId: 'f-diary' as FileId,
-      cloudMtime: 1000,
-      localMtime: 1000,
+    meta.setFileInfo(asRelPath('old-diary.md'), {
+      fileId: asFileId('f-diary'),
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
       contentHash: hash,
-      lastSyncAt: 1000,
+      lastSyncAt: asEpochSeconds(1000),
     });
     meta.save();
 
@@ -196,11 +196,11 @@ describe('Engine integration: classify and refine', () => {
     const result = await engine.sync();
 
     // old path should be gone (matched as source of the move)
-    const oldState = result.classified.get('old-diary.md');
+    const oldState = result.classified.get(asRelPath('old-diary.md'));
     expect(oldState?.kind).toBe('gone');
 
     // new path should be recognized as moved (not uploaded as localNew)
-    const newState = result.classified.get('renamed-diary.md');
+    const newState = result.classified.get(asRelPath('renamed-diary.md'));
     expect(newState?.kind).toBe('moved');
 
     engine.close();
@@ -231,12 +231,12 @@ describe('Engine integration: refine and lock', () => {
     const localHash = computeContentHashFromFile(join(localDir, 'doc.md'))!;
 
     // Metadata with old cloud_mtime (so cloud looks "modified")
-    meta.setFileInfo('doc.md', {
-      fileId: 'f2' as FileId,
-      cloudMtime: 500,
-      localMtime: Math.floor(Date.now() / 1000),
+    meta.setFileInfo(asRelPath('doc.md'), {
+      fileId: asFileId('f2'),
+      cloudMtime: asEpochSeconds(500),
+      localMtime: asEpochSeconds(Math.floor(Date.now() / 1000)),
       contentHash: localHash,
-      lastSyncAt: 1000,
+      lastSyncAt: asEpochSeconds(1000),
     });
     meta.save();
 
@@ -257,7 +257,7 @@ describe('Engine integration: refine and lock', () => {
     const result = await engine.sync();
 
     // Refine should have downgraded cloudModifiedContent → cloudModifiedMtimeOnly (skip)
-    const state = result.classified.get('doc.md');
+    const state = result.classified.get(asRelPath('doc.md'));
     expect(state).toBeDefined();
     // Should be either skip (mtime-only) or converged, not download/conflict
     const skipStates = ['synced', 'cloudModifiedMtimeOnly', 'bothModifiedConverged'];
@@ -342,7 +342,7 @@ describe('Engine integration: dryRun and full flow', () => {
     const result = await engine.sync();
 
     expect(result.stats.uploaded).toBe(1);
-    expect(result.classified.get('local-only.md')?.kind).toBe('localNew');
+    expect(result.classified.get(asRelPath('local-only.md'))?.kind).toBe('localNew');
 
     // Lock file should NOT exist (dryRun doesn't acquire lock)
     expect(existsSync(join(localDir, '.sync.lock'))).toBe(false);
@@ -388,7 +388,7 @@ describe('Engine integration: full download flow', () => {
     expect(readFileSync(join(localDir, 'cloud-doc.md'), 'utf-8')).toBe(cloudContent);
 
     // Metadata should be recorded
-    const record = meta.getFileInfo('cloud-doc.md');
+    const record = meta.getFileInfo(asRelPath('cloud-doc.md'));
     expect(record).not.toBeNull();
     expect(record!.fileId).toBe('f-new');
 
@@ -430,7 +430,7 @@ describe('Engine integration: collectItems API', () => {
     const result = await engine.collectItems();
 
     expect(result.classified).toBeInstanceOf(Map);
-    expect(result.classified.get('local-only.md')?.kind).toBe('localNew');
+    expect(result.classified.get(asRelPath('local-only.md'))?.kind).toBe('localNew');
     expect(result.cloudSnap).toBeInstanceOf(Map);
     expect(result.localSnap).toBeInstanceOf(Map);
 
@@ -460,11 +460,11 @@ describe('Engine integration: collectItems API', () => {
     const result = await engine.collectItems();
 
     // local-only should be filtered out (direction=pull)
-    const localState = result.classified.get('local-only.md');
+    const localState = result.classified.get(asRelPath('local-only.md'));
     expect(localState?.kind === 'gone' || localState === undefined).toBe(true);
 
     // cloud-only should still be present
-    expect(result.classified.has('cloud-only.md')).toBe(true);
+    expect(result.classified.has(asRelPath('cloud-only.md'))).toBe(true);
     engine.close();
   });
 });

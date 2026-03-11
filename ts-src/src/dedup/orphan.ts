@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import type { ContentHash } from '../types/common.js';
+import { type ContentHash, type RelPath } from '../types/common.js';
 import { sanitizeFilename } from '../util/path.js';
 
 /**
@@ -9,13 +9,13 @@ import { sanitizeFilename } from '../util/path.js';
  * it's an orphan from a cloud rename — skip uploading it.
  */
 export function discardOrphanDuplicates(
-  cloudSnap: ReadonlyMap<string, { isDir: boolean }>,
-  localSnap: ReadonlyMap<string, { isDir: boolean; path: string }>,
-  localHashes: ReadonlyMap<string, ContentHash | null>,
-): Set<string> {
-  const skipped = new Set<string>();
-  const onlyLocal = new Set<string>();
-  const both = new Set<string>();
+  cloudSnap: ReadonlyMap<RelPath, { isDir: boolean }>,
+  localSnap: ReadonlyMap<RelPath, { isDir: boolean; path?: string }>,
+  localHashes: ReadonlyMap<RelPath, ContentHash | null>,
+): Set<RelPath> {
+  const skipped = new Set<RelPath>();
+  const onlyLocal = new Set<RelPath>();
+  const both = new Set<RelPath>();
 
   for (const [p, info] of localSnap) {
     if (info.isDir) continue;
@@ -24,7 +24,7 @@ export function discardOrphanDuplicates(
 
   if (onlyLocal.size === 0 || both.size === 0) return skipped;
 
-  const bothByName = new Map<string, string[]>();
+  const bothByName = new Map<string, RelPath[]>();
   for (const bp of both) {
     const norm = sanitizeFilename(basename(bp)).toLowerCase();
     const list = bothByName.get(norm) ?? [];

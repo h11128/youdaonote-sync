@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { writeFileSync, existsSync } from 'node:fs';
 import { SyncEngine } from './engine.js';
 import { MetadataStore } from './metadata/store.js';
-import { asContentHash } from './types/common.js';
+import { asContentHash, asEpochSeconds, asRelPath } from './types/common.js';
 import type { FileId } from './types/common.js';
 import { makeCloudEntry, buildMockApi, setupE2EContext } from './e2e-fixtures.js';
 
@@ -30,14 +30,14 @@ describe('E2E: uploadedPaths — merge and upload', () => {
 
     writeFileSync(join(localDir, 'merge.md'), localContent);
     const now = Math.floor(Date.now() / 1000);
-    meta.setFileInfo('merge.md', {
+    meta.setFileInfo(asRelPath('merge.md'), {
       fileId: 'f-merge' as FileId,
-      cloudMtime: now - 100,
-      localMtime: now - 200,
+      cloudMtime: asEpochSeconds(now - 100),
+      localMtime: asEpochSeconds(now - 200),
       contentHash: asContentHash('old-hash'),
-      lastSyncAt: now - 300,
+      lastSyncAt: asEpochSeconds(now - 300),
     });
-    meta.saveBaseContent('merge.md', Buffer.from(baseContent), 'base-hash');
+    meta.saveBaseContent(asRelPath('merge.md'), Buffer.from(baseContent), 'base-hash');
     meta.save();
 
     const cloudEntries = [makeCloudEntry('f-merge', 'merge.md', now)];
@@ -56,7 +56,7 @@ describe('E2E: uploadedPaths — merge and upload', () => {
     const result = await engine.sync();
 
     expect(result.stats.merged).toBe(1);
-    expect(result.stats.uploadedPaths.has('merge.md')).toBe(true);
+    expect(result.stats.uploadedPaths.has(asRelPath('merge.md'))).toBe(true);
     engine.close();
   });
 
@@ -77,7 +77,7 @@ describe('E2E: uploadedPaths — merge and upload', () => {
     const result = await engine.sync();
 
     expect(result.stats.uploaded).toBe(1);
-    expect(result.stats.uploadedPaths.has('upload-test.md')).toBe(true);
+    expect(result.stats.uploadedPaths.has(asRelPath('upload-test.md'))).toBe(true);
     engine.close();
   });
 });
@@ -101,12 +101,12 @@ describe('E2E: uploadedPaths — push direction', () => {
     const meta = new MetadataStore(metaPath);
     writeFileSync(join(localDir, 'cpush.md'), 'local version');
     const now = Math.floor(Date.now() / 1000);
-    meta.setFileInfo('cpush.md', {
+    meta.setFileInfo(asRelPath('cpush.md'), {
       fileId: 'f-cp' as FileId,
-      cloudMtime: now - 100,
-      localMtime: now - 200,
+      cloudMtime: asEpochSeconds(now - 100),
+      localMtime: asEpochSeconds(now - 200),
       contentHash: asContentHash('old-hash'),
-      lastSyncAt: now - 300,
+      lastSyncAt: asEpochSeconds(now - 300),
     });
     meta.save();
 
@@ -126,7 +126,7 @@ describe('E2E: uploadedPaths — push direction', () => {
 
     const result = await engine.sync();
 
-    expect(result.stats.uploadedPaths.has('cpush.md')).toBe(false);
+    expect(result.stats.uploadedPaths.has(asRelPath('cpush.md'))).toBe(false);
     engine.close();
   });
 });
@@ -150,11 +150,11 @@ describe('E2E: gc cleans stale metadata in postSyncCleanup', () => {
     const meta = new MetadataStore(metaPath);
     const oldTs = Math.floor(Date.now() / 1000) - 40 * 86400;
 
-    meta.setFileInfo('ancient-deleted.md', {
+    meta.setFileInfo(asRelPath('ancient-deleted.md'), {
       fileId: 'f-ancient' as FileId,
-      cloudMtime: oldTs,
-      localMtime: oldTs,
-      lastSyncAt: oldTs,
+      cloudMtime: asEpochSeconds(oldTs),
+      localMtime: asEpochSeconds(oldTs),
+      lastSyncAt: asEpochSeconds(oldTs),
     });
     meta.save();
 
@@ -170,7 +170,7 @@ describe('E2E: gc cleans stale metadata in postSyncCleanup', () => {
 
     await engine.sync();
 
-    expect(meta.getFileInfo('ancient-deleted.md')).toBeNull();
+    expect(meta.getFileInfo(asRelPath('ancient-deleted.md'))).toBeNull();
     engine.close();
   });
 
@@ -178,11 +178,11 @@ describe('E2E: gc cleans stale metadata in postSyncCleanup', () => {
     const meta = new MetadataStore(metaPath);
     const recentTs = Math.floor(Date.now() / 1000) - 5 * 86400;
 
-    meta.setFileInfo('recent-deleted.md', {
+    meta.setFileInfo(asRelPath('recent-deleted.md'), {
       fileId: 'f-recent' as FileId,
-      cloudMtime: recentTs,
-      localMtime: recentTs,
-      lastSyncAt: recentTs,
+      cloudMtime: asEpochSeconds(recentTs),
+      localMtime: asEpochSeconds(recentTs),
+      lastSyncAt: asEpochSeconds(recentTs),
     });
     meta.save();
 
@@ -198,7 +198,7 @@ describe('E2E: gc cleans stale metadata in postSyncCleanup', () => {
 
     await engine.sync();
 
-    expect(meta.getFileInfo('recent-deleted.md')).not.toBeNull();
+    expect(meta.getFileInfo(asRelPath('recent-deleted.md'))).not.toBeNull();
     engine.close();
   });
 });

@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import type { RelPath } from './types/common.js';
 
 export interface GitCommitOpts {
   message?: string;
@@ -88,7 +89,7 @@ export function gitAutoCommit(localDir: string, opts?: GitCommitOpts): boolean {
  */
 export function getFileContentFromGit(
   localDir: string,
-  relPath: string,
+  relPath: RelPath,
   ref = 'HEAD',
 ): Buffer | null {
   if (!existsSync(join(localDir, '.git'))) return null;

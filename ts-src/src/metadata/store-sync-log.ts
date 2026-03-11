@@ -1,18 +1,19 @@
 import type Database from 'better-sqlite3';
+import { asEpochSeconds, asRelPath, type EpochSeconds, type RelPath } from '../types/common.js';
 
-export type NormalizePath = (localPath: string) => string;
+export type NormalizePath = (localPath: RelPath) => string;
 
 /**
  * sync_log table. Single responsibility: sync log read/write.
  */
 export function getSyncLog(
   db: Database.Database,
-  opts: { limit?: number; path?: string } | undefined,
+  opts: { limit?: number; path?: RelPath } | undefined,
   normalizePath: NormalizePath,
 ): {
   id: number;
-  timestamp: number;
-  path: string;
+  timestamp: EpochSeconds;
+  path: RelPath;
   action: string;
   direction: string | null;
   oldHash: string | null;
@@ -35,8 +36,8 @@ export function getSyncLog(
   const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
   return rows.map((r) => ({
     id: r.id as number,
-    timestamp: r.timestamp as number,
-    path: r.path as string,
+    timestamp: asEpochSeconds(r.timestamp as number),
+    path: asRelPath(r.path as string),
     action: r.action as string,
     direction: (r.direction as string) || null,
     oldHash: (r.old_hash as string) || null,

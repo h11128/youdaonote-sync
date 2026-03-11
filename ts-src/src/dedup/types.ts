@@ -1,5 +1,5 @@
 import { extname } from 'node:path';
-import type { FileId } from '../types/common.js';
+import type { FileId, RelPath } from '../types/common.js';
 
 export interface DedupStats {
   groups: number;
@@ -19,9 +19,9 @@ export interface FileDeleter {
 }
 
 export interface DedupAction {
-  removePath: string;
+  removePath: RelPath;
   cloudFileId: FileId | null;
-  keepPath: string;
+  keepPath: RelPath;
   reason: string;
 }
 
@@ -41,6 +41,6 @@ export const ASSET_EXTS = new Set([
   '.wav',
 ]);
 
-export function isAsset(path: string): boolean {
+export function isAsset(path: RelPath): boolean {
   return ASSET_EXTS.has(extname(path).toLowerCase());
 }

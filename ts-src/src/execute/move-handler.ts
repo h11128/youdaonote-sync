@@ -1,7 +1,7 @@
 import { basename, dirname, join } from 'node:path';
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import type { FileState } from '../types/state.js';
-import type { FileId } from '../types/common.js';
+import { asEpochSeconds, type FileId, type RelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { ExecuteContext, SyncStats } from './executor.js';
@@ -9,7 +9,7 @@ import { ensureParentDir } from './upload.js';
 import { retryWithBackoff } from '../api/retry.js';
 
 export interface HandleMoveOpts {
-  relPath: string;
+  relPath: RelPath;
   state: FileState;
   cloudFile: CloudFile | undefined;
   ctx: ExecuteContext;
@@ -19,7 +19,7 @@ export interface HandleMoveOpts {
 async function moveCloudFile(
   o: HandleMoveOpts,
   oldFileId: FileId,
-  oldPath: string,
+  oldPath: RelPath,
 ): Promise<boolean> {
   const { relPath, cloudFile, ctx, stats } = o;
   const { api, meta, rootDirId } = ctx;
@@ -44,7 +44,7 @@ async function moveCloudFile(
   }
 }
 
-function moveLocalFile(localDir: string, oldPath: string, relPath: string): void {
+function moveLocalFile(localDir: string, oldPath: RelPath, relPath: RelPath): void {
   const oldAbs = join(localDir, oldPath);
   const newAbs = join(localDir, relPath);
   if (!existsSync(oldAbs) || oldAbs === newAbs) return;
@@ -75,10 +75,12 @@ export async function handleMove(o: HandleMoveOpts): Promise<void> {
 
   const newLocalAbs = join(localDir, relPath);
   meta.renamePath(oldPath, relPath);
-  const localMtime = existsSync(newLocalAbs) ? Math.floor(statSync(newLocalAbs).mtimeMs / 1000) : 0;
+  const localMtime = existsSync(newLocalAbs)
+    ? asEpochSeconds(Math.floor(statSync(newLocalAbs).mtimeMs / 1000))
+    : asEpochSeconds(0);
   meta.recordSync(relPath, {
     fileId: oldFileId,
-    cloudMtime: Math.floor(Date.now() / 1000),
+    cloudMtime: asEpochSeconds(Math.floor(Date.now() / 1000)),
     localMtime,
     action: 'moved',
     direction: 'push',

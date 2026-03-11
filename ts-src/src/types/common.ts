@@ -38,6 +38,10 @@ export function asRelPath(s: string): RelPath {
   return s as RelPath;
 }
 
+export function joinRelPath(base: RelPath | '', segment: string): RelPath {
+  return (base ? `${base}/${segment}` : segment) as RelPath;
+}
+
 // ── Time constructors ──
 export function asEpochSeconds(n: number): EpochSeconds {
   return n as EpochSeconds;

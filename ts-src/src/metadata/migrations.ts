@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { asRelPath, type RelPath } from '../types/common.js';
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS files (
@@ -102,7 +103,7 @@ export interface StateAccessor {
   setState(key: string, value: string): void;
 }
 
-function computeNewPath(oldPath: string): string {
+function computeNewPath(oldPath: RelPath): RelPath {
   const slashIdx = oldPath.lastIndexOf('/');
   const prefix = slashIdx >= 0 ? oldPath.slice(0, slashIdx + 1) : '';
   const basename = slashIdx >= 0 ? oldPath.slice(slashIdx + 1) : oldPath;
@@ -110,14 +111,14 @@ function computeNewPath(oldPath: string): string {
   const stem = dotIdx >= 0 ? basename.slice(0, dotIdx) : basename;
   const ext = dotIdx >= 0 ? basename.slice(dotIdx) : '';
   const newStem = stem.trimEnd();
-  return prefix + newStem + ext;
+  return asRelPath(prefix + newStem + ext);
 }
 
 function applyPathRename(
   db: Database.Database,
   table: 'files' | 'directories',
-  oldPath: string,
-  newPath: string,
+  oldPath: RelPath,
+  newPath: RelPath,
 ): void {
   const existing = db.prepare(`SELECT 1 FROM ${table} WHERE path = ?`).get(newPath);
   if (existing) {
@@ -134,7 +135,8 @@ export function normalizeStoredPaths(db: Database.Database, accessor: StateAcces
   let renamed = 0;
   for (const table of ['files', 'directories'] as const) {
     const rows = db.prepare(`SELECT path FROM ${table}`).all() as { path: string }[];
-    for (const { path: oldPath } of rows) {
+    for (const { path: rawPath } of rows) {
+      const oldPath = asRelPath(rawPath);
       const newPath = computeNewPath(oldPath);
       if (newPath === oldPath) continue;
       applyPathRename(db, table, oldPath, newPath);
@@ -159,11 +161,12 @@ export function normalizeStoredChars(
   let renamed = 0;
   for (const table of ['files', 'directories'] as const) {
     const rows = db.prepare(`SELECT path FROM ${table}`).all() as { path: string }[];
-    for (const { path: oldPath } of rows) {
+    for (const { path: rawPath } of rows) {
+      const oldPath = asRelPath(rawPath);
       const slashIdx = oldPath.lastIndexOf('/');
       const prefix = slashIdx >= 0 ? oldPath.slice(0, slashIdx + 1) : '';
       const basename = slashIdx >= 0 ? oldPath.slice(slashIdx + 1) : oldPath;
-      const newPath = prefix + sanitize(basename);
+      const newPath = asRelPath(prefix + sanitize(basename));
       if (newPath === oldPath) continue;
       applyPathRename(db, table, oldPath, newPath);
       renamed++;

@@ -1,10 +1,13 @@
 import type Database from 'better-sqlite3';
 import {
   asEpochSeconds,
+  asRelPath,
   type ContentHash,
   type DirId,
+  type EpochSeconds,
   type FileId,
   type NoteDomain,
+  type RelPath,
 } from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
 
@@ -38,14 +41,14 @@ export function rowToMetadata(row: Record<string, unknown>): MetadataRecord {
   };
 }
 
-export function getFileId(db: Database.Database, path: string): FileId | null {
+export function getFileId(db: Database.Database, path: RelPath): FileId | null {
   const row = db.prepare('SELECT file_id FROM files WHERE path = ?').get(path) as
     | { file_id: string }
     | undefined;
   return (row?.file_id ?? null) as FileId | null;
 }
 
-export function getFileInfo(db: Database.Database, path: string): MetadataRecord | null {
+export function getFileInfo(db: Database.Database, path: RelPath): MetadataRecord | null {
   const row = db.prepare(`SELECT ${FILE_META_COLS} FROM files WHERE path = ?`).get(path) as
     | Record<string, unknown>
     | undefined;
@@ -53,24 +56,24 @@ export function getFileInfo(db: Database.Database, path: string): MetadataRecord
   return rowToMetadata(row);
 }
 
-export function markSynced(db: Database.Database, path: string, ts?: number): void {
+export function markSynced(db: Database.Database, path: RelPath, ts?: EpochSeconds): void {
   const now = ts ?? Math.floor(Date.now() / 1000);
   db.prepare('UPDATE files SET last_sync_at = ? WHERE path = ?').run(now, path);
 }
 
 export interface UpsertFileOpts {
   fileId: FileId;
-  cloudMtime: number;
-  localMtime: number;
+  cloudMtime: EpochSeconds;
+  localMtime: EpochSeconds;
   parentId?: DirId | null;
   domain?: NoteDomain | null;
   contentHash?: ContentHash | null;
-  createTime?: number | null;
-  lastSyncAt?: number;
+  createTime?: EpochSeconds | null;
+  lastSyncAt?: EpochSeconds;
   cloudContentHash?: ContentHash | null;
 }
 
-export function upsertFile(db: Database.Database, path: string, opts: UpsertFileOpts): void {
+export function upsertFile(db: Database.Database, path: RelPath, opts: UpsertFileOpts): void {
   db.prepare(
     'INSERT INTO files ' +
       '(path, file_id, cloud_mtime, local_mtime, parent_id, domain, ' +
@@ -102,13 +105,13 @@ export function upsertFile(db: Database.Database, path: string, opts: UpsertFile
 
 export function cacheCloudFileInfo(
   db: Database.Database,
-  path: string,
+  path: RelPath,
   opts: {
     fileId: FileId;
-    cloudMtime: number;
+    cloudMtime: EpochSeconds;
     parentId?: DirId | null;
     domain?: NoteDomain | null;
-    createTime?: number | null;
+    createTime?: EpochSeconds | null;
   },
 ): void {
   db.prepare(
@@ -129,11 +132,11 @@ export function cacheCloudFileInfo(
   );
 }
 
-export function removeFileInfo(db: Database.Database, path: string): void {
+export function removeFileInfo(db: Database.Database, path: RelPath): void {
   db.prepare('DELETE FROM files WHERE path = ?').run(path);
 }
 
-export function renamePath(db: Database.Database, oldPath: string, newPath: string): boolean {
+export function renamePath(db: Database.Database, oldPath: RelPath, newPath: RelPath): boolean {
   try {
     const result = db.prepare('UPDATE files SET path = ? WHERE path = ?').run(newPath, oldPath);
     if (result.changes === 0) return false;
@@ -159,48 +162,48 @@ export function renamePath(db: Database.Database, oldPath: string, newPath: stri
   }
 }
 
-export function getAllFiles(db: Database.Database): Map<string, MetadataRecord> {
+export function getAllFiles(db: Database.Database): Map<RelPath, MetadataRecord> {
   const rows = db.prepare(`SELECT path, ${FILE_META_COLS} FROM files`).all() as Record<
     string,
     unknown
   >[];
-  const result = new Map<string, MetadataRecord>();
+  const result = new Map<RelPath, MetadataRecord>();
   for (const row of rows) {
-    result.set(row.path as string, rowToMetadata(row));
+    result.set(asRelPath(row.path as string), rowToMetadata(row));
   }
   return result;
 }
 
-export function findByFileId(db: Database.Database, fileId: FileId): string | null {
+export function findByFileId(db: Database.Database, fileId: FileId): RelPath | null {
   const row = db.prepare('SELECT path FROM files WHERE file_id = ?').get(fileId) as
     | { path: string }
     | undefined;
-  return row?.path ?? null;
+  return row?.path != null ? asRelPath(row.path) : null;
 }
 
 export function findCloudFileByHash(
   db: Database.Database,
   contentHash: ContentHash,
-  excludePath?: string,
-): string | null {
+  excludePath?: RelPath,
+): RelPath | null {
   if (!contentHash) return null;
   const row = db
     .prepare(
       "SELECT path FROM files WHERE content_hash = ? AND file_id != '' AND path != ? LIMIT 1",
     )
     .get(contentHash, excludePath ?? '') as { path: string } | undefined;
-  return row?.path ?? null;
+  return row?.path != null ? asRelPath(row.path) : null;
 }
 
 export function updateContentHash(
   db: Database.Database,
-  path: string,
+  path: RelPath,
   contentHash: ContentHash,
 ): void {
   db.prepare('UPDATE files SET content_hash = ? WHERE path = ?').run(contentHash, path);
 }
 
-export function getContentHash(db: Database.Database, path: string): ContentHash | null {
+export function getContentHash(db: Database.Database, path: RelPath): ContentHash | null {
   const row = db.prepare('SELECT content_hash FROM files WHERE path = ?').get(path) as
     | { content_hash: string | null }
     | undefined;
@@ -209,26 +212,26 @@ export function getContentHash(db: Database.Database, path: string): ContentHash
 
 export function setCloudContentHash(
   db: Database.Database,
-  path: string,
+  path: RelPath,
   cloudHash: ContentHash,
 ): void {
   db.prepare('UPDATE files SET cloud_content_hash = ? WHERE path = ?').run(cloudHash, path);
 }
 
-export function getStaleFilePaths(db: Database.Database, cutoffTs: number): string[] {
+export function getStaleFilePaths(db: Database.Database, cutoffTs: EpochSeconds): RelPath[] {
   const rows = db
     .prepare('SELECT path FROM files WHERE last_sync_at > 0 AND last_sync_at < ?')
-    .all(cutoffTs) as { path: string }[];
-  return rows.map((r) => r.path);
+    .all(cutoffTs as number) as { path: string }[];
+  return rows.map((r) => asRelPath(r.path));
 }
 
-export function updateLocalMtime(db: Database.Database, path: string, mtime: number): void {
+export function updateLocalMtime(db: Database.Database, path: RelPath, mtime: EpochSeconds): void {
   db.prepare('UPDATE files SET local_mtime = ? WHERE path = ?').run(mtime, path);
 }
 
 export function updateOriginalDomain(
   db: Database.Database,
-  path: string,
+  path: RelPath,
   domain: NoteDomain,
 ): void {
   db.prepare('UPDATE files SET original_domain = ? WHERE path = ? AND original_domain IS NULL').run(
@@ -239,29 +242,29 @@ export function updateOriginalDomain(
 
 export interface CloudFileSummary {
   fileId: FileId;
-  cloudMtime: number;
+  cloudMtime: EpochSeconds;
   parentId: string;
   domain: number;
-  createTime: number;
+  createTime: EpochSeconds;
 }
 
 /**
  * Return all file records that have a non-empty file_id (for scan cache rebuild).
  */
-export function getCloudFileSummaries(db: Database.Database): Map<string, CloudFileSummary> {
+export function getCloudFileSummaries(db: Database.Database): Map<RelPath, CloudFileSummary> {
   const rows = db
     .prepare(
       "SELECT path, file_id, cloud_mtime, parent_id, domain, create_time FROM files WHERE file_id != ''",
     )
     .all() as Record<string, unknown>[];
-  const result = new Map<string, CloudFileSummary>();
+  const result = new Map<RelPath, CloudFileSummary>();
   for (const row of rows) {
-    result.set(row.path as string, {
+    result.set(asRelPath(row.path as string), {
       fileId: (getStrOrNull(row.file_id) ?? '') as FileId,
-      cloudMtime: getNum(row.cloud_mtime, 0),
+      cloudMtime: asEpochSeconds(getNum(row.cloud_mtime, 0)),
       parentId: getStrOrNull(row.parent_id) ?? '',
       domain: getNum(row.domain, 0),
-      createTime: getNum(row.create_time, 0),
+      createTime: asEpochSeconds(getNum(row.create_time, 0)),
     });
   }
   return result;
@@ -273,17 +276,17 @@ export function getCloudFileSummaries(db: Database.Database): Map<string, CloudF
  */
 export function getStaleCloudPaths(
   db: Database.Database,
-  activePaths: ReadonlySet<string>,
-): string[] {
+  activePaths: ReadonlySet<RelPath>,
+): RelPath[] {
   const rows = db.prepare("SELECT path FROM files WHERE file_id != ''").all() as {
     path: string;
   }[];
-  return rows.filter((r) => !activePaths.has(r.path)).map((r) => r.path);
+  return rows.filter((r) => !activePaths.has(asRelPath(r.path))).map((r) => asRelPath(r.path));
 }
 
 /**
  * Clear the cloud file_id for a path (mark as local-only record).
  */
-export function clearCloudId(db: Database.Database, path: string): void {
+export function clearCloudId(db: Database.Database, path: RelPath): void {
   db.prepare("UPDATE files SET file_id = '' WHERE path = ?").run(path);
 }

@@ -1,6 +1,6 @@
 import { extname } from 'node:path';
 import type { MetadataStore } from './metadata/store.js';
-import type { ContentHash } from './types/common.js';
+import type { ContentHash, EpochSeconds, RelPath } from './types/common.js';
 import type { CloudFile, LocalFile } from './types/scan.js';
 import type { FileState, SyncAction } from './types/state.js';
 import { stateToAction } from './types/state.js';
@@ -25,10 +25,10 @@ function isConflictCandidate(state: FileState): boolean {
 }
 
 function collectConflictCandidates(
-  classified: Map<string, FileState>,
-  cloudSnap: ReadonlyMap<string, CloudFile>,
-): { relPath: string; cloudFile: CloudFile }[] {
-  const candidates: { relPath: string; cloudFile: CloudFile }[] = [];
+  classified: Map<RelPath, FileState>,
+  cloudSnap: ReadonlyMap<RelPath, CloudFile>,
+): { relPath: RelPath; cloudFile: CloudFile }[] {
+  const candidates: { relPath: RelPath; cloudFile: CloudFile }[] = [];
   for (const [relPath, state] of classified) {
     if (!isConflictCandidate(state)) continue;
     if (!HASHABLE_EXTS.has(extname(relPath).toLowerCase())) continue;
@@ -43,7 +43,7 @@ function collectConflictCandidates(
  * Removes entries that don't match include patterns or that match exclude patterns.
  */
 export function filterCloudSnap(
-  cloudSnap: Map<string, CloudFile>,
+  cloudSnap: Map<RelPath, CloudFile>,
   opts: { include?: string[]; exclude?: string[] },
 ): void {
   const includeRes = (opts.include ?? []).map(patternToRegex);
@@ -66,7 +66,7 @@ export function filterCloudSnap(
  * Non-matching entries are set to 'gone' (skipped).
  */
 export function filterByDirection(
-  classified: Map<string, FileState>,
+  classified: Map<RelPath, FileState>,
   direction: 'pull' | 'push',
 ): void {
   const allowedActions: Set<SyncAction> =
@@ -84,10 +84,10 @@ export function filterByDirection(
 export { collectConflictCandidates, HASHABLE_EXTS };
 
 function collectUploadWarnings(
-  classified: Map<string, FileState>,
+  classified: Map<RelPath, FileState>,
   meta: MetadataStore,
-): { path: string; reasons: string[] }[] {
-  const warnings: { path: string; reasons: string[] }[] = [];
+): { path: RelPath; reasons: string[] }[] {
+  const warnings: { path: RelPath; reasons: string[] }[] = [];
   for (const [path, state] of classified) {
     if (stateToAction(state) !== 'upload') continue;
     const info = meta.getFileInfo(path);
@@ -106,7 +106,7 @@ function collectUploadWarnings(
   return warnings;
 }
 
-function printUploadWarnings(warnings: { path: string; reasons: string[] }[]): void {
+function printUploadWarnings(warnings: { path: RelPath; reasons: string[] }[]): void {
   console.log();
   console.log('='.repeat(60));
   console.log(`  ⚠ 可疑 UPLOAD 诊断（${warnings.length} 个文件）`);
@@ -123,7 +123,7 @@ function printUploadWarnings(warnings: { path: string; reasons: string[] }[]): v
 /**
  * Print per-item preview of sync actions (matches Python print_preview).
  */
-export function printPreview(classified: Map<string, FileState>): void {
+export function printPreview(classified: Map<RelPath, FileState>): void {
   const groups: Record<string, string[]> = {};
   for (const [path, state] of classified) {
     const action = stateToAction(state);
@@ -151,7 +151,7 @@ export function printPreview(classified: Map<string, FileState>): void {
 /**
  * Print summary of dry-run results (matches Python print_dryrun_summary).
  */
-export function printDryrunSummary(classified: Map<string, FileState>): void {
+export function printDryrunSummary(classified: Map<RelPath, FileState>): void {
   let dl = 0;
   let ul = 0;
   let conflict = 0;
@@ -189,7 +189,7 @@ export function printDryrunSummary(classified: Map<string, FileState>): void {
  * Diagnose suspicious UPLOADs in dry-run results (matches Python diagnose_dryrun).
  * Warns when a file marked for upload has metadata suggesting it was previously synced.
  */
-export function diagnoseDryrun(classified: Map<string, FileState>, meta: MetadataStore): void {
+export function diagnoseDryrun(classified: Map<RelPath, FileState>, meta: MetadataStore): void {
   printPreview(classified);
   printDryrunSummary(classified);
 
@@ -198,7 +198,7 @@ export function diagnoseDryrun(classified: Map<string, FileState>, meta: Metadat
   printUploadWarnings(warnings);
 }
 
-export function dryRunStats(classified: Map<string, FileState>): SyncStats {
+export function dryRunStats(classified: Map<RelPath, FileState>): SyncStats {
   const stats = emptyStats();
   for (const state of classified.values()) {
     const action = stateToAction(state);
@@ -224,13 +224,13 @@ export function dryRunStats(classified: Map<string, FileState>): SyncStats {
 }
 
 export function buildDedupInputs(
-  localSnap: Map<string, LocalFile>,
-  localHashes: Map<string, ContentHash | null>,
+  localSnap: Map<RelPath, LocalFile>,
+  localHashes: Map<RelPath, ContentHash | null>,
 ): {
-  localFileMap: Map<string, { path: string; mtime: number; isDir: boolean }>;
+  localFileMap: Map<RelPath, { path: string; mtime: EpochSeconds; isDir: boolean }>;
   absPathHashes: Map<string, ContentHash>;
 } {
-  const localFileMap = new Map<string, { path: string; mtime: number; isDir: boolean }>();
+  const localFileMap = new Map<RelPath, { path: string; mtime: EpochSeconds; isDir: boolean }>();
   const absPathHashes = new Map<string, ContentHash>();
   for (const [rel, info] of localSnap) {
     localFileMap.set(rel, { path: info.path, mtime: info.mtime, isDir: info.isDir });
@@ -245,11 +245,11 @@ export function buildDedupInputs(
  * Only computes for hashable extensions that haven't been computed yet.
  */
 export function warmupHashCache(
-  cloudSnap: ReadonlyMap<string, CloudFile>,
-  localSnap: ReadonlyMap<string, LocalFile>,
-  localHashes: Map<string, ContentHash | null>,
+  cloudSnap: ReadonlyMap<RelPath, CloudFile>,
+  localSnap: ReadonlyMap<RelPath, LocalFile>,
+  localHashes: Map<RelPath, ContentHash | null>,
 ): void {
-  const toCompute: { relPath: string; absPath: string }[] = [];
+  const toCompute: { relPath: RelPath; absPath: string }[] = [];
   for (const [relPath, local] of localSnap) {
     if (local.isDir || localHashes.has(relPath)) continue;
     if (!cloudSnap.has(relPath)) continue;
@@ -268,9 +268,9 @@ export function warmupHashCache(
 }
 
 export function applyRefinementIfChanged(
-  relPath: string,
+  relPath: RelPath,
   refined: FileState,
-  classified: Map<string, FileState>,
+  classified: Map<RelPath, FileState>,
 ): void {
   const current = classified.get(relPath);
   if (current && refined.kind !== current.kind) {
@@ -284,9 +284,9 @@ export function applyRefinementIfChanged(
  */
 export function cleanupStalePaths(
   meta: MetadataStore,
-  cloudSnap: ReadonlyMap<string, CloudFile>,
+  cloudSnap: ReadonlyMap<RelPath, CloudFile>,
 ): void {
-  const activeCloudPaths = new Set<string>();
+  const activeCloudPaths = new Set<RelPath>();
   for (const [path, cf] of cloudSnap) {
     if (!cf.isDir) activeCloudPaths.add(path);
   }

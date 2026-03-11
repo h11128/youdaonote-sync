@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
-import type { ContentHash, FileId } from '../types/common.js';
+import type { ContentHash, EpochSeconds, FileId, RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { DedupAction, DedupStats, FileDeleter } from './types.js';
 import { emptyDedupStats } from './types.js';
@@ -35,7 +35,7 @@ interface ExecuteRemovalsOpts {
 }
 
 function handleDryRunAction(
-  removePath: string,
+  removePath: RelPath,
   cloudFileId: string | undefined,
   reason: string,
 ): void {
@@ -52,7 +52,7 @@ interface LocalRemovalResult {
 
 interface ProcessLocalRemovalOpts {
   root: string;
-  removePath: string;
+  removePath: RelPath;
   cloudFileId: string | null;
   meta: MetadataStore;
   stats: DedupStats;
@@ -132,15 +132,15 @@ async function executeRemovals(opts: ExecuteRemovalsOpts): Promise<string[]> {
   return deleted;
 }
 
-function buildRawDuplicates(hashIndex: Map<ContentHash, string[]>): Map<ContentHash, string[]> {
-  const rawDups = new Map<ContentHash, string[]>();
+function buildRawDuplicates(hashIndex: Map<ContentHash, RelPath[]>): Map<ContentHash, RelPath[]> {
+  const rawDups = new Map<ContentHash, RelPath[]>();
   for (const [hash, paths] of hashIndex) {
     if (paths.length > 1) rawDups.set(hash, paths);
   }
   return rawDups;
 }
 
-function shouldSkipEmptyFile(root: string, firstPath: string): boolean {
+function shouldSkipEmptyFile(root: string, firstPath: RelPath): boolean {
   try {
     return statSync(join(root, firstPath)).size === 0;
   } catch {
@@ -149,10 +149,10 @@ function shouldSkipEmptyFile(root: string, firstPath: string): boolean {
 }
 
 interface CollectDedupActionsInput {
-  dupGroups: Map<string, string[]>;
+  dupGroups: Map<string, RelPath[]>;
   root: string;
   meta: MetadataStore;
-  referenced: Set<string>;
+  referenced: Set<RelPath>;
   stats: DedupStats;
 }
 
@@ -177,7 +177,7 @@ interface AutoDedupOpts {
   api?: FileDeleter;
   dryRun?: boolean;
   hashCache?: Map<string, ContentHash>;
-  localFiles?: Map<string, { path: string; mtime: number; isDir: boolean }>;
+  localFiles?: Map<RelPath, { path: string; mtime: EpochSeconds; isDir: boolean }>;
 }
 
 function runAutoDedupPipeline(

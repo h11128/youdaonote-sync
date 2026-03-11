@@ -1,4 +1,12 @@
-import { asEpochSeconds, type DirId, type FileId, type NoteDomain } from '../types/common.js';
+import {
+  asEpochSeconds,
+  asRelPath,
+  joinRelPath,
+  type DirId,
+  type FileId,
+  type NoteDomain,
+  type RelPath,
+} from '../types/common.js';
 import type { DirInfoByIdResponse } from '../types/dir.js';
 import type { CloudFile } from '../types/scan.js';
 import { mapCloudName } from './name.js';
@@ -22,7 +30,7 @@ export interface DirBrowser {
  */
 interface QueueItem {
   dirId: DirId;
-  basePath: string;
+  basePath: RelPath | '';
 }
 
 export interface ScanCloudOpts {
@@ -43,7 +51,7 @@ export async function scanCloud(
   rootDirId: DirId,
   optsOrBase?: ScanCloudOpts | string,
   maxConcurrent?: number,
-): Promise<Map<string, CloudFile>> {
+): Promise<Map<RelPath, CloudFile>> {
   if (!rootDirId) throw new Error('rootDirId must not be empty');
   const opts = normalizeOpts(optsOrBase, maxConcurrent);
   return bfsScan(api, rootDirId, opts);
@@ -53,11 +61,11 @@ async function bfsScan(
   api: DirBrowser,
   rootDirId: DirId,
   opts: ScanCloudOpts,
-): Promise<Map<string, CloudFile>> {
+): Promise<Map<RelPath, CloudFile>> {
   const concurrency = opts.maxConcurrent ?? 8;
-  const files = new Map<string, CloudFile>();
+  const files = new Map<RelPath, CloudFile>();
   const visited = new Set<string>([rootDirId]);
-  const queue: QueueItem[] = [{ dirId: rootDirId, basePath: opts.base ?? '' }];
+  const queue: QueueItem[] = [{ dirId: rootDirId, basePath: (opts.base ?? '') as RelPath | '' }];
   let inflight = 0;
   let resolveAll: (() => void) | null = null;
 
@@ -95,8 +103,8 @@ async function bfsScan(
   return files;
 }
 
-function buildRelPath(basePath: string, name: string): string {
-  return basePath ? `${basePath}/${name}` : name;
+function buildRelPath(basePath: RelPath | '', name: string): RelPath {
+  return basePath ? joinRelPath(basePath, name) : asRelPath(name);
 }
 
 function parseEntry(
@@ -109,11 +117,11 @@ function parseEntry(
     domain?: number;
   },
   dirId: DirId,
-  basePath: string,
+  basePath: RelPath | '',
 ): {
-  rel: string;
+  rel: RelPath;
   cloudFile: CloudFile;
-  subdir?: { dirId: DirId; basePath: string } | undefined;
+  subdir?: { dirId: DirId; basePath: RelPath } | undefined;
 } | null {
   if (fe.name.startsWith('.')) return null;
   const isDir = fe.dir ?? false;
@@ -136,11 +144,11 @@ function parseEntry(
 async function fetchDir(
   api: DirBrowser,
   dirId: DirId,
-  basePath: string,
+  basePath: RelPath | '',
   retryOpts?: { maxRetries?: number; baseDelay?: number },
 ): Promise<{
-  entries: [string, CloudFile][];
-  subdirs: { dirId: DirId; basePath: string }[];
+  entries: [RelPath, CloudFile][];
+  subdirs: { dirId: DirId; basePath: RelPath }[];
 }> {
   let data: Awaited<ReturnType<DirBrowser['getDirInfoById']>>;
   try {
@@ -152,8 +160,8 @@ async function fetchDir(
     return { entries: [], subdirs: [] };
   }
 
-  const entries: [string, CloudFile][] = [];
-  const subdirs: { dirId: DirId; basePath: string }[] = [];
+  const entries: [RelPath, CloudFile][] = [];
+  const subdirs: { dirId: DirId; basePath: RelPath }[] = [];
   for (const entry of data.entries ?? []) {
     const parsed = parseEntry(entry.fileEntry, dirId, basePath);
     if (!parsed) continue;

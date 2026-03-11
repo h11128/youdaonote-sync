@@ -1,7 +1,16 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { ContentHash, DirId, FileId, NoteDomain } from '../types/common.js';
+import {
+  asEpochSeconds,
+  asRelPath,
+  type ContentHash,
+  type DirId,
+  type EpochSeconds,
+  type FileId,
+  type NoteDomain,
+  type RelPath,
+} from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
 import { runAllMigrations } from './migrations.js';
 import { sanitizeFilename, normalizeSep } from '../util/path.js';
@@ -42,35 +51,35 @@ export class MetadataStore {
 
   // ========== Path normalization ==========
 
-  private normalizePath(localPath: string): string {
-    return normalizeSep(localPath);
+  private normalizePath(localPath: RelPath): RelPath {
+    return asRelPath(normalizeSep(localPath));
   }
 
   // ========== File methods (delegate to store-files) ==========
 
-  getFileId(localPath: string): FileId | null {
+  getFileId(localPath: RelPath): FileId | null {
     return storeFiles.getFileId(this.db, this.normalizePath(localPath));
   }
 
-  getFileInfo(localPath: string): MetadataRecord | null {
+  getFileInfo(localPath: RelPath): MetadataRecord | null {
     return storeFiles.getFileInfo(this.db, this.normalizePath(localPath));
   }
 
-  markSynced(localPath: string, ts?: number): void {
+  markSynced(localPath: RelPath, ts?: EpochSeconds): void {
     storeFiles.markSynced(this.db, this.normalizePath(localPath), ts);
   }
 
   setFileInfo(
-    localPath: string,
+    localPath: RelPath,
     opts: {
       fileId: FileId;
-      cloudMtime: number;
-      localMtime: number;
+      cloudMtime: EpochSeconds;
+      localMtime: EpochSeconds;
       parentId?: DirId | null;
       domain?: NoteDomain | null;
       contentHash?: ContentHash | null;
-      createTime?: number | null;
-      lastSyncAt?: number;
+      createTime?: EpochSeconds | null;
+      lastSyncAt?: EpochSeconds;
       cloudContentHash?: ContentHash | null;
     },
   ): void {
@@ -79,17 +88,17 @@ export class MetadataStore {
   }
 
   recordSync(
-    localPath: string,
+    localPath: RelPath,
     opts: {
       fileId: FileId;
-      cloudMtime: number;
-      localMtime: number;
+      cloudMtime: EpochSeconds;
+      localMtime: EpochSeconds;
       parentId?: DirId | null;
       domain?: NoteDomain | null;
       contentHash?: ContentHash | null;
       cloudContentHash?: ContentHash | null;
       originalDomain?: NoteDomain | null;
-      createTime?: number | null;
+      createTime?: EpochSeconds | null;
       action?: string;
       direction?: string;
       oldHash?: ContentHash | null;
@@ -97,7 +106,7 @@ export class MetadataStore {
     },
   ): void {
     if (!localPath) throw new Error('localPath must not be empty');
-    const now = Math.floor(Date.now() / 1000);
+    const now = asEpochSeconds(Math.floor(Date.now() / 1000));
     const path = this.normalizePath(localPath);
 
     const txn = this.db.transaction(() => {
@@ -122,60 +131,60 @@ export class MetadataStore {
   }
 
   cacheCloudFileInfo(
-    localPath: string,
+    localPath: RelPath,
     opts: {
       fileId: FileId;
-      cloudMtime: number;
+      cloudMtime: EpochSeconds;
       parentId?: DirId | null;
       domain?: NoteDomain | null;
-      createTime?: number | null;
+      createTime?: EpochSeconds | null;
     },
   ): void {
     if (!localPath) throw new Error('localPath must not be empty');
     storeFiles.cacheCloudFileInfo(this.db, this.normalizePath(localPath), opts);
   }
 
-  removeFileInfo(localPath: string): void {
+  removeFileInfo(localPath: RelPath): void {
     storeFiles.removeFileInfo(this.db, this.normalizePath(localPath));
   }
 
-  renamePath(oldPath: string, newPath: string): boolean {
+  renamePath(oldPath: RelPath, newPath: RelPath): boolean {
     return storeFiles.renamePath(this.db, this.normalizePath(oldPath), this.normalizePath(newPath));
   }
 
-  getAllFiles(): Map<string, MetadataRecord> {
+  getAllFiles(): Map<RelPath, MetadataRecord> {
     return storeFiles.getAllFiles(this.db);
   }
 
-  getCloudFileSummaries(): Map<string, storeFiles.CloudFileSummary> {
+  getCloudFileSummaries(): Map<RelPath, storeFiles.CloudFileSummary> {
     return storeFiles.getCloudFileSummaries(this.db);
   }
 
   // ========== Directory methods (delegate to store-dirs) ==========
 
-  getDirId(localPath: string): DirId | null {
+  getDirId(localPath: RelPath): DirId | null {
     return storeDirs.getDirId(this.db, this.normalizePath(localPath));
   }
 
-  setDirInfo(localPath: string, dirId: DirId, parentId?: DirId | null): void {
+  setDirInfo(localPath: RelPath, dirId: DirId, parentId?: DirId | null): void {
     storeDirs.setDirInfo(this.db, this.normalizePath(localPath), dirId, parentId);
   }
 
-  removeDir(localPath: string): void {
+  removeDir(localPath: RelPath): void {
     storeDirs.removeDir(this.db, this.normalizePath(localPath));
   }
 
-  getAllDirs(): Map<string, { dirId: DirId; parentId: DirId | null }> {
+  getAllDirs(): Map<RelPath, { dirId: DirId; parentId: DirId | null }> {
     return storeDirs.getAllDirs(this.db);
   }
 
   // ========== Lookup methods ==========
 
-  findByFileId(fileId: FileId): string | null {
+  findByFileId(fileId: FileId): RelPath | null {
     return storeFiles.findByFileId(this.db, fileId);
   }
 
-  findCloudFileByHash(contentHash: ContentHash, excludePath?: string): string | null {
+  findCloudFileByHash(contentHash: ContentHash, excludePath?: RelPath): RelPath | null {
     return storeFiles.findCloudFileByHash(
       this.db,
       contentHash,
@@ -183,21 +192,21 @@ export class MetadataStore {
     );
   }
 
-  findByDirId(dirId: DirId): string | null {
+  findByDirId(dirId: DirId): RelPath | null {
     return storeDirs.findByDirId(this.db, dirId);
   }
 
   // ========== Content hash ==========
 
-  updateContentHash(localPath: string, contentHash: ContentHash): void {
+  updateContentHash(localPath: RelPath, contentHash: ContentHash): void {
     storeFiles.updateContentHash(this.db, this.normalizePath(localPath), contentHash);
   }
 
-  getContentHash(localPath: string): ContentHash | null {
+  getContentHash(localPath: RelPath): ContentHash | null {
     return storeFiles.getContentHash(this.db, this.normalizePath(localPath));
   }
 
-  setCloudContentHash(localPath: string, cloudHash: ContentHash): void {
+  setCloudContentHash(localPath: RelPath, cloudHash: ContentHash): void {
     storeFiles.setCloudContentHash(this.db, this.normalizePath(localPath), cloudHash);
   }
 
@@ -215,10 +224,10 @@ export class MetadataStore {
     return storeState.getStateInt(this.db, key, defaultValue);
   }
 
-  getSyncLog(opts?: { limit?: number; path?: string }): {
+  getSyncLog(opts?: { limit?: number; path?: RelPath }): {
     id: number;
-    timestamp: number;
-    path: string;
+    timestamp: EpochSeconds;
+    path: RelPath;
     action: string;
     direction: string | null;
     oldHash: string | null;
@@ -229,27 +238,27 @@ export class MetadataStore {
     return storeState.getSyncLog(this.db, opts, (p) => this.normalizePath(p));
   }
 
-  saveBaseContent(localPath: string, content: Buffer, hash: string): void {
+  saveBaseContent(localPath: RelPath, content: Buffer, hash: string): void {
     storeState.saveBaseContent(this.db, this.normalizePath(localPath), content, hash);
   }
 
-  getBaseContent(localPath: string): { content: Buffer; hash: string } | null {
+  getBaseContent(localPath: RelPath): { content: Buffer; hash: string } | null {
     return storeState.getBaseContent(this.db, this.normalizePath(localPath));
   }
 
-  removeBaseContent(localPath: string): void {
+  removeBaseContent(localPath: RelPath): void {
     storeState.removeBaseContent(this.db, this.normalizePath(localPath));
   }
 
-  getFileRefs(sourcePath: string): string[] {
+  getFileRefs(sourcePath: RelPath): string[] {
     return storeState.getFileRefs(this.db, this.normalizePath(sourcePath));
   }
 
-  setFileRefs(sourcePath: string, refs: string[]): void {
+  setFileRefs(sourcePath: RelPath, refs: string[]): void {
     storeState.setFileRefs(this.db, this.normalizePath(sourcePath), refs);
   }
 
-  getAllFileRefs(): Map<string, string[]> {
+  getAllFileRefs(): Map<RelPath, string[]> {
     return storeState.getAllFileRefs(this.db);
   }
 
@@ -272,31 +281,31 @@ export class MetadataStore {
 
   // ========== Health operations (gc / heal internals) ==========
 
-  getStaleFilePaths(cutoffTs: number): string[] {
+  getStaleFilePaths(cutoffTs: EpochSeconds): RelPath[] {
     return storeFiles.getStaleFilePaths(this.db, cutoffTs);
   }
 
-  getAllDirPaths(): string[] {
+  getAllDirPaths(): RelPath[] {
     return storeDirs.getAllDirPaths(this.db);
   }
 
-  deleteSyncLogBefore(cutoffTs: number): number {
+  deleteSyncLogBefore(cutoffTs: EpochSeconds): number {
     return storeState.deleteSyncLogBefore(this.db, cutoffTs);
   }
 
-  getAllBaseContentPaths(): string[] {
+  getAllBaseContentPaths(): RelPath[] {
     return storeState.getAllBaseContentPaths(this.db);
   }
 
-  updateLocalMtime(localPath: string, mtime: number): void {
+  updateLocalMtime(localPath: RelPath, mtime: EpochSeconds): void {
     storeFiles.updateLocalMtime(this.db, this.normalizePath(localPath), mtime);
   }
 
-  getStaleCloudPaths(activePaths: ReadonlySet<string>): string[] {
+  getStaleCloudPaths(activePaths: ReadonlySet<RelPath>): RelPath[] {
     return storeFiles.getStaleCloudPaths(this.db, activePaths);
   }
 
-  clearCloudId(localPath: string): void {
+  clearCloudId(localPath: RelPath): void {
     storeFiles.clearCloudId(this.db, this.normalizePath(localPath));
   }
 

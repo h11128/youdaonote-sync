@@ -1,7 +1,7 @@
 import { readdirSync, statSync, type Dirent } from 'node:fs';
 import { join, relative, extname, dirname } from 'node:path';
 import type { LocalFile } from '../types/scan.js';
-import { asEpochSeconds } from '../types/common.js';
+import { asEpochSeconds, asRelPath, type RelPath } from '../types/common.js';
 import { normalizeSep, mapCloudName } from './name.js';
 
 const LOCAL_ARTIFACT_DIRS = new Set(['images', 'attachments']);
@@ -18,7 +18,7 @@ function processEntry(
   entry: Dirent,
   scanDir: string,
   localDir: string,
-  result: Map<string, LocalFile>,
+  result: Map<RelPath, LocalFile>,
 ): void {
   if (entry.name.startsWith('.')) return;
   if (entry.isSymbolicLink()) return;
@@ -26,7 +26,7 @@ function processEntry(
   if (entry.isDirectory()) {
     if (LOCAL_ARTIFACT_DIRS.has(entry.name)) return;
     const fullPath = join(scanDir, entry.name);
-    const rel = normalizeSep(relative(localDir, fullPath));
+    const rel = asRelPath(normalizeSep(relative(localDir, fullPath)));
     try {
       const st = statSync(fullPath);
       result.set(rel, {
@@ -47,11 +47,11 @@ function processEntry(
 
 export function scanLocal(
   localDir: string,
-  basePath = '',
+  basePath: RelPath | '' = '',
   opts?: { include?: string[]; exclude?: string[] },
-): Map<string, LocalFile> {
+): Map<RelPath, LocalFile> {
   const scanDir = basePath ? join(localDir, basePath) : localDir;
-  const result = new Map<string, LocalFile>();
+  const result = new Map<RelPath, LocalFile>();
 
   let entries: Dirent[];
   try {
@@ -80,7 +80,7 @@ function processRecursiveEntry(
   entry: Dirent,
   dirpath: string,
   localDir: string,
-  target: Map<string, LocalFile>,
+  target: Map<RelPath, LocalFile>,
 ): void {
   if (entry.name.startsWith('.')) return;
   if (entry.isSymbolicLink()) return;
@@ -88,7 +88,7 @@ function processRecursiveEntry(
     if (entry.isDirectory()) {
       if (LOCAL_ARTIFACT_DIRS.has(entry.name)) return;
       const fullPath = join(dirpath, entry.name);
-      const rel = normalizeSep(relative(localDir, fullPath));
+      const rel = asRelPath(normalizeSep(relative(localDir, fullPath)));
       const st = statSync(fullPath);
       target.set(rel, {
         path: fullPath,
@@ -106,8 +106,8 @@ function processRecursiveEntry(
   }
 }
 
-function scandirRecursive(dirpath: string, localDir: string): Map<string, LocalFile> {
-  const target = new Map<string, LocalFile>();
+function scandirRecursive(dirpath: string, localDir: string): Map<RelPath, LocalFile> {
+  const target = new Map<RelPath, LocalFile>();
   let entries: Dirent[];
   try {
     entries = readdirSync(dirpath, { withFileTypes: true, encoding: 'utf-8' });
@@ -124,12 +124,12 @@ function addLocalFile(
   fullPath: string,
   name: string,
   localDir: string,
-  target: Map<string, LocalFile>,
+  target: Map<RelPath, LocalFile>,
 ): void {
   const ext = extname(name);
   const mappedName = mapCloudName(name);
   const parentDir = dirname(fullPath);
-  const rel = normalizeSep(relative(localDir, join(parentDir, mappedName)));
+  const rel = asRelPath(normalizeSep(relative(localDir, join(parentDir, mappedName))));
 
   // When both .note and .md exist for the same stem, .md takes priority
   if (target.has(rel) && (ext === '.note' || ext === '.clip')) return;
@@ -147,11 +147,11 @@ function addLocalFile(
   }
 }
 
-function compileFilter(include: string[], exclude: string[]): (path: string) => boolean {
+function compileFilter(include: string[], exclude: string[]): (path: RelPath) => boolean {
   const includeRes = include.map(patternToRegex);
   const excludeRes = exclude.map(patternToRegex);
 
-  return (path: string) => {
+  return (path: RelPath) => {
     if (excludeRes.some((re) => re.test(path))) return false;
     if (includeRes.length === 0) return true;
     return includeRes.some((re) => re.test(path));

@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3';
+import { type RelPath, asRelPath } from '../types/common.js';
 
 /**
  * file_base table (three-way merge). Single responsibility: file base content storage.
  */
 export function saveBaseContent(
   db: Database.Database,
-  path: string,
+  path: RelPath,
   content: Buffer,
   hash: string,
 ): void {
@@ -17,7 +18,7 @@ export function saveBaseContent(
 
 export function getBaseContent(
   db: Database.Database,
-  path: string,
+  path: RelPath,
 ): { content: Buffer; hash: string } | null {
   const row = db.prepare('SELECT content, hash FROM file_base WHERE path = ?').get(path) as
     | { content: Buffer; hash: string }
@@ -26,25 +27,25 @@ export function getBaseContent(
   return { content: Buffer.from(row.content), hash: row.hash };
 }
 
-export function removeBaseContent(db: Database.Database, path: string): void {
+export function removeBaseContent(db: Database.Database, path: RelPath): void {
   db.prepare('DELETE FROM file_base WHERE path = ?').run(path);
 }
 
-export function getAllBaseContentPaths(db: Database.Database): string[] {
+export function getAllBaseContentPaths(db: Database.Database): RelPath[] {
   const rows = db.prepare('SELECT path FROM file_base').all() as { path: string }[];
-  return rows.map((r) => r.path);
+  return rows.map((r) => asRelPath(r.path));
 }
 
 // ========== file_refs (incremental ref caching for dedup) ==========
 
-export function getFileRefs(db: Database.Database, sourcePath: string): string[] {
+export function getFileRefs(db: Database.Database, sourcePath: RelPath): string[] {
   const rows = db
     .prepare('SELECT ref_path FROM file_refs WHERE source_path = ?')
     .all(sourcePath) as { ref_path: string }[];
   return rows.map((r) => r.ref_path);
 }
 
-export function setFileRefs(db: Database.Database, sourcePath: string, refs: string[]): void {
+export function setFileRefs(db: Database.Database, sourcePath: RelPath, refs: string[]): void {
   db.prepare('DELETE FROM file_refs WHERE source_path = ?').run(sourcePath);
   if (refs.length > 0) {
     const insert = db.prepare(
@@ -56,16 +57,17 @@ export function setFileRefs(db: Database.Database, sourcePath: string, refs: str
   }
 }
 
-export function getAllFileRefs(db: Database.Database): Map<string, string[]> {
+export function getAllFileRefs(db: Database.Database): Map<RelPath, string[]> {
   const rows = db.prepare('SELECT source_path, ref_path FROM file_refs').all() as {
     source_path: string;
     ref_path: string;
   }[];
-  const result = new Map<string, string[]>();
+  const result = new Map<RelPath, string[]>();
   for (const { source_path, ref_path } of rows) {
-    const list = result.get(source_path) ?? [];
+    const key = asRelPath(source_path);
+    const list = result.get(key) ?? [];
     list.push(ref_path);
-    result.set(source_path, list);
+    result.set(key, list);
   }
   return result;
 }

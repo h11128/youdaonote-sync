@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import { YoudaoNoteApi } from '../api/client.js';
-import type { DirId, FileId, ContentHash } from '../types/common.js';
+import type { DirId, EpochSeconds, FileId, ContentHash, RelPath } from '../types/common.js';
+import { joinRelPath } from '../types/common.js';
 import { NoteDomain } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { markdownToNoteJson } from '../convert/md-to-note.js';
@@ -38,7 +39,7 @@ const TEXT_EXTS = new Set([
 
 export interface UploadResult {
   readonly fileId: FileId;
-  readonly cloudMtime: number;
+  readonly cloudMtime: EpochSeconds;
 }
 
 /**
@@ -48,17 +49,17 @@ export interface UploadResult {
 export async function ensureParentDir(
   api: YoudaoNoteApi,
   meta: MetadataStore,
-  relPath: string,
+  relPath: RelPath,
   rootDirId: DirId,
 ): Promise<DirId> {
   const parts = normalizeSep(relPath).split('/');
   parts.pop(); // remove filename
 
   let parentId = rootDirId;
-  let currentPath = '';
+  let currentPath = '' as RelPath | '';
 
   for (const part of parts) {
-    currentPath = currentPath ? `${currentPath}/${part}` : part;
+    currentPath = joinRelPath(currentPath, part);
 
     const cached = meta.getDirId(currentPath);
     if (cached) {
@@ -82,7 +83,7 @@ export interface UploadFileOpts {
   api: YoudaoNoteApi;
   meta: MetadataStore;
   localPath: string;
-  relPath: string;
+  relPath: RelPath;
   rootDirId: DirId;
   existingFileId?: FileId;
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
@@ -92,10 +93,10 @@ function isTextFile(ext: string): boolean {
   return TEXT_EXTS.has(ext);
 }
 
-function extractCloudMtime(result: Record<string, unknown>): number {
+function extractCloudMtime(result: Record<string, unknown>): EpochSeconds {
   const entry = (result.entry ?? result.fileEntry ?? {}) as Record<string, unknown>;
   const mtimeVal = entry.modifyTimeForSort;
-  return typeof mtimeVal === 'number' ? mtimeVal : Math.floor(Date.now() / 1000);
+  return (typeof mtimeVal === 'number' ? mtimeVal : Math.floor(Date.now() / 1000)) as EpochSeconds;
 }
 
 /**

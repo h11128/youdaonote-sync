@@ -1,10 +1,11 @@
 import { join, relative } from 'node:path';
 import { readdirSync, statSync } from 'node:fs';
+import { asEpochSeconds, asRelPath, type EpochSeconds, type RelPath } from '../types/common.js';
 
 export interface WalkEntry {
-  rel: string;
+  rel: RelPath;
   absPath: string;
-  mtime: number;
+  mtime: EpochSeconds;
   isMd: boolean;
 }
 
@@ -25,13 +26,13 @@ export function walkFiles(dir: string, root: string, cb: (entry: WalkEntry) => v
     if (ent.isDirectory()) {
       walkFiles(full, root, cb);
     } else {
-      let mtime: number;
+      let mtime: EpochSeconds;
       try {
-        mtime = Math.floor(statSync(full).mtimeMs / 1000);
+        mtime = asEpochSeconds(Math.floor(statSync(full).mtimeMs / 1000));
       } catch {
         continue;
       }
-      const rel = relative(root, full).replace(/\\/g, '/');
+      const rel = asRelPath(relative(root, full).replace(/\\/g, '/'));
       cb({ rel, absPath: full, mtime, isMd: ent.name.endsWith('.md') });
     }
   }

@@ -1,25 +1,25 @@
-import type { ContentHash } from '../types/common.js';
+import { asRelPath, type ContentHash, type EpochSeconds, type RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 
 /**
  * Simple duplicate finder (backward compat, metadata-only).
  * Returns hash → duplicate paths (excludes the "keeper").
  */
-export function findDuplicates(meta: MetadataStore): Map<ContentHash, string[]> {
+export function findDuplicates(meta: MetadataStore): Map<ContentHash, RelPath[]> {
   const allFiles = meta.getAllFiles();
-  const byHash = new Map<ContentHash, { path: string; syncAt: number }[]>();
+  const byHash = new Map<ContentHash, { path: RelPath; syncAt: EpochSeconds }[]>();
 
   for (const [path, record] of allFiles) {
     if (!record.contentHash) continue;
     const list = byHash.get(record.contentHash) ?? [];
-    list.push({ path, syncAt: record.lastSyncAt });
+    list.push({ path: asRelPath(path), syncAt: record.lastSyncAt });
     byHash.set(record.contentHash, list);
   }
 
-  const duplicates = new Map<ContentHash, string[]>();
+  const duplicates = new Map<ContentHash, RelPath[]>();
   for (const [hash, entries] of byHash) {
     if (entries.length <= 1) continue;
-    entries.sort((a, b) => b.syncAt - a.syncAt);
+    entries.sort((a, b) => (b.syncAt as number) - (a.syncAt as number));
     duplicates.set(
       hash,
       entries.slice(1).map((e) => e.path),

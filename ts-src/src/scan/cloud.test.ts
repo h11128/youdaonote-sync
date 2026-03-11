@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { scanCloud } from './cloud.js';
 import type { DirBrowser } from './cloud.js';
-import { asDirId } from '../types/common.js';
+import { asDirId, asRelPath } from '../types/common.js';
 
 function mockApi(
   tree: Record<
@@ -46,9 +46,9 @@ describe('scanCloud', () => {
 
     const result = await scanCloud(api, asDirId('root-dir'));
 
-    expect(result.has('hello.md')).toBe(true);
-    expect(result.has('world.md')).toBe(true); // .note → .md
-    expect(result.get('hello.md')!.mtime).toBe(1000);
+    expect(result.has(asRelPath('hello.md'))).toBe(true);
+    expect(result.has(asRelPath('world.md'))).toBe(true); // .note → .md
+    expect(result.get(asRelPath('hello.md'))!.mtime).toBe(1000);
   });
 
   it('recurses into subdirectories', async () => {
@@ -62,9 +62,9 @@ describe('scanCloud', () => {
 
     const result = await scanCloud(api, asDirId('root-dir'));
 
-    expect(result.has('root.md')).toBe(true);
-    expect(result.has('docs')).toBe(true);
-    expect(result.has('docs/nested.md')).toBe(true);
+    expect(result.has(asRelPath('root.md'))).toBe(true);
+    expect(result.has(asRelPath('docs'))).toBe(true);
+    expect(result.has(asRelPath('docs/nested.md'))).toBe(true);
   });
 
   it('skips dot-prefixed entries', async () => {
@@ -77,8 +77,8 @@ describe('scanCloud', () => {
 
     const result = await scanCloud(api, asDirId('root-dir'));
 
-    expect(result.has('.hidden')).toBe(false);
-    expect(result.has('visible.md')).toBe(true);
+    expect(result.has(asRelPath('.hidden'))).toBe(false);
+    expect(result.has(asRelPath('visible.md'))).toBe(true);
   });
 
   it('throws on empty rootDirId', async () => {

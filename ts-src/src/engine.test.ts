@@ -6,7 +6,7 @@ import { SyncEngine } from './engine.js';
 import { filterCloudSnap, filterByDirection } from './engine-helpers.js';
 import type { YoudaoNoteApi } from './api/client.js';
 import { asDirId, asEpochSeconds, asFileId, asRelPath } from './types/common.js';
-import type { NoteDomain } from './types/common.js';
+import type { NoteDomain, RelPath } from './types/common.js';
 import type { CloudFile } from './types/scan.js';
 import type { FileState } from './types/state.js';
 import type { DirInfoByIdResponse } from './types/dir.js';
@@ -65,33 +65,33 @@ function fakeCloudFile(name: string): CloudFile {
 
 describe('filterCloudSnap', () => {
   it('removes entries matching exclude patterns', () => {
-    const snap = new Map<string, CloudFile>([
-      ['keep.md', fakeCloudFile('keep.md')],
-      ['secret.md', fakeCloudFile('secret.md')],
-      ['dir/secret-too.md', fakeCloudFile('secret-too.md')],
+    const snap = new Map<RelPath, CloudFile>([
+      [asRelPath('keep.md'), fakeCloudFile('keep.md')],
+      [asRelPath('secret.md'), fakeCloudFile('secret.md')],
+      [asRelPath('dir/secret-too.md'), fakeCloudFile('secret-too.md')],
     ]);
 
     filterCloudSnap(snap, { exclude: ['secret*'] });
 
-    expect([...snap.keys()]).toEqual(['keep.md']);
+    expect([...snap.keys()]).toEqual([asRelPath('keep.md')]);
   });
 
   it('keeps only entries matching include patterns', () => {
-    const snap = new Map<string, CloudFile>([
-      ['notes/a.md', fakeCloudFile('a.md')],
-      ['notes/b.txt', fakeCloudFile('b.txt')],
-      ['other/c.md', fakeCloudFile('c.md')],
+    const snap = new Map<RelPath, CloudFile>([
+      [asRelPath('notes/a.md'), fakeCloudFile('a.md')],
+      [asRelPath('notes/b.txt'), fakeCloudFile('b.txt')],
+      [asRelPath('other/c.md'), fakeCloudFile('c.md')],
     ]);
 
     filterCloudSnap(snap, { include: ['*.md'] });
 
-    expect(snap.has('notes/a.md')).toBe(true);
-    expect(snap.has('other/c.md')).toBe(true);
-    expect(snap.has('notes/b.txt')).toBe(false);
+    expect(snap.has(asRelPath('notes/a.md'))).toBe(true);
+    expect(snap.has(asRelPath('other/c.md'))).toBe(true);
+    expect(snap.has(asRelPath('notes/b.txt'))).toBe(false);
   });
 
   it('no-ops when both include and exclude are empty', () => {
-    const snap = new Map<string, CloudFile>([['a.md', fakeCloudFile('a.md')]]);
+    const snap = new Map<RelPath, CloudFile>([[asRelPath('a.md'), fakeCloudFile('a.md')]]);
 
     filterCloudSnap(snap, {});
 
@@ -99,50 +99,50 @@ describe('filterCloudSnap', () => {
   });
 
   it('exclude takes precedence over include', () => {
-    const snap = new Map<string, CloudFile>([
-      ['notes/keep.md', fakeCloudFile('keep.md')],
-      ['notes/secret.md', fakeCloudFile('secret.md')],
+    const snap = new Map<RelPath, CloudFile>([
+      [asRelPath('notes/keep.md'), fakeCloudFile('keep.md')],
+      [asRelPath('notes/secret.md'), fakeCloudFile('secret.md')],
     ]);
 
     filterCloudSnap(snap, { include: ['*.md'], exclude: ['secret*'] });
 
-    expect(snap.has('notes/keep.md')).toBe(true);
-    expect(snap.has('notes/secret.md')).toBe(false);
+    expect(snap.has(asRelPath('notes/keep.md'))).toBe(true);
+    expect(snap.has(asRelPath('notes/secret.md'))).toBe(false);
   });
 });
 
 describe('filterByDirection', () => {
   it('pull keeps downloads and conflicts, removes uploads', () => {
-    const classified = new Map<string, FileState>([
-      ['cloud-new.md', { kind: 'cloudNew' }],
-      ['local-new.md', { kind: 'localNew' }],
-      ['conflict.md', { kind: 'conflict' }],
-      ['synced.md', { kind: 'synced' }],
-      ['moved.md', { kind: 'moved', oldPath: asRelPath('old.md') }],
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('cloud-new.md'), { kind: 'cloudNew' }],
+      [asRelPath('local-new.md'), { kind: 'localNew' }],
+      [asRelPath('conflict.md'), { kind: 'conflict' }],
+      [asRelPath('synced.md'), { kind: 'synced' }],
+      [asRelPath('moved.md'), { kind: 'moved', oldPath: asRelPath('old.md') }],
     ]);
 
     filterByDirection(classified, 'pull');
 
-    expect(classified.get('cloud-new.md')?.kind).toBe('cloudNew');
-    expect(classified.get('conflict.md')?.kind).toBe('conflict');
-    expect(classified.get('local-new.md')?.kind).toBe('gone');
-    expect(classified.get('synced.md')?.kind).toBe('synced');
-    expect(classified.get('moved.md')?.kind).toBe('moved');
+    expect(classified.get(asRelPath('cloud-new.md'))?.kind).toBe('cloudNew');
+    expect(classified.get(asRelPath('conflict.md'))?.kind).toBe('conflict');
+    expect(classified.get(asRelPath('local-new.md'))?.kind).toBe('gone');
+    expect(classified.get(asRelPath('synced.md'))?.kind).toBe('synced');
+    expect(classified.get(asRelPath('moved.md'))?.kind).toBe('moved');
   });
 
   it('push keeps uploads, removes downloads and conflicts', () => {
-    const classified = new Map<string, FileState>([
-      ['cloud-new.md', { kind: 'cloudNew' }],
-      ['local-new.md', { kind: 'localNew' }],
-      ['conflict.md', { kind: 'conflict' }],
-      ['local-mod.md', { kind: 'localModified' }],
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('cloud-new.md'), { kind: 'cloudNew' }],
+      [asRelPath('local-new.md'), { kind: 'localNew' }],
+      [asRelPath('conflict.md'), { kind: 'conflict' }],
+      [asRelPath('local-mod.md'), { kind: 'localModified' }],
     ]);
 
     filterByDirection(classified, 'push');
 
-    expect(classified.get('local-new.md')?.kind).toBe('localNew');
-    expect(classified.get('local-mod.md')?.kind).toBe('localModified');
-    expect(classified.get('cloud-new.md')?.kind).toBe('gone');
-    expect(classified.get('conflict.md')?.kind).toBe('gone');
+    expect(classified.get(asRelPath('local-new.md'))?.kind).toBe('localNew');
+    expect(classified.get(asRelPath('local-mod.md'))?.kind).toBe('localModified');
+    expect(classified.get(asRelPath('cloud-new.md'))?.kind).toBe('gone');
+    expect(classified.get(asRelPath('conflict.md'))?.kind).toBe('gone');
   });
 });

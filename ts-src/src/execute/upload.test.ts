@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { uploadFile } from './upload.js';
 import { MetadataStore } from '../metadata/store.js';
-import { asDirId, asFileId } from '../types/common.js';
+import { asDirId, asFileId, asRelPath } from '../types/common.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 
 function makeMockApi(): YoudaoNoteApi {
@@ -62,7 +62,7 @@ describe('uploadFile: text routing', () => {
       api,
       meta: env.meta,
       localPath,
-      relPath: 'doc.md',
+      relPath: asRelPath('doc.md'),
       rootDirId: asDirId('root'),
     });
 
@@ -79,7 +79,7 @@ describe('uploadFile: text routing', () => {
       api,
       meta: env.meta,
       localPath,
-      relPath: 'readme.txt',
+      relPath: asRelPath('readme.txt'),
       rootDirId: asDirId('root'),
     });
 
@@ -96,7 +96,7 @@ describe('uploadFile: text routing', () => {
       api,
       meta: env.meta,
       localPath,
-      relPath: 'doc.md',
+      relPath: asRelPath('doc.md'),
       rootDirId: asDirId('root'),
       existingFileId: asFileId('existing-123'),
     });
@@ -119,7 +119,7 @@ describe('uploadFile: binary routing', () => {
       api,
       meta: env.meta,
       localPath,
-      relPath: 'doc.pdf',
+      relPath: asRelPath('doc.pdf'),
       rootDirId: asDirId('root'),
     });
 
@@ -140,7 +140,7 @@ describe('uploadFile: binary routing', () => {
       api,
       meta: env.meta,
       localPath,
-      relPath: 'image.png',
+      relPath: asRelPath('image.png'),
       rootDirId: asDirId('root'),
     });
 
@@ -157,7 +157,7 @@ describe('uploadFile: binary routing', () => {
       api,
       meta: env.meta,
       localPath,
-      relPath: 'report.docx',
+      relPath: asRelPath('report.docx'),
       rootDirId: asDirId('root'),
     });
 

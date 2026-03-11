@@ -13,7 +13,13 @@ import { platform, env } from 'node:process';
 import { homedir } from 'node:os';
 import Database from 'better-sqlite3';
 import type { MetadataStore } from './metadata/store.js';
-import type { DirId, FileId } from './types/common.js';
+import {
+  asEpochSeconds,
+  joinRelPath,
+  type DirId,
+  type FileId,
+  type RelPath,
+} from './types/common.js';
 import { mapCloudName } from './scan/name.js';
 
 export function findDesktopDataDir(): string | null {
@@ -52,7 +58,7 @@ export function findDesktopDb(dataDir: string): string | null {
   return null;
 }
 
-function buildPathMap(conn: Database.Database): Map<string, string> {
+function buildPathMap(conn: Database.Database): Map<string, RelPath> {
   const hasTable = conn
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='note_book'")
     .get();
@@ -67,21 +73,21 @@ function buildPathMap(conn: Database.Database): Map<string, string> {
     folders.set(row.fileId, { title: row.title || '', parentId: row.parentId || '' });
   }
 
-  const cache = new Map<string, string>();
+  const cache = new Map<string, RelPath>();
 
-  function resolve(fid: string, depth: number): string {
+  function resolve(fid: string, depth: number): RelPath {
     const cached = cache.get(fid);
     if (cached !== undefined) return cached;
-    if (depth > 50 || !folders.has(fid)) return '';
+    if (depth > 50 || !folders.has(fid)) return '' as RelPath;
     const info = folders.get(fid);
-    if (!info) return '';
+    if (!info) return '' as RelPath;
     const pid = info.parentId;
     if (!pid || pid === fid) {
-      cache.set(fid, '');
-      return '';
+      cache.set(fid, '' as RelPath);
+      return '' as RelPath;
     }
     const parentPath = resolve(pid, depth + 1);
-    const path = parentPath ? `${parentPath}/${info.title}` : info.title;
+    const path = joinRelPath(parentPath, info.title);
     cache.set(fid, path);
     return path;
   }
@@ -100,7 +106,7 @@ function normalizeTimestamp(ts: number): number {
 
 function importDirs(
   conn: Database.Database,
-  folderPaths: Map<string, string>,
+  folderPaths: Map<string, RelPath>,
   meta: MetadataStore,
 ): number {
   let count = 0;
@@ -117,7 +123,7 @@ function importDirs(
 
 function importNotes(
   conn: Database.Database,
-  folderPaths: Map<string, string>,
+  folderPaths: Map<string, RelPath>,
   meta: MetadataStore,
 ): number {
   const noteRows = conn
@@ -134,16 +140,16 @@ function importNotes(
   }[];
   let count = 0;
   for (const row of noteRows) {
-    const folderPath = folderPaths.get(row.parentId || '') ?? '';
+    const folderPath = folderPaths.get(row.parentId || '') ?? ('' as RelPath);
     const localName = mapCloudName(row.title || '');
-    const relPath = folderPath ? `${folderPath}/${localName}` : localName;
+    const relPath = joinRelPath(folderPath, localName);
     meta.setFileInfo(relPath, {
       fileId: row.fileId as FileId,
-      cloudMtime: normalizeTimestamp(row.modifyTime),
-      localMtime: 0,
+      cloudMtime: asEpochSeconds(normalizeTimestamp(row.modifyTime)),
+      localMtime: asEpochSeconds(0),
       parentId: row.parentId as DirId,
       domain: row.domain,
-      createTime: normalizeTimestamp(row.createTime),
+      createTime: asEpochSeconds(normalizeTimestamp(row.createTime)),
     });
     count++;
   }

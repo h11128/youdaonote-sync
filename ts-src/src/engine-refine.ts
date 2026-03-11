@@ -1,4 +1,4 @@
-import type { ContentHash, FileId } from './types/common.js';
+import type { ContentHash, FileId, RelPath } from './types/common.js';
 import type { CloudFile } from './types/scan.js';
 import type { FileState } from './types/state.js';
 import type { MetadataStore } from './metadata/store.js';
@@ -7,9 +7,9 @@ import { retryWithBackoff } from './api/retry.js';
 import { collectConflictCandidates, applyRefinementIfChanged } from './engine-helpers.js';
 
 export interface RefineAllDeps {
-  classified: Map<string, FileState>;
-  cloudSnap: ReadonlyMap<string, CloudFile>;
-  localHashes: ReadonlyMap<string, ContentHash | null>;
+  classified: Map<RelPath, FileState>;
+  cloudSnap: ReadonlyMap<RelPath, CloudFile>;
+  localHashes: ReadonlyMap<RelPath, ContentHash | null>;
   hashFn: (data: Uint8Array, path: string) => ContentHash | null;
   meta: MetadataStore;
   api: { getFileById(fileId: FileId): Promise<ArrayBuffer> };
@@ -17,7 +17,7 @@ export interface RefineAllDeps {
 
 async function getCloudHash(
   deps: RefineAllDeps,
-  relPath: string,
+  relPath: RelPath,
   cloudFile: CloudFile,
 ): Promise<ContentHash | null> {
   const cached = deps.meta.getFileInfo(relPath);

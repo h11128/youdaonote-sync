@@ -1,5 +1,6 @@
 import { basename, join } from 'node:path';
 import { statSync } from 'node:fs';
+import type { ContentHash, RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { DedupAction, DedupStats } from './types.js';
 import { isAsset } from './types.js';
@@ -9,14 +10,14 @@ import { isAsset } from './types.js';
  * Hash collisions with different sizes are dropped.
  */
 export function classifyDuplicates(
-  rawGroups: Map<string, string[]>,
+  rawGroups: Map<ContentHash, RelPath[]>,
   root: string,
   stats: DedupStats,
-): Map<string, string[]> {
-  const result = new Map<string, string[]>();
+): Map<string, RelPath[]> {
+  const result = new Map<string, RelPath[]>();
 
   for (const [hash, paths] of rawGroups) {
-    const bySize = new Map<number, string[]>();
+    const bySize = new Map<number, RelPath[]>();
     for (const p of paths) {
       try {
         const sz = statSync(join(root, p)).size;
@@ -47,7 +48,7 @@ export function classifyDuplicates(
  * Score a cloud file for keep/delete decisions.
  * Tuple comparison: (depth, -nameLength, -ctime) — higher = more likely to keep.
  */
-function cloudScore(path: string, meta: MetadataStore, root: string): [number, number, number] {
+function cloudScore(path: RelPath, meta: MetadataStore, root: string): [number, number, number] {
   const depth = path.split('/').length - 1;
   const nameClean = -basename(path).length;
 
@@ -77,11 +78,11 @@ function compareScores(a: [number, number, number], b: [number, number, number])
 }
 
 function splitCloudAndLocal(
-  paths: string[],
+  paths: RelPath[],
   meta: MetadataStore,
-): { cloudPaths: string[]; localPaths: string[] } {
-  const cloudPaths: string[] = [];
-  const localPaths: string[] = [];
+): { cloudPaths: RelPath[]; localPaths: RelPath[] } {
+  const cloudPaths: RelPath[] = [];
+  const localPaths: RelPath[] = [];
   for (const p of paths) {
     if (meta.getFileInfo(p)?.fileId) cloudPaths.push(p);
     else localPaths.push(p);
@@ -90,9 +91,9 @@ function splitCloudAndLocal(
 }
 
 export interface ResolveGroupOpts {
-  paths: string[];
+  paths: RelPath[];
   meta: MetadataStore;
-  referenced: Set<string>;
+  referenced: Set<RelPath>;
   root: string;
   stats: DedupStats;
 }
@@ -126,9 +127,9 @@ export function resolveGroup(opts: ResolveGroupOpts): DedupAction[] {
 }
 
 function resolveMixed(
-  cloudPaths: string[],
-  localPaths: string[],
-  referenced: Set<string>,
+  cloudPaths: RelPath[],
+  localPaths: RelPath[],
+  referenced: Set<RelPath>,
   stats: DedupStats,
 ): DedupAction[] {
   const toRemove = localPaths.filter((lp) => {
@@ -157,9 +158,9 @@ function resolveMixed(
 }
 
 interface ResolveAllCloudOpts {
-  cloudPaths: string[];
+  cloudPaths: RelPath[];
   meta: MetadataStore;
-  referenced: Set<string>;
+  referenced: Set<RelPath>;
   root: string;
   stats: DedupStats;
 }
@@ -197,7 +198,7 @@ function resolveAllCloud(opts: ResolveAllCloudOpts): DedupAction[] {
  * - If none are referenced → sort by score, keep best, remove rest
  * - If all are referenced → skip the group
  */
-function resolveCloudGroup(opts: ResolveAllCloudOpts): [string[], string[] | null] {
+function resolveCloudGroup(opts: ResolveAllCloudOpts): [RelPath[], RelPath[] | null] {
   const { meta, stats } = opts;
   if (opts.cloudPaths.some((p) => isAsset(p))) {
     const ref = opts.cloudPaths.filter((p) => opts.referenced.has(p));

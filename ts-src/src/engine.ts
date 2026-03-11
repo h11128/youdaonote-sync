@@ -1,4 +1,4 @@
-import type { ContentHash, DirId, SyncDirection } from './types/common.js';
+import type { ContentHash, DirId, RelPath, SyncDirection } from './types/common.js';
 import type { CloudFile, LocalFile } from './types/scan.js';
 import type { FileState } from './types/state.js';
 import { YoudaoNoteApi } from './api/client.js';
@@ -49,7 +49,7 @@ export interface SyncEngineConfig {
 
 export interface SyncResult {
   stats: SyncStats;
-  classified: Map<string, FileState>;
+  classified: Map<RelPath, FileState>;
 }
 
 /**
@@ -77,7 +77,7 @@ export class SyncEngine {
     const lock = new SyncLock(this.config.localDir);
     if (!this.config.dryRun && !lock.acquire()) {
       console.error('Cannot acquire sync lock — another sync process is running');
-      return { stats: emptyStats(), classified: new Map() };
+      return { stats: emptyStats(), classified: new Map() as Map<RelPath, FileState> };
     }
 
     try {
@@ -121,9 +121,9 @@ export class SyncEngine {
   }
 
   private async obtainSnapshots(localDir: string): Promise<{
-    cloudSnap: Map<string, CloudFile>;
-    localSnap: Map<string, LocalFile>;
-    localHashes: Map<string, ContentHash | null>;
+    cloudSnap: Map<RelPath, CloudFile>;
+    localSnap: Map<RelPath, LocalFile>;
+    localHashes: Map<RelPath, ContentHash | null>;
     rootDirId: DirId;
     didFullScan: boolean;
   }> {
@@ -138,7 +138,7 @@ export class SyncEngine {
       skipDesktopSeed: !!this.config.api,
     };
     const cachedCloud = await tryCachedCloudScan(cacheDeps);
-    let cloudSnap: Map<string, CloudFile>;
+    let cloudSnap: Map<RelPath, CloudFile>;
     let didFullScan = false;
     if (cachedCloud) {
       cloudSnap = cachedCloud;
@@ -157,7 +157,7 @@ export class SyncEngine {
     }
 
     const localSnap = scanLocal(localDir, '', scanOpts);
-    const localHashes = new Map<string, ContentHash | null>();
+    const localHashes = new Map<RelPath, ContentHash | null>();
     calibrateMetadata(this.meta, cloudSnap, localSnap, localHashes);
     for (const [relPath, local] of localSnap) {
       if (!local.isDir && !localHashes.has(relPath)) {
@@ -169,13 +169,13 @@ export class SyncEngine {
   }
 
   private async classifyAndRefine(
-    cloudSnap: Map<string, CloudFile>,
-    localSnap: Map<string, LocalFile>,
-    localHashes: Map<string, ContentHash | null>,
-  ): Promise<Map<string, FileState>> {
+    cloudSnap: Map<RelPath, CloudFile>,
+    localSnap: Map<RelPath, LocalFile>,
+    localHashes: Map<RelPath, ContentHash | null>,
+  ): Promise<Map<RelPath, FileState>> {
     const metaSnap = this.meta.getAllFiles();
     const classified = classifyAll(cloudSnap, localSnap, metaSnap, localHashes);
-    const classifiedWithHash = new Map<string, { state: FileState; hash: ContentHash | null }>();
+    const classifiedWithHash = new Map<RelPath, { state: FileState; hash: ContentHash | null }>();
     for (const [path, state] of classified) {
       const hash = localHashes.get(path) ?? metaSnap.get(path)?.contentHash ?? null;
       classifiedWithHash.set(path, { state, hash });
@@ -191,10 +191,10 @@ export class SyncEngine {
   }
 
   private async executeSync(ctx: {
-    classified: Map<string, FileState>;
-    cloudSnap: Map<string, CloudFile>;
-    localSnap: Map<string, LocalFile>;
-    localHashes: Map<string, ContentHash | null>;
+    classified: Map<RelPath, FileState>;
+    cloudSnap: Map<RelPath, CloudFile>;
+    localSnap: Map<RelPath, LocalFile>;
+    localHashes: Map<RelPath, ContentHash | null>;
     rootDirId: DirId;
     direction: SyncDirection;
   }): Promise<SyncStats> {
@@ -214,8 +214,8 @@ export class SyncEngine {
   }
 
   private async runDedupIfEnabled(
-    localSnap: Map<string, LocalFile>,
-    localHashes: Map<string, ContentHash | null>,
+    localSnap: Map<RelPath, LocalFile>,
+    localHashes: Map<RelPath, ContentHash | null>,
   ): Promise<{ deletedPaths: string[]; deletedCount: number }> {
     if (this.config.autoDedup === false) {
       return { deletedPaths: [], deletedCount: 0 };
@@ -233,9 +233,9 @@ export class SyncEngine {
   }
 
   private async postSyncCleanup(opts: {
-    cloudSnap: Map<string, CloudFile>;
-    localSnap: Map<string, LocalFile>;
-    localHashes: Map<string, ContentHash | null>;
+    cloudSnap: Map<RelPath, CloudFile>;
+    localSnap: Map<RelPath, LocalFile>;
+    localHashes: Map<RelPath, ContentHash | null>;
     stats: SyncStats;
     didFullScan: boolean;
   }): Promise<void> {
@@ -262,9 +262,9 @@ export class SyncEngine {
   }
 
   private async refineConflicts(
-    classified: Map<string, FileState>,
-    cloudSnap: ReadonlyMap<string, CloudFile>,
-    localHashes: ReadonlyMap<string, ContentHash | null>,
+    classified: Map<RelPath, FileState>,
+    cloudSnap: ReadonlyMap<RelPath, CloudFile>,
+    localHashes: ReadonlyMap<RelPath, ContentHash | null>,
   ): Promise<void> {
     const hashFn = this.config.hashFn ?? computeContentHashFromBytes;
     await refineAllConflicts({
@@ -282,9 +282,9 @@ export class SyncEngine {
    * Returns the classified map and snapshots.
    */
   async collectItems(): Promise<{
-    classified: Map<string, FileState>;
-    cloudSnap: Map<string, CloudFile>;
-    localSnap: Map<string, LocalFile>;
+    classified: Map<RelPath, FileState>;
+    cloudSnap: Map<RelPath, CloudFile>;
+    localSnap: Map<RelPath, LocalFile>;
   }> {
     await initXxhash();
     const loginErr = this.api.loginByCookies();

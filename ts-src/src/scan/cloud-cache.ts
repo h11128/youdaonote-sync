@@ -4,7 +4,15 @@
  * Extracted from engine.ts to keep engine focused on orchestration.
  */
 import { basename } from 'node:path';
-import { asEpochSeconds, type DirId, type FileId, type NoteDomain } from '../types/common.js';
+import {
+  asEpochSeconds,
+  asRelPath,
+  joinRelPath,
+  type DirId,
+  type FileId,
+  type NoteDomain,
+  type RelPath,
+} from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { mapCloudName, sanitizeFilename } from '../scan/name.js';
@@ -28,14 +36,14 @@ export interface CloudCacheDeps {
  * Only loads file records with file_id. Directories are excluded to avoid
  * phantom downloads from stale directory records.
  */
-export function loadCloudFilesFromCache(meta: MetadataStore): Map<string, CloudFile> | null {
+export function loadCloudFilesFromCache(meta: MetadataStore): Map<RelPath, CloudFile> | null {
   const summaries = meta.getCloudFileSummaries();
   if (summaries.size === 0) return null;
 
-  const result = new Map<string, CloudFile>();
+  const result = new Map<RelPath, CloudFile>();
   for (const [path, info] of summaries) {
     if (basename(path).includes('.conflict.')) continue;
-    result.set(path, {
+    result.set(asRelPath(path), {
       id: info.fileId,
       parentId: info.parentId as DirId,
       name: basename(path),
@@ -54,7 +62,7 @@ export function loadCloudFilesFromCache(meta: MetadataStore): Map<string, CloudF
  */
 export function saveScanVersion(
   meta: MetadataStore,
-  cloudSnap: Map<string, CloudFile>,
+  cloudSnap: Map<RelPath, CloudFile>,
   maxVersion: number,
 ): void {
   meta.batch(() => {
@@ -105,7 +113,7 @@ export async function fetchCurrentVersion(api: CloudCacheDeps['api']): Promise<n
  */
 export async function tryCachedCloudScan(
   deps: CloudCacheDeps,
-): Promise<Map<string, CloudFile> | null> {
+): Promise<Map<RelPath, CloudFile> | null> {
   const { api, meta } = deps;
   let cachedVersion = meta.getStateInt(STATE_CLOUD_VERSION);
   if (cachedVersion <= 0) {
@@ -161,7 +169,7 @@ export async function tryCachedCloudScan(
  */
 interface DirEntryParams {
   meta: MetadataStore;
-  cloudFiles: Map<string, CloudFile>;
+  cloudFiles: Map<RelPath, CloudFile>;
   fid: string;
   name: string;
   parentId: string;
@@ -179,17 +187,19 @@ function toStr(val: unknown): string {
   return '';
 }
 
-function resolveNewPath(meta: MetadataStore, parentId: string, name: string): string | null {
+function resolveNewPath(meta: MetadataStore, parentId: string, name: string): RelPath | null {
   if (!parentId) return null;
   const parentPath = meta.findByDirId(parentId as DirId);
   if (parentPath == null) return null;
-  return parentPath ? `${parentPath}/${name}` : name;
+  return parentPath ? joinRelPath(asRelPath(parentPath), name) : asRelPath(name);
 }
 
 function processDirEntry(opts: DirEntryParams): void {
   const { meta, cloudFiles, fid, name, parentId } = opts;
   const existingPath = meta.findByDirId(fid as DirId);
-  const relPath = existingPath ?? resolveNewPath(meta, parentId, sanitizeFilename(name));
+  const relPath =
+    (existingPath != null ? asRelPath(existingPath) : null) ??
+    resolveNewPath(meta, parentId, sanitizeFilename(name));
   if (!relPath) return;
 
   cloudFiles.set(relPath, {
@@ -214,7 +224,9 @@ function processFileEntry(opts: FileEntryParams): void {
   const ctime = toNum(fe.createTimeForSort, 0);
   const domain = toNum(fe.domain, 0) as NoteDomain;
   const existingPath = meta.findByFileId(fid as FileId);
-  const relPath = existingPath ?? resolveNewPath(meta, parentId, mapCloudName(name));
+  const relPath =
+    (existingPath != null ? asRelPath(existingPath) : null) ??
+    resolveNewPath(meta, parentId, mapCloudName(name));
   if (!relPath) return;
 
   const info: CloudFile = {
@@ -229,16 +241,16 @@ function processFileEntry(opts: FileEntryParams): void {
   cloudFiles.set(relPath, info);
   meta.cacheCloudFileInfo(relPath, {
     fileId: fid as FileId,
-    cloudMtime: mtime,
+    cloudMtime: asEpochSeconds(mtime),
     parentId: parentId as DirId,
     domain,
-    createTime: ctime,
+    createTime: asEpochSeconds(ctime),
   });
 }
 
 function applyIncrementalChanges(
   meta: MetadataStore,
-  cloudFiles: Map<string, CloudFile>,
+  cloudFiles: Map<RelPath, CloudFile>,
   changedEntries: Record<string, unknown>[],
 ): void {
   meta.batch(() => {

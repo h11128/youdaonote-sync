@@ -6,8 +6,8 @@ import { MetadataStore } from '../metadata/store.js';
 import { calibrateMetadata } from './calibrate.js';
 import type { CloudFile } from '../types/scan.js';
 import type { LocalFile } from '../types/scan.js';
-import { asEpochSeconds } from '../types/common.js';
-import type { ContentHash, DirId, FileId } from '../types/common.js';
+import { asEpochSeconds, asRelPath } from '../types/common.js';
+import type { ContentHash, DirId, FileId, RelPath } from '../types/common.js';
 
 const TMP = join(tmpdir(), `calibrate-test-${Date.now()}`);
 const DB_PATH = join(TMP, 'meta.db');
@@ -51,15 +51,17 @@ describe('calibrateMetadata: file calibration', () => {
     const filePath = join(TMP, 'new.md');
     writeFileSync(filePath, 'hello world');
 
-    const cloud = new Map<string, CloudFile>([
-      ['new.md', makeCloudFile({ id: 'cf-new' as FileId, name: 'new.md' })],
+    const cloud = new Map<RelPath, CloudFile>([
+      [asRelPath('new.md'), makeCloudFile({ id: 'cf-new' as FileId, name: 'new.md' })],
     ]);
-    const local = new Map<string, LocalFile>([['new.md', makeLocalFile({ path: filePath })]]);
+    const local = new Map<RelPath, LocalFile>([
+      [asRelPath('new.md'), makeLocalFile({ path: filePath })],
+    ]);
 
     const count = calibrateMetadata(meta, cloud, local, new Map());
     expect(count).toBeGreaterThan(0);
 
-    const info = meta.getFileInfo('new.md');
+    const info = meta.getFileInfo(asRelPath('new.md'));
     expect(info).not.toBeNull();
     expect(info!.fileId).toBe('cf-new');
     expect(info!.cloudMtime).toBe(1000);
@@ -68,15 +70,15 @@ describe('calibrateMetadata: file calibration', () => {
   });
 
   it('Case1: fills cloudMtime when existing metadata has fileId and localMtime but no cloudMtime', () => {
-    meta.setFileInfo('existing.md', {
+    meta.setFileInfo(asRelPath('existing.md'), {
       fileId: 'f-exist' as FileId,
       cloudMtime: asEpochSeconds(0),
       localMtime: asEpochSeconds(500),
     });
 
-    const cloud = new Map<string, CloudFile>([
+    const cloud = new Map<RelPath, CloudFile>([
       [
-        'existing.md',
+        asRelPath('existing.md'),
         makeCloudFile({
           id: 'f-exist' as FileId,
           name: 'existing.md',
@@ -84,8 +86,8 @@ describe('calibrateMetadata: file calibration', () => {
         }),
       ],
     ]);
-    const local = new Map<string, LocalFile>([
-      ['existing.md', makeLocalFile({ path: join(TMP, 'existing.md') })],
+    const local = new Map<RelPath, LocalFile>([
+      [asRelPath('existing.md'), makeLocalFile({ path: join(TMP, 'existing.md') })],
     ]);
 
     writeFileSync(join(TMP, 'existing.md'), 'content');
@@ -93,26 +95,26 @@ describe('calibrateMetadata: file calibration', () => {
     const count = calibrateMetadata(meta, cloud, local, new Map());
     expect(count).toBeGreaterThan(0);
 
-    const info = meta.getFileInfo('existing.md');
+    const info = meta.getFileInfo(asRelPath('existing.md'));
     expect(info!.cloudMtime).toBe(800);
   });
 
   it('skips files that already have contentHash and lastSyncAt', () => {
-    meta.setFileInfo('synced.md', {
+    meta.setFileInfo(asRelPath('synced.md'), {
       fileId: 'f-s' as FileId,
       cloudMtime: asEpochSeconds(100),
       localMtime: asEpochSeconds(100),
     });
     meta.batch(() => {
-      meta.updateContentHash('synced.md', 'somehash' as ContentHash);
-      meta.markSynced('synced.md');
+      meta.updateContentHash(asRelPath('synced.md'), 'somehash' as ContentHash);
+      meta.markSynced(asRelPath('synced.md'));
     });
 
-    const cloud = new Map<string, CloudFile>([
-      ['synced.md', makeCloudFile({ id: 'f-s' as FileId, name: 'synced.md' })],
+    const cloud = new Map<RelPath, CloudFile>([
+      [asRelPath('synced.md'), makeCloudFile({ id: 'f-s' as FileId, name: 'synced.md' })],
     ]);
-    const local = new Map<string, LocalFile>([
-      ['synced.md', makeLocalFile({ path: join(TMP, 'synced.md') })],
+    const local = new Map<RelPath, LocalFile>([
+      [asRelPath('synced.md'), makeLocalFile({ path: join(TMP, 'synced.md') })],
     ]);
     writeFileSync(join(TMP, 'synced.md'), 'content');
 
@@ -123,9 +125,9 @@ describe('calibrateMetadata: file calibration', () => {
 
 describe('calibrateMetadata: edge cases', () => {
   it('calibrates directory entries', () => {
-    const cloud = new Map<string, CloudFile>([
+    const cloud = new Map<RelPath, CloudFile>([
       [
-        'mydir',
+        asRelPath('mydir'),
         makeCloudFile({
           id: 'dir-1' as unknown as FileId,
           name: 'mydir',
@@ -137,14 +139,14 @@ describe('calibrateMetadata: edge cases', () => {
 
     const count = calibrateMetadata(meta, cloud, new Map(), new Map());
     expect(count).toBe(1);
-    expect(meta.getDirId('mydir')).toBe('dir-1');
+    expect(meta.getDirId(asRelPath('mydir'))).toBe('dir-1');
   });
 
   it('skips files only on one side', () => {
-    const cloud = new Map<string, CloudFile>([
-      ['cloud-only.md', makeCloudFile({ name: 'cloud-only.md' })],
+    const cloud = new Map<RelPath, CloudFile>([
+      [asRelPath('cloud-only.md'), makeCloudFile({ name: 'cloud-only.md' })],
     ]);
-    const local = new Map<string, LocalFile>();
+    const local = new Map<RelPath, LocalFile>();
 
     const count = calibrateMetadata(meta, cloud, local, new Map());
     expect(count).toBe(0);
@@ -155,16 +157,18 @@ describe('calibrateMetadata: edge cases', () => {
     writeFileSync(filePath, 'some content');
 
     const preHash = 'precomputed-hash-value' as ContentHash;
-    const localHashes = new Map<string, ContentHash | null>([['hashed.md', preHash]]);
+    const localHashes = new Map<RelPath, ContentHash | null>([[asRelPath('hashed.md'), preHash]]);
 
-    const cloud = new Map<string, CloudFile>([
-      ['hashed.md', makeCloudFile({ id: 'cf-h' as FileId, name: 'hashed.md' })],
+    const cloud = new Map<RelPath, CloudFile>([
+      [asRelPath('hashed.md'), makeCloudFile({ id: 'cf-h' as FileId, name: 'hashed.md' })],
     ]);
-    const local = new Map<string, LocalFile>([['hashed.md', makeLocalFile({ path: filePath })]]);
+    const local = new Map<RelPath, LocalFile>([
+      [asRelPath('hashed.md'), makeLocalFile({ path: filePath })],
+    ]);
 
     calibrateMetadata(meta, cloud, local, localHashes);
 
-    const info = meta.getFileInfo('hashed.md');
+    const info = meta.getFileInfo(asRelPath('hashed.md'));
     expect(info!.contentHash).toBe(preHash);
   });
 });

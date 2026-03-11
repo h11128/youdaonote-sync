@@ -1,5 +1,5 @@
 import { xxh128 } from './xxhash.js';
-import type { ContentHash } from '../types/common.js';
+import type { ContentHash, RelPath } from '../types/common.js';
 import type { LocalFile } from '../types/scan.js';
 
 export type TreeHash = string & { readonly __brand: 'TreeHash' };
@@ -20,21 +20,21 @@ const defaultHash: HashFn = (data) => xxh128(data);
 interface ChildEntry {
   name: string;
   isDir: boolean;
-  rel: string;
+  rel: RelPath;
   absPath: string;
 }
 
-function buildChildrenOf(localFiles: ReadonlyMap<string, LocalFile>): {
-  dirs: Set<string>;
-  childrenOf: Map<string, ChildEntry[]>;
+function buildChildrenOf(localFiles: ReadonlyMap<RelPath, LocalFile>): {
+  dirs: Set<RelPath>;
+  childrenOf: Map<RelPath, ChildEntry[]>;
 } {
-  const dirs = new Set<string>(['']);
-  const childrenOf = new Map<string, ChildEntry[]>();
+  const dirs = new Set<RelPath>(['' as RelPath]);
+  const childrenOf = new Map<RelPath, ChildEntry[]>();
   for (const [rel, info] of localFiles) {
     if (info.isDir) dirs.add(rel);
-    const slashIdx = rel.lastIndexOf('/');
-    const parent = slashIdx < 0 ? '' : rel.slice(0, slashIdx);
-    const name = slashIdx < 0 ? rel : rel.slice(slashIdx + 1);
+    const slashIdx = (rel as string).lastIndexOf('/');
+    const parent = (slashIdx < 0 ? '' : (rel as string).slice(0, slashIdx)) as RelPath;
+    const name = slashIdx < 0 ? (rel as string) : (rel as string).slice(slashIdx + 1);
     let list = childrenOf.get(parent);
     if (!list) {
       list = [];
@@ -46,10 +46,10 @@ function buildChildrenOf(localFiles: ReadonlyMap<string, LocalFile>): {
 }
 
 interface ComputeDirHashParams {
-  dir: string;
-  childrenOf: Map<string, ChildEntry[]>;
-  result: Map<string, TreeHash>;
-  hashCache: ReadonlyMap<string, ContentHash | null>;
+  dir: RelPath;
+  childrenOf: Map<RelPath, ChildEntry[]>;
+  result: Map<RelPath, TreeHash>;
+  hashCache: ReadonlyMap<RelPath, ContentHash | null>;
   hashFn: HashFn;
 }
 
@@ -68,20 +68,20 @@ function computeDirHash(params: ComputeDirHashParams): TreeHash {
 }
 
 export function buildTree(
-  localFiles: ReadonlyMap<string, LocalFile>,
-  hashCache: ReadonlyMap<string, ContentHash | null>,
+  localFiles: ReadonlyMap<RelPath, LocalFile>,
+  hashCache: ReadonlyMap<RelPath, ContentHash | null>,
   hashFn: HashFn = defaultHash,
-): Map<string, TreeHash> {
+): Map<RelPath, TreeHash> {
   const { dirs, childrenOf } = buildChildrenOf(localFiles);
-  const dirDepths = new Map<string, number>();
-  for (const d of dirs) dirDepths.set(d, d ? d.split('/').length : 0);
+  const dirDepths = new Map<RelPath, number>();
+  for (const d of dirs) dirDepths.set(d, d ? (d as string).split('/').length : 0);
   const sortedDirs = [...dirs].sort((a, b) => {
     const depthA = dirDepths.get(a) ?? 0;
     const depthB = dirDepths.get(b) ?? 0;
     return depthB - depthA;
   });
 
-  const result = new Map<string, TreeHash>();
+  const result = new Map<RelPath, TreeHash>();
   for (const d of sortedDirs) {
     result.set(d, computeDirHash({ dir: d, childrenOf, result, hashCache, hashFn }));
   }
@@ -93,12 +93,12 @@ export function buildTree(
  * If roots match, returns empty set (nothing changed).
  */
 export function diffTrees(
-  oldHashes: ReadonlyMap<string, TreeHash>,
-  newHashes: ReadonlyMap<string, TreeHash>,
-): Set<string> {
-  if (oldHashes.get('') === newHashes.get('')) return new Set();
+  oldHashes: ReadonlyMap<RelPath, TreeHash>,
+  newHashes: ReadonlyMap<RelPath, TreeHash>,
+): Set<RelPath> {
+  if (oldHashes.get('' as RelPath) === newHashes.get('' as RelPath)) return new Set<RelPath>();
 
-  const changed = new Set<string>();
+  const changed = new Set<RelPath>();
   const allDirs = new Set([...oldHashes.keys(), ...newHashes.keys()]);
   for (const d of allDirs) {
     if (oldHashes.get(d) !== newHashes.get(d)) {

@@ -1,5 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { type RelPath, asEpochSeconds } from '../types/common.js';
 import type { MetadataStore } from './store.js';
 import { computeContentHashFromFile } from '../hash.js';
 
@@ -10,7 +11,7 @@ export enum VerifyIssueType {
 }
 
 export interface VerifyIssue {
-  readonly path: string;
+  readonly path: RelPath;
   readonly type: VerifyIssueType;
   readonly detail: string;
 }
@@ -121,8 +122,8 @@ export function gc(meta: MetadataStore, localDir: string, maxLogAgeDays = 90): G
   }
   const stats: MutableGcStats = { files: 0, dirs: 0, logs: 0, bases: 0, refs: 0 };
   const now = Math.floor(Date.now() / 1000);
-  const cutoff = now - 30 * 86400;
-  const logCutoff = now - maxLogAgeDays * 86400;
+  const cutoff = asEpochSeconds(now - 30 * 86400);
+  const logCutoff = asEpochSeconds(now - maxLogAgeDays * 86400);
 
   meta.batch(() => {
     for (const path of meta.getStaleFilePaths(cutoff)) {
@@ -208,7 +209,7 @@ function healMtimeDrift(
     const actualHash = computeContentHashFromFile(full);
     if (actualHash && actualHash === record.contentHash) {
       stats.mtimeDrift++;
-      if (autoFix) meta.updateLocalMtime(path, actualMtime);
+      if (autoFix) meta.updateLocalMtime(path, asEpochSeconds(actualMtime));
     }
   }
 }

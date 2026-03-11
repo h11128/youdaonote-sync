@@ -1,5 +1,11 @@
 import { basename, dirname } from 'node:path';
-import { asRelPath, type ContentHash, type FileId } from '../types/common.js';
+import {
+  asRelPath,
+  joinRelPath,
+  type ContentHash,
+  type FileId,
+  type RelPath,
+} from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { FileState } from '../types/state.js';
@@ -12,8 +18,8 @@ interface ClassifiedEntry {
 
 export interface PendingMove {
   fileId: FileId;
-  oldCloudPath: string;
-  newLocalPath: string;
+  oldCloudPath: RelPath;
+  newLocalPath: RelPath;
   domain: number;
 }
 
@@ -33,14 +39,14 @@ const GENERIC_NAMES = new Set([
 ]);
 
 interface MoveDetectionContext {
-  cloudDeletedPaths: Set<string>;
-  cloudNewPaths: Set<string>;
-  localDeletedPaths: Set<string>;
-  localNewPaths: Set<string>;
-  classified: ReadonlyMap<string, ClassifiedEntry>;
+  cloudDeletedPaths: Set<RelPath>;
+  cloudNewPaths: Set<RelPath>;
+  localDeletedPaths: Set<RelPath>;
+  localNewPaths: Set<RelPath>;
+  classified: ReadonlyMap<RelPath, ClassifiedEntry>;
   meta: MetadataStore | undefined;
-  cloudSnap?: ReadonlyMap<string, CloudFile>;
-  result: Map<string, FileState>;
+  cloudSnap?: ReadonlyMap<RelPath, CloudFile>;
+  result: Map<RelPath, FileState>;
 }
 
 /**
@@ -57,16 +63,16 @@ interface MoveDetectionContext {
  * for paths where the local file no longer exists.
  */
 export function detectMoves(
-  classified: ReadonlyMap<string, ClassifiedEntry>,
+  classified: ReadonlyMap<RelPath, ClassifiedEntry>,
   meta?: MetadataStore,
-  cloudSnap?: ReadonlyMap<string, CloudFile>,
-): Map<string, FileState> {
-  const result = new Map<string, FileState>();
+  cloudSnap?: ReadonlyMap<RelPath, CloudFile>,
+): Map<RelPath, FileState> {
+  const result = new Map<RelPath, FileState>();
 
-  const cloudDeletedPaths = new Set<string>();
-  const cloudNewPaths = new Set<string>();
-  const localDeletedPaths = new Set<string>();
-  const localNewPaths = new Set<string>();
+  const cloudDeletedPaths = new Set<RelPath>();
+  const cloudNewPaths = new Set<RelPath>();
+  const localDeletedPaths = new Set<RelPath>();
+  const localNewPaths = new Set<RelPath>();
 
   for (const [path, entry] of classified) {
     switch (entry.state.kind) {
@@ -120,12 +126,12 @@ export function detectMoves(
  */
 function detectByFileId(
   ctx: MoveDetectionContext,
-  cloudSnap: ReadonlyMap<string, CloudFile>,
+  cloudSnap: ReadonlyMap<RelPath, CloudFile>,
 ): void {
   const { localNewPaths, cloudNewPaths, cloudDeletedPaths, meta, result } = ctx;
   if (!meta) return;
 
-  const cloudIdToPath = new Map<string, string>();
+  const cloudIdToPath = new Map<string, RelPath>();
   for (const [path, cf] of cloudSnap) {
     if (!cf.isDir && cf.id) cloudIdToPath.set(cf.id, path);
   }
@@ -150,13 +156,14 @@ function detectByFileId(
     const record = meta.getFileInfo(cloudPath);
     if (!record?.fileId) continue;
 
-    const localPath = meta.findByFileId(record.fileId);
-    if (!localPath || !localNewPaths.has(localPath)) continue;
+    const localPathRaw = meta.findByFileId(record.fileId);
+    if (!localPathRaw || !localNewPaths.has(asRelPath(localPathRaw))) continue;
 
-    result.set(localPath, { kind: 'moved', oldPath: asRelPath(cloudPath) });
+    const localRelPath = asRelPath(localPathRaw);
+    result.set(localRelPath, { kind: 'moved', oldPath: cloudPath });
     result.set(cloudPath, { kind: 'gone' });
     cloudDeletedPaths.delete(cloudPath);
-    localNewPaths.delete(localPath);
+    localNewPaths.delete(localRelPath);
   }
 }
 
@@ -172,22 +179,28 @@ function detectByNormalizedName(ctx: MoveDetectionContext): void {
 }
 
 function matchByNormalizedName(
-  deletedPaths: Set<string>,
-  newPaths: Set<string>,
-  result: Map<string, FileState>,
+  deletedPaths: Set<RelPath>,
+  newPaths: Set<RelPath>,
+  result: Map<RelPath, FileState>,
 ): void {
-  const normIndex = new Map<string, string>();
+  const normIndex = new Map<RelPath, RelPath>();
   for (const np of newPaths) {
-    const key = dirname(np) + '/' + sanitizeFilename(basename(np));
+    const parent = dirname(np);
+    const key = parent
+      ? joinRelPath(asRelPath(parent), sanitizeFilename(basename(np)))
+      : asRelPath(sanitizeFilename(basename(np)));
     normIndex.set(key, np);
   }
 
   for (const dp of [...deletedPaths]) {
-    const key = dirname(dp) + '/' + sanitizeFilename(basename(dp));
+    const parent = dirname(dp);
+    const key = parent
+      ? joinRelPath(asRelPath(parent), sanitizeFilename(basename(dp)))
+      : asRelPath(sanitizeFilename(basename(dp)));
     const match = normIndex.get(key);
     if (!match || !newPaths.has(match)) continue;
 
-    result.set(match, { kind: 'moved', oldPath: asRelPath(dp) });
+    result.set(match, { kind: 'moved', oldPath: dp });
     result.set(dp, { kind: 'gone' });
     deletedPaths.delete(dp);
     newPaths.delete(match);
@@ -241,18 +254,18 @@ function detectCrossSide(ctx: MoveDetectionContext): void {
 }
 
 interface CrossDirMatchContext {
-  deletedPaths: Set<string>;
-  newPaths: Set<string>;
-  classified: ReadonlyMap<string, ClassifiedEntry>;
+  deletedPaths: Set<RelPath>;
+  newPaths: Set<RelPath>;
+  classified: ReadonlyMap<RelPath, ClassifiedEntry>;
   meta: MetadataStore | undefined;
-  result: Map<string, FileState>;
+  result: Map<RelPath, FileState>;
 }
 
 function applyHashMatches(ctx: CrossDirMatchContext): void {
   const { deletedPaths, newPaths, classified, result } = ctx;
 
-  const deletedByHash = new Map<ContentHash, string[]>();
-  const newByHash = new Map<ContentHash, string[]>();
+  const deletedByHash = new Map<ContentHash, RelPath[]>();
+  const newByHash = new Map<ContentHash, RelPath[]>();
 
   for (const dp of deletedPaths) {
     const hash = classified.get(dp)?.hash;
@@ -282,11 +295,11 @@ function applyHashMatches(ctx: CrossDirMatchContext): void {
 }
 
 function findBestPathByName(
-  dp: string,
-  candidates: string[],
-  result: Map<string, FileState>,
-): string | null {
-  let bestPath: string | null = null;
+  dp: RelPath,
+  candidates: RelPath[],
+  result: Map<RelPath, FileState>,
+): RelPath | null {
+  let bestPath: RelPath | null = null;
   let bestDepth = -1;
   for (const np of candidates) {
     if (result.has(np)) continue;
@@ -300,9 +313,9 @@ function findBestPathByName(
 }
 
 function canPairDifferentContent(
-  dp: string,
-  bestPath: string,
-  classified: ReadonlyMap<string, ClassifiedEntry>,
+  dp: RelPath,
+  bestPath: RelPath,
+  classified: ReadonlyMap<RelPath, ClassifiedEntry>,
   meta: MetadataStore | undefined,
 ): boolean {
   const dpHash = classified.get(dp)?.hash;
@@ -316,7 +329,7 @@ function applyFilenameMatches(ctx: CrossDirMatchContext): void {
   const { deletedPaths, newPaths, classified, meta, result } = ctx;
   const MAX_NAME_CANDIDATES = 10;
 
-  const newByName = new Map<string, string[]>();
+  const newByName = new Map<string, RelPath[]>();
   for (const np of newPaths) {
     const norm = sanitizeFilename(basename(np)).toLowerCase();
     pushToMap(newByName, norm, np);
@@ -328,13 +341,14 @@ function applyFilenameMatches(ctx: CrossDirMatchContext): void {
     const candidates = newByName.get(norm);
     if (!candidates || candidates.length > MAX_NAME_CANDIDATES) continue;
 
-    const bestPath = findBestPathByName(dp, candidates, result);
+    const dpRel = asRelPath(dp);
+    const bestPath = findBestPathByName(dpRel, candidates, result);
     if (!bestPath) continue;
 
-    if (!canPairDifferentContent(dp, bestPath, classified, meta)) continue;
+    if (!canPairDifferentContent(dpRel, bestPath, classified, meta)) continue;
 
-    result.set(bestPath, { kind: 'moved', oldPath: asRelPath(dp) });
-    result.set(dp, { kind: 'gone' });
+    result.set(bestPath, { kind: 'moved', oldPath: dpRel });
+    result.set(dpRel, { kind: 'gone' });
     deletedPaths.delete(dp);
     newPaths.delete(bestPath);
   }

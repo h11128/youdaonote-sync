@@ -1,6 +1,13 @@
 import { copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { extname } from 'node:path';
-import type { ContentHash, FileId, SyncDirection } from '../types/common.js';
+import {
+  asEpochSeconds,
+  type ContentHash,
+  type EpochSeconds,
+  type FileId,
+  type RelPath,
+  type SyncDirection,
+} from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { downloadFile } from './download.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
@@ -48,7 +55,7 @@ function readFileMtime(path: string, fallback?: number): number {
 }
 
 export interface ConflictOpts {
-  relPath: string;
+  relPath: RelPath;
   localPath: string;
   cloudFile: CloudFile | undefined;
   ctx: ExecuteContext;
@@ -79,7 +86,7 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
   meta.recordSync(relPath, {
     fileId: result.fileId,
     cloudMtime: result.cloudMtime,
-    localMtime: readFileMtime(localPath),
+    localMtime: asEpochSeconds(readFileMtime(localPath)),
     contentHash: ctx.hashFn ? ctx.hashFn(readFileSync(localPath), localPath) : null,
     action: 'conflict-upload',
     direction: 'push',
@@ -98,7 +105,7 @@ async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
     throw new Error(`conflictPullFallback: cloudFile required for ${relPath}`);
   }
   const dlOpts: {
-    cloudMtime?: number;
+    cloudMtime?: EpochSeconds;
     hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
   } = { cloudMtime: cloudFile.mtime };
   if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
@@ -108,7 +115,7 @@ async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
   meta.recordSync(relPath, {
     fileId: cloudFile.id as FileId,
     cloudMtime: cloudFile.mtime,
-    localMtime: readFileMtime(localPath, cloudFile.mtime),
+    localMtime: asEpochSeconds(readFileMtime(localPath, cloudFile.mtime)),
     parentId: cloudFile.parentId,
     domain: cloudFile.domain,
     contentHash: result.contentHash,

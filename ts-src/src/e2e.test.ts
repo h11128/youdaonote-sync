@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { SyncEngine } from './engine.js';
 import { MetadataStore } from './metadata/store.js';
-import { asContentHash } from './types/common.js';
+import { asContentHash, asEpochSeconds, asRelPath } from './types/common.js';
 import type { FileId } from './types/common.js';
 import { computeContentHashFromFile, computeContentHashFromBytes } from './hash.js';
 import { makeCloudEntry, buildMockApi, setupE2EContext } from './e2e-fixtures.js';
@@ -59,7 +59,7 @@ describe('E2E: upload and download', () => {
     expect(recorder.pushed[0]?.name).toBe('new-doc.md');
 
     // Metadata should exist after upload
-    const record = meta.getFileInfo('new-doc.md');
+    const record = meta.getFileInfo(asRelPath('new-doc.md'));
     expect(record).not.toBeNull();
     expect(record!.lastSyncAt).toBeGreaterThan(0);
 
@@ -93,7 +93,7 @@ describe('E2E: upload and download', () => {
     expect(readFileSync(join(localDir, 'cloud-note.md'), 'utf-8')).toBe(cloudContent);
 
     // domain=0 should save base for future diff3
-    const base = meta.getBaseContent('cloud-note.md');
+    const base = meta.getBaseContent(asRelPath('cloud-note.md'));
     expect(base).not.toBeNull();
 
     engine.close();
@@ -126,14 +126,14 @@ describe('E2E: conflict diff3 merge', () => {
     computeContentHashFromFile(join(localDir, 'doc.md'));
 
     const now = Math.floor(Date.now() / 1000);
-    meta.setFileInfo('doc.md', {
+    meta.setFileInfo(asRelPath('doc.md'), {
       fileId: 'f-doc' as FileId,
-      cloudMtime: now - 100,
-      localMtime: now - 200,
+      cloudMtime: asEpochSeconds(now - 100),
+      localMtime: asEpochSeconds(now - 200),
       contentHash: asContentHash('old-hash'),
-      lastSyncAt: now - 300,
+      lastSyncAt: asEpochSeconds(now - 300),
     });
-    meta.saveBaseContent('doc.md', Buffer.from(baseContent), 'base-hash');
+    meta.saveBaseContent(asRelPath('doc.md'), Buffer.from(baseContent), 'base-hash');
     meta.save();
 
     const cloudEntries = [makeCloudEntry('f-doc', 'doc.md', now)];
@@ -191,12 +191,12 @@ describe('E2E: conflict fallback', () => {
     const cloudContent = 'completely different cloud version';
     writeFileSync(join(localDir, 'conflict.md'), localContent);
     const now = Math.floor(Date.now() / 1000);
-    meta.setFileInfo('conflict.md', {
+    meta.setFileInfo(asRelPath('conflict.md'), {
       fileId: 'f-c' as FileId,
-      cloudMtime: now - 100,
-      localMtime: now - 200,
+      cloudMtime: asEpochSeconds(now - 100),
+      localMtime: asEpochSeconds(now - 200),
       contentHash: asContentHash('old-hash'),
-      lastSyncAt: now - 300,
+      lastSyncAt: asEpochSeconds(now - 300),
     });
     const cloudEntries = [makeCloudEntry('f-c', 'conflict.md', now)];
     const cloudFiles = new Map([['f-c', cloudContent]]);
@@ -242,12 +242,12 @@ describe('E2E: push-mode conflict', () => {
     writeFileSync(join(localDir, 'push-conflict.md'), localContent);
 
     const now = Math.floor(Date.now() / 1000);
-    meta.setFileInfo('push-conflict.md', {
+    meta.setFileInfo(asRelPath('push-conflict.md'), {
       fileId: 'f-pc' as FileId,
-      cloudMtime: now - 100,
-      localMtime: now - 200,
+      cloudMtime: asEpochSeconds(now - 100),
+      localMtime: asEpochSeconds(now - 200),
       contentHash: asContentHash('old-hash'),
-      lastSyncAt: now - 300,
+      lastSyncAt: asEpochSeconds(now - 300),
     });
 
     const cloudEntries = [makeCloudEntry('f-pc', 'push-conflict.md', now)];
@@ -302,12 +302,12 @@ describe('E2E: move and directory', () => {
     const meta = new MetadataStore(metaPath);
     const hash = computeContentHashFromBytes(new TextEncoder().encode('moved content'), 'test.md');
     writeFileSync(join(localDir, 'new-location.md'), 'moved content');
-    meta.setFileInfo('old-location.md', {
+    meta.setFileInfo(asRelPath('old-location.md'), {
       fileId: 'f-moved' as FileId,
-      cloudMtime: 1000,
-      localMtime: 1000,
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
       contentHash: hash,
-      lastSyncAt: 1000,
+      lastSyncAt: asEpochSeconds(1000),
     });
     meta.save();
     const cloudEntries = [makeCloudEntry('f-moved', 'new-location.md', 1000)];
@@ -321,7 +321,7 @@ describe('E2E: move and directory', () => {
       autoGit: false,
     });
     await engine.sync();
-    expect(meta.getFileInfo('new-location.md')).not.toBeNull();
+    expect(meta.getFileInfo(asRelPath('new-location.md'))).not.toBeNull();
     engine.close();
   });
 
@@ -452,11 +452,11 @@ describe('E2E: stale metadata cleanup', () => {
     const meta = new MetadataStore(metaPath);
 
     // Metadata has a file that no longer exists in cloud
-    meta.setFileInfo('deleted-from-cloud.md', {
+    meta.setFileInfo(asRelPath('deleted-from-cloud.md'), {
       fileId: 'f-stale' as FileId,
-      cloudMtime: 1000,
-      localMtime: 1000,
-      lastSyncAt: 1000,
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
+      lastSyncAt: asEpochSeconds(1000),
     });
     writeFileSync(join(localDir, 'deleted-from-cloud.md'), 'still local');
     meta.save();
@@ -476,7 +476,7 @@ describe('E2E: stale metadata cleanup', () => {
     await engine.sync();
 
     // file_id should be cleared (stale cleanup)
-    const record = meta.getFileInfo('deleted-from-cloud.md');
+    const record = meta.getFileInfo(asRelPath('deleted-from-cloud.md'));
     if (record) {
       expect(record.fileId).toBeFalsy();
     }

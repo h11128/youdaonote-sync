@@ -1,5 +1,6 @@
 import { dirname, join, relative } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { asRelPath, type EpochSeconds, type RelPath } from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { walkFiles } from './walk.js';
@@ -13,8 +14,8 @@ function isExternalOrAbsoluteRef(refPath: string): boolean {
   return false;
 }
 
-function extractRefsFromFile(fullPath: string, mdDir: string, root: string): Set<string> {
-  const refs = new Set<string>();
+function extractRefsFromFile(fullPath: string, mdDir: string, root: string): Set<RelPath> {
+  const refs = new Set<RelPath>();
   let content: string;
   try {
     content = readFileSync(fullPath, 'utf-8');
@@ -27,16 +28,16 @@ function extractRefsFromFile(fullPath: string, mdDir: string, root: string): Set
     if (!refPath || isExternalOrAbsoluteRef(refPath)) continue;
 
     const abs = join(mdDir, refPath);
-    const rel = relative(root, abs).replace(/\\/g, '/');
+    const rel = asRelPath(relative(root, abs).replace(/\\/g, '/'));
     refs.add(rel);
   }
   return refs;
 }
 
 function addRefsFromCache(
-  rel: string,
-  cachedRefs: ReadonlyMap<string, string[]>,
-  referenced: Set<string>,
+  rel: RelPath,
+  cachedRefs: ReadonlyMap<RelPath, RelPath[]>,
+  referenced: Set<RelPath>,
 ): void {
   const refs = cachedRefs.get(rel);
   if (refs) for (const ref of refs) referenced.add(ref);
@@ -46,34 +47,34 @@ function collectRefsFromFile(
   fullPath: string,
   mdDir: string,
   root: string,
-  referenced: Set<string>,
-): string[] {
+  referenced: Set<RelPath>,
+): RelPath[] {
   const newRefs = extractRefsFromFile(fullPath, mdDir, root);
   for (const ref of newRefs) referenced.add(ref);
   return [...newRefs];
 }
 
 function shouldUseCachedRefs(
-  rel: string,
-  mtime: number,
-  allMeta: ReadonlyMap<string, MetadataRecord>,
-  cachedRefs: ReadonlyMap<string, string[]>,
+  rel: RelPath,
+  mtime: EpochSeconds,
+  allMeta: ReadonlyMap<RelPath, MetadataRecord>,
+  cachedRefs: ReadonlyMap<RelPath, RelPath[]>,
 ): boolean {
-  const cachedMtime = allMeta.get(rel)?.localMtime ?? 0;
+  const cachedMtime = allMeta.get(rel)?.localMtime ?? (0 as EpochSeconds);
   return cachedMtime === mtime && cachedRefs.has(rel);
 }
 
 interface ProcessSingleLocalMdFileCtx {
   root: string;
   meta: MetadataStore | undefined;
-  allMeta: ReadonlyMap<string, MetadataRecord>;
-  cachedRefs: ReadonlyMap<string, string[]>;
-  referenced: Set<string>;
+  allMeta: ReadonlyMap<RelPath, MetadataRecord>;
+  cachedRefs: ReadonlyMap<RelPath, RelPath[]>;
+  referenced: Set<RelPath>;
 }
 
 function processSingleLocalMdFile(
-  rel: string,
-  info: { path: string; mtime: number; isDir: boolean },
+  rel: RelPath,
+  info: { path: string; mtime: EpochSeconds; isDir: boolean },
   ctx: ProcessSingleLocalMdFileCtx,
 ): void {
   if (info.isDir || !rel.endsWith('.md')) return;
@@ -87,13 +88,15 @@ function processSingleLocalMdFile(
 }
 
 function processLocalMdFiles(
-  localFiles: Map<string, { path: string; mtime: number; isDir: boolean }>,
+  localFiles: Map<RelPath, { path: string; mtime: EpochSeconds; isDir: boolean }>,
   root: string,
   meta: MetadataStore | undefined,
-  referenced: Set<string>,
+  referenced: Set<RelPath>,
 ): void {
-  const allMeta: ReadonlyMap<string, MetadataRecord> = meta ? meta.getAllFiles() : new Map();
-  const cachedRefs = meta ? meta.getAllFileRefs() : new Map<string, string[]>();
+  const allMeta: ReadonlyMap<RelPath, MetadataRecord> = meta ? meta.getAllFiles() : new Map();
+  const cachedRefs = meta
+    ? (meta.getAllFileRefs() as Map<RelPath, RelPath[]>)
+    : new Map<RelPath, RelPath[]>();
   const ctx: ProcessSingleLocalMdFileCtx = { root, meta, allMeta, cachedRefs, referenced };
 
   for (const [rel, info] of localFiles) {
@@ -104,7 +107,7 @@ function processLocalMdFiles(
 function processFullWalk(
   root: string,
   meta: MetadataStore | undefined,
-  referenced: Set<string>,
+  referenced: Set<RelPath>,
 ): void {
   walkFiles(root, root, (entry) => {
     if (!entry.isMd) return;
@@ -121,10 +124,10 @@ function processFullWalk(
  */
 export function buildRefIndex(
   root: string,
-  localFiles?: Map<string, { path: string; mtime: number; isDir: boolean }>,
+  localFiles?: Map<RelPath, { path: string; mtime: EpochSeconds; isDir: boolean }>,
   meta?: MetadataStore,
-): Set<string> {
-  const referenced = new Set<string>();
+): Set<RelPath> {
+  const referenced = new Set<RelPath>();
 
   if (localFiles) {
     processLocalMdFiles(localFiles, root, meta, referenced);

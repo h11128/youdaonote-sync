@@ -9,8 +9,8 @@ import { SyncEngine } from './engine.js';
 import { MetadataStore } from './metadata/store.js';
 import type { YoudaoNoteApi } from './api/client.js';
 import type { DirInfoByIdResponse } from './types/dir.js';
-import { asDirId, asFileId, asContentHash } from './types/common.js';
-import type { FileId, ContentHash } from './types/common.js';
+import { asDirId, asFileId, asContentHash, asEpochSeconds, asRelPath } from './types/common.js';
+import type { FileId, ContentHash, RelPath } from './types/common.js';
 import { computeContentHashFromFile } from './hash.js';
 import { autoDedup } from './dedup/index.js';
 import { discardOrphanDuplicates } from './dedup/orphan.js';
@@ -40,12 +40,12 @@ describe('E2E: upload dedup', () => {
     const hash = computeContentHashFromFile(join(localDir, 'new-file.md'))!;
 
     // Another file already synced with same hash
-    meta.setFileInfo('existing-cloud.md', {
+    meta.setFileInfo(asRelPath('existing-cloud.md'), {
       fileId: 'f-existing' as FileId,
-      cloudMtime: 1000,
-      localMtime: 1000,
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(1000),
       contentHash: hash,
-      lastSyncAt: 1000,
+      lastSyncAt: asEpochSeconds(1000),
     });
     meta.save();
 
@@ -82,23 +82,25 @@ describe('E2E: orphan duplicate discard', () => {
     const hash2 = asContentHash('hash-different');
 
     // 'dir1/doc.md' is on both sides; 'dir2/doc.md' is local-only with same hash → orphan
-    const cloudSnap = new Map([['dir1/doc.md', { isDir: false }]]);
-    const localSnap = new Map([
-      ['dir1/doc.md', { isDir: false, path: '/notes/dir1/doc.md' }],
-      ['dir2/doc.md', { isDir: false, path: '/notes/dir2/doc.md' }],
-      ['unique.md', { isDir: false, path: '/notes/unique.md' }],
+    const cloudSnap = new Map<RelPath, { isDir: boolean }>([
+      [asRelPath('dir1/doc.md'), { isDir: false }],
     ]);
-    const localHashes = new Map<string, ContentHash | null>([
-      ['dir1/doc.md', hash1],
-      ['dir2/doc.md', hash1], // same hash + same basename as both-side file → orphan
-      ['unique.md', hash2], // different hash → not orphan
+    const localSnap = new Map<RelPath, { isDir: boolean; path?: string }>([
+      [asRelPath('dir1/doc.md'), { isDir: false, path: '/notes/dir1/doc.md' }],
+      [asRelPath('dir2/doc.md'), { isDir: false, path: '/notes/dir2/doc.md' }],
+      [asRelPath('unique.md'), { isDir: false, path: '/notes/unique.md' }],
+    ]);
+    const localHashes = new Map<RelPath, ContentHash | null>([
+      [asRelPath('dir1/doc.md'), hash1],
+      [asRelPath('dir2/doc.md'), hash1], // same hash + same basename as both-side file → orphan
+      [asRelPath('unique.md'), hash2], // different hash → not orphan
     ]);
 
     const skipped = discardOrphanDuplicates(cloudSnap, localSnap, localHashes);
 
-    expect(skipped.has('dir2/doc.md')).toBe(true);
-    expect(skipped.has('unique.md')).toBe(false);
-    expect(skipped.has('dir1/doc.md')).toBe(false);
+    expect(skipped.has(asRelPath('dir2/doc.md'))).toBe(true);
+    expect(skipped.has(asRelPath('unique.md'))).toBe(false);
+    expect(skipped.has(asRelPath('dir1/doc.md'))).toBe(false);
   });
 });
 
@@ -131,16 +133,16 @@ describe('E2E: dedup asset protection', () => {
     writeFileSync(join(root, 'images', 'photo.png'), 'img-data');
     writeFileSync(join(root, 'backup', 'photo.png'), 'img-data');
 
-    meta.setFileInfo('images/photo.png', {
+    meta.setFileInfo(asRelPath('images/photo.png'), {
       fileId: asFileId('f1'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
-    meta.setFileInfo('backup/photo.png', {
+    meta.setFileInfo(asRelPath('backup/photo.png'), {
       fileId: asFileId('f2'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
 
@@ -161,16 +163,16 @@ describe('E2E: dedup asset protection', () => {
     writeFileSync(join(root, 'a.png'), 'img-data');
     writeFileSync(join(root, 'b.png'), 'img-data');
 
-    meta.setFileInfo('a.png', {
+    meta.setFileInfo(asRelPath('a.png'), {
       fileId: asFileId('f1'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
-    meta.setFileInfo('b.png', {
+    meta.setFileInfo(asRelPath('b.png'), {
       fileId: asFileId('f2'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
 
@@ -205,17 +207,17 @@ describe('E2E: GC cleans up orphan file_refs', () => {
 
   it('removes file_refs for deleted source files', () => {
     // doc.md has refs but the file no longer exists on disk
-    meta.setFileRefs('deleted-doc.md', ['images/a.png', 'images/b.png']);
+    meta.setFileRefs(asRelPath('deleted-doc.md'), ['images/a.png', 'images/b.png']);
 
     // existing.md still exists
     writeFileSync(join(localDir, 'existing.md'), 'hello');
-    meta.setFileRefs('existing.md', ['images/c.png']);
+    meta.setFileRefs(asRelPath('existing.md'), ['images/c.png']);
 
     const stats = gc(meta, localDir);
 
     expect(stats.refs).toBe(1);
-    expect(meta.getFileRefs('deleted-doc.md')).toEqual([]);
-    expect(meta.getFileRefs('existing.md')).toEqual(['images/c.png']);
+    expect(meta.getFileRefs(asRelPath('deleted-doc.md'))).toEqual([]);
+    expect(meta.getFileRefs(asRelPath('existing.md'))).toEqual(['images/c.png']);
   });
 });
 
@@ -248,13 +250,13 @@ describe('E2E: refine caches cloudContentHash', () => {
     // Metadata: previously synced with older cloud mtime, same local mtime
     // Cloud now has higher mtime → triggers cloudModifiedContent
     // But cloudContentHash (cached) matches localHash → refine to skip
-    meta.setFileInfo('cached.md', {
+    meta.setFileInfo(asRelPath('cached.md'), {
       fileId: 'f-cached' as FileId,
-      cloudMtime: cloudMtime - 100,
-      localMtime: fileMtime,
+      cloudMtime: asEpochSeconds(cloudMtime - 100),
+      localMtime: asEpochSeconds(fileMtime),
       contentHash: localHash,
       cloudContentHash: localHash,
-      lastSyncAt: fileMtime - 50,
+      lastSyncAt: asEpochSeconds(fileMtime - 50),
     });
     meta.save();
 
@@ -289,7 +291,7 @@ describe('E2E: refine caches cloudContentHash', () => {
     const result = await engine.sync();
 
     // Since cloudContentHash matches localHash → refine should downgrade to skip
-    const state = result.classified.get('cached.md');
+    const state = result.classified.get(asRelPath('cached.md'));
     expect(state).toBeDefined();
     const skipKinds = ['synced', 'cloudModifiedMtimeOnly', 'bothModifiedConverged'];
     expect(skipKinds).toContain(state!.kind);

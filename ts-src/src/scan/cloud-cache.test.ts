@@ -3,8 +3,8 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from '../metadata/store.js';
-import { asEpochSeconds } from '../types/common.js';
-import type { DirId, FileId } from '../types/common.js';
+import { asEpochSeconds, asRelPath } from '../types/common.js';
+import type { DirId, FileId, RelPath } from '../types/common.js';
 import { tryCachedCloudScan, loadCloudFilesFromCache, saveScanVersion } from './cloud-cache.js';
 import type { CloudFile } from '../types/scan.js';
 
@@ -63,19 +63,19 @@ describe('tryCachedCloudScan: basic caching', () => {
   });
 
   it('returns cached data when cloud has no changes', async () => {
-    const snap = new Map<string, CloudFile>();
-    snap.set('doc.md', makeCloudFile('f-1', 'doc.note'));
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
     saveScanVersion(meta, snap, 10);
 
     const api = { listRecent: () => Promise.resolve([] as Record<string, unknown>[]) };
     const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
     expect(result).not.toBeNull();
-    expect(result!.has('doc.md')).toBe(true);
+    expect(result!.has(asRelPath('doc.md'))).toBe(true);
   });
 
   it('returns cached data when cloud version matches', async () => {
-    const snap = new Map<string, CloudFile>();
-    snap.set('doc.md', makeCloudFile('f-1', 'doc.note'));
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
     saveScanVersion(meta, snap, 10);
 
     const api = {
@@ -83,12 +83,12 @@ describe('tryCachedCloudScan: basic caching', () => {
     };
     const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
     expect(result).not.toBeNull();
-    expect(result!.has('doc.md')).toBe(true);
+    expect(result!.has(asRelPath('doc.md'))).toBe(true);
   });
 
   it('updates existing file when cloud version increases', async () => {
-    const snap = new Map<string, CloudFile>();
-    snap.set('doc.md', makeCloudFile('f-1', 'doc.note'));
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
     saveScanVersion(meta, snap, 10);
 
     const api = {
@@ -100,17 +100,17 @@ describe('tryCachedCloudScan: basic caching', () => {
     };
     const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
     expect(result).not.toBeNull();
-    expect(result!.get('doc.md')!.mtime).toBe(2000);
+    expect(result!.get(asRelPath('doc.md'))!.mtime).toBe(2000);
   });
 });
 
 describe('tryCachedCloudScan: incremental new entries', () => {
   it('adds new file via parentId resolution', async () => {
-    meta.setDirInfo('', 'root' as DirId, null);
-    meta.setDirInfo('notes', 'dir-notes' as DirId, 'root' as DirId);
+    meta.setDirInfo(asRelPath(''), 'root' as DirId, null);
+    meta.setDirInfo(asRelPath('notes'), 'dir-notes' as DirId, 'root' as DirId);
 
-    const snap = new Map<string, CloudFile>();
-    snap.set('notes/old.md', makeCloudFile('f-1', 'old.note', 'dir-notes'));
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('notes/old.md'), makeCloudFile('f-1', 'old.note', 'dir-notes'));
     saveScanVersion(meta, snap, 10);
 
     const api = {
@@ -122,15 +122,15 @@ describe('tryCachedCloudScan: incremental new entries', () => {
     };
     const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
     expect(result).not.toBeNull();
-    expect(result!.has('notes/brand-new.md')).toBe(true);
-    expect(result!.get('notes/brand-new.md')!.id).toBe('f-new');
+    expect(result!.has(asRelPath('notes/brand-new.md'))).toBe(true);
+    expect(result!.get(asRelPath('notes/brand-new.md'))!.id).toBe('f-new');
   });
 
   it('adds new directory via parentId resolution', async () => {
-    meta.setDirInfo('', 'root' as DirId, null);
+    meta.setDirInfo(asRelPath(''), 'root' as DirId, null);
 
-    const snap = new Map<string, CloudFile>();
-    snap.set('existing.md', makeCloudFile('f-1', 'existing.note'));
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('existing.md'), makeCloudFile('f-1', 'existing.note'));
     saveScanVersion(meta, snap, 10);
 
     const api = {
@@ -142,13 +142,13 @@ describe('tryCachedCloudScan: incremental new entries', () => {
     };
     const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
     expect(result).not.toBeNull();
-    expect(result!.has('photos')).toBe(true);
-    expect(result!.get('photos')!.isDir).toBe(true);
+    expect(result!.has(asRelPath('photos'))).toBe(true);
+    expect(result!.get(asRelPath('photos'))!.isDir).toBe(true);
   });
 
   it('skips new file when parentId cannot be resolved', async () => {
-    const snap = new Map<string, CloudFile>();
-    snap.set('doc.md', makeCloudFile('f-1', 'doc.note'));
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
     saveScanVersion(meta, snap, 10);
 
     const api = {
@@ -160,15 +160,15 @@ describe('tryCachedCloudScan: incremental new entries', () => {
     };
     const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
     expect(result).not.toBeNull();
-    expect(result!.has('doc.md')).toBe(true);
+    expect(result!.has(asRelPath('doc.md'))).toBe(true);
     expect([...result!.keys()].some((k) => k.includes('orphan'))).toBe(false);
   });
 });
 
 describe('tryCachedCloudScan: error handling and overflow', () => {
   it('returns null when all recent entries are newer (overflow)', async () => {
-    const snap = new Map<string, CloudFile>();
-    snap.set('doc.md', makeCloudFile('f-1', 'doc.note'));
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
     saveScanVersion(meta, snap, 5);
 
     const entries = Array.from({ length: 30 }, (_, i) =>
@@ -180,8 +180,8 @@ describe('tryCachedCloudScan: error handling and overflow', () => {
   });
 
   it('falls back to cached data on API error', async () => {
-    const snap = new Map<string, CloudFile>();
-    snap.set('doc.md', makeCloudFile('f-1', 'doc.note'));
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
     saveScanVersion(meta, snap, 10);
 
     const api = {
@@ -189,7 +189,7 @@ describe('tryCachedCloudScan: error handling and overflow', () => {
     };
     const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
     expect(result).not.toBeNull();
-    expect(result!.has('doc.md')).toBe(true);
+    expect(result!.has(asRelPath('doc.md'))).toBe(true);
   });
 });
 
@@ -199,14 +199,14 @@ describe('loadCloudFilesFromCache', () => {
   });
 
   it('skips .conflict. files', () => {
-    meta.cacheCloudFileInfo('doc.md', {
+    meta.cacheCloudFileInfo(asRelPath('doc.md'), {
       fileId: 'f-1' as FileId,
       cloudMtime: asEpochSeconds(100),
       parentId: 'root' as DirId,
       domain: 0,
       createTime: asEpochSeconds(50),
     });
-    meta.cacheCloudFileInfo('doc.conflict.md', {
+    meta.cacheCloudFileInfo(asRelPath('doc.conflict.md'), {
       fileId: 'f-2' as FileId,
       cloudMtime: asEpochSeconds(200),
       parentId: 'root' as DirId,
@@ -215,7 +215,7 @@ describe('loadCloudFilesFromCache', () => {
     });
     const result = loadCloudFilesFromCache(meta);
     expect(result).not.toBeNull();
-    expect(result!.has('doc.md')).toBe(true);
-    expect(result!.has('doc.conflict.md')).toBe(false);
+    expect(result!.has(asRelPath('doc.md'))).toBe(true);
+    expect(result!.has(asRelPath('doc.conflict.md'))).toBe(false);
   });
 });

@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from './metadata/store.js';
-import { asFileId, asContentHash, type FileId } from './types/common.js';
+import { asFileId, asContentHash, asEpochSeconds, asRelPath } from './types/common.js';
+import type { FileId } from './types/common.js';
 import { autoDedup, buildRefIndex, buildHashIndex, findDuplicates } from './dedup/index.js';
 
 function setupDedupContext() {
@@ -39,7 +40,7 @@ describe('dedup buildRefIndex', () => {
 
     const refs = buildRefIndex(root);
 
-    expect(refs.has('images/photo.png')).toBe(true);
+    expect(refs.has(asRelPath('images/photo.png'))).toBe(true);
   });
 
   it('ignores http URLs', () => {
@@ -55,8 +56,8 @@ describe('dedup buildRefIndex', () => {
 
     const refs = buildRefIndex(root);
 
-    expect(refs.has('other.md')).toBe(true);
-    expect(refs.has('img.png')).toBe(true);
+    expect(refs.has(asRelPath('other.md'))).toBe(true);
+    expect(refs.has(asRelPath('img.png'))).toBe(true);
   });
 });
 
@@ -81,22 +82,22 @@ describe('dedup buildHashIndex', () => {
     writeFileSync(join(root, 'b.md'), 'content-b');
     writeFileSync(join(root, 'c.md'), 'content-c');
 
-    meta.setFileInfo('a.md', {
+    meta.setFileInfo(asRelPath('a.md'), {
       fileId: asFileId('f1'),
-      cloudMtime: 1,
-      localMtime: Math.floor(Date.now() / 1000),
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(Math.floor(Date.now() / 1000)),
       contentHash: hash,
     });
-    meta.setFileInfo('b.md', {
+    meta.setFileInfo(asRelPath('b.md'), {
       fileId: asFileId('f2'),
-      cloudMtime: 1,
-      localMtime: Math.floor(Date.now() / 1000),
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(Math.floor(Date.now() / 1000)),
       contentHash: hash,
     });
-    meta.setFileInfo('c.md', {
+    meta.setFileInfo(asRelPath('c.md'), {
       fileId: asFileId('f3'),
-      cloudMtime: 1,
-      localMtime: Math.floor(Date.now() / 1000),
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(Math.floor(Date.now() / 1000)),
       contentHash: asContentHash('other'),
     });
 
@@ -121,24 +122,24 @@ describe('dedup findDuplicates', () => {
 
   it('returns duplicates sorted by lastSyncAt', () => {
     const hash = asContentHash('same-hash');
-    meta.setFileInfo('old.md', {
+    meta.setFileInfo(asRelPath('old.md'), {
       fileId: asFileId('f1'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
-      lastSyncAt: 100,
+      lastSyncAt: asEpochSeconds(100),
     });
-    meta.setFileInfo('new.md', {
+    meta.setFileInfo(asRelPath('new.md'), {
       fileId: asFileId('f2'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
-      lastSyncAt: 200,
+      lastSyncAt: asEpochSeconds(200),
     });
 
     const dups = findDuplicates(meta);
 
-    expect(dups.get(hash)).toEqual(['old.md']);
+    expect(dups.get(hash)).toEqual([asRelPath('old.md')]);
   });
 });
 
@@ -161,18 +162,18 @@ describe('dedup autoDedup group handling', () => {
     const hash = asContentHash('dup-hash');
 
     writeFileSync(join(root, 'cloud-ver.md'), 'content');
-    meta.setFileInfo('cloud-ver.md', {
+    meta.setFileInfo(asRelPath('cloud-ver.md'), {
       fileId: asFileId('f1'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
 
     writeFileSync(join(root, 'local-orphan.md'), 'content');
-    meta.setFileInfo('local-orphan.md', {
+    meta.setFileInfo(asRelPath('local-orphan.md'), {
       fileId: '' as FileId,
-      cloudMtime: 0,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(0),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
 
@@ -190,16 +191,16 @@ describe('dedup autoDedup group handling', () => {
     writeFileSync(join(root, 'deep', 'path', 'doc.md'), 'same');
     writeFileSync(join(root, 'dup.md'), 'same');
 
-    meta.setFileInfo('deep/path/doc.md', {
+    meta.setFileInfo(asRelPath('deep/path/doc.md'), {
       fileId: asFileId('f1'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
-    meta.setFileInfo('dup.md', {
+    meta.setFileInfo(asRelPath('dup.md'), {
       fileId: asFileId('f2'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
 
@@ -233,16 +234,16 @@ describe('dedup autoDedup local and skip', () => {
     writeFileSync(join(root, 'a.md'), 'same');
     writeFileSync(join(root, 'b.md'), 'same');
 
-    meta.setFileInfo('a.md', {
+    meta.setFileInfo(asRelPath('a.md'), {
       fileId: '' as FileId,
-      cloudMtime: 0,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(0),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
-    meta.setFileInfo('b.md', {
+    meta.setFileInfo(asRelPath('b.md'), {
       fileId: '' as FileId,
-      cloudMtime: 0,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(0),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
 
@@ -277,16 +278,16 @@ describe('dedup autoDedup protection and options', () => {
     mkdirSync(join(root, 'cloud'), { recursive: true });
     writeFileSync(join(root, 'cloud', 'photo.png'), 'img-data');
 
-    meta.setFileInfo('cloud/photo.png', {
+    meta.setFileInfo(asRelPath('cloud/photo.png'), {
       fileId: asFileId('f1'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
-    meta.setFileInfo('photo.png', {
+    meta.setFileInfo(asRelPath('photo.png'), {
       fileId: '' as FileId,
-      cloudMtime: 0,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(0),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
 
@@ -301,16 +302,16 @@ describe('dedup autoDedup protection and options', () => {
 
     writeFileSync(join(root, 'cloud.md'), 'content');
     writeFileSync(join(root, 'orphan.md'), 'content');
-    meta.setFileInfo('cloud.md', {
+    meta.setFileInfo(asRelPath('cloud.md'), {
       fileId: asFileId('f1'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
-    meta.setFileInfo('orphan.md', {
+    meta.setFileInfo(asRelPath('orphan.md'), {
       fileId: '' as FileId,
-      cloudMtime: 0,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(0),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
 
@@ -324,16 +325,16 @@ describe('dedup autoDedup protection and options', () => {
 
     writeFileSync(join(root, 'empty1.md'), '');
     writeFileSync(join(root, 'empty2.md'), '');
-    meta.setFileInfo('empty1.md', {
+    meta.setFileInfo(asRelPath('empty1.md'), {
       fileId: asFileId('f1'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
-    meta.setFileInfo('empty2.md', {
+    meta.setFileInfo(asRelPath('empty2.md'), {
       fileId: asFileId('f2'),
-      cloudMtime: 1,
-      localMtime: 1,
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
       contentHash: hash,
     });
 

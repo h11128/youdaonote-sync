@@ -7,11 +7,17 @@
 import type { MetadataStore } from '../metadata/store.js';
 import type { CloudFile } from '../types/scan.js';
 import type { LocalFile } from '../types/scan.js';
-import type { ContentHash, DirId, FileId } from '../types/common.js';
+import {
+  asEpochSeconds,
+  type ContentHash,
+  type DirId,
+  type FileId,
+  type RelPath,
+} from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
 import { computeContentHashFromFile } from '../hash.js';
 
-function calibrateDir(meta: MetadataStore, relPath: string, cloudFile: CloudFile): boolean {
+function calibrateDir(meta: MetadataStore, relPath: RelPath, cloudFile: CloudFile): boolean {
   if (meta.getDirId(relPath) || !cloudFile.id) return false;
   meta.setDirInfo(relPath, cloudFile.id as DirId, cloudFile.parentId);
   return true;
@@ -19,7 +25,7 @@ function calibrateDir(meta: MetadataStore, relPath: string, cloudFile: CloudFile
 
 function calibrateFileCase1(
   meta: MetadataStore,
-  relPath: string,
+  relPath: RelPath,
   cloudFile: CloudFile,
   existing: MetadataRecord,
 ): boolean {
@@ -46,10 +52,10 @@ function shouldSkipCalibration(existing: MetadataRecord | undefined): boolean {
 
 interface CalibrateFileCase2Opts {
   meta: MetadataStore;
-  relPath: string;
+  relPath: RelPath;
   cloudFile: CloudFile;
   local: LocalFile;
-  localHashes: Map<string, ContentHash | null>;
+  localHashes: Map<RelPath, ContentHash | null>;
 }
 
 function calibrateFileCase2(opts: CalibrateFileCase2Opts): boolean {
@@ -68,7 +74,7 @@ function calibrateFileCase2(opts: CalibrateFileCase2Opts): boolean {
     parentId: cloudFile.parentId,
     domain: cloudFile.domain,
     contentHash: hash,
-    createTime: cloudFile.ctime || 0,
+    createTime: asEpochSeconds(cloudFile.ctime || 0),
   });
   meta.markSynced(relPath);
   return true;
@@ -76,10 +82,10 @@ function calibrateFileCase2(opts: CalibrateFileCase2Opts): boolean {
 
 interface ProcessFileOpts {
   meta: MetadataStore;
-  relPath: string;
+  relPath: RelPath;
   cloudFile: CloudFile;
-  localSnap: ReadonlyMap<string, LocalFile>;
-  localHashes: Map<string, ContentHash | null>;
+  localSnap: ReadonlyMap<RelPath, LocalFile>;
+  localHashes: Map<RelPath, ContentHash | null>;
 }
 
 function processFile(opts: ProcessFileOpts): number {
@@ -104,9 +110,9 @@ function processFile(opts: ProcessFileOpts): number {
 
 export function calibrateMetadata(
   meta: MetadataStore,
-  cloudSnap: ReadonlyMap<string, CloudFile>,
-  localSnap: ReadonlyMap<string, LocalFile>,
-  localHashes: Map<string, ContentHash | null>,
+  cloudSnap: ReadonlyMap<RelPath, CloudFile>,
+  localSnap: ReadonlyMap<RelPath, LocalFile>,
+  localHashes: Map<RelPath, ContentHash | null>,
 ): number {
   let calibrated = 0;
 
