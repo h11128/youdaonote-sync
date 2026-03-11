@@ -8,11 +8,13 @@
  *   reset-cache - Reset scan cache version to force full cloud scan
  */
 
-import { basename, extname, dirname } from 'node:path';
+import { basename, extname, dirname, join } from 'node:path';
+import { readdirSync } from 'node:fs';
 import { SyncEngine } from '../engine.js';
 import type { RelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { MetadataStore } from '../metadata/store.js';
+import { YoudaoNoteApi } from '../api/client.js';
 
 export interface DiagnoseConfig {
   cookiesPath: string;
@@ -175,6 +177,94 @@ export function cmdResetCache(cfg: DiagnoseConfig): void {
   meta.setState('last_scan_time', '0');
   console.log('Scan cache version reset to 0. Next sync will do a full cloud scan.');
   meta.close();
+}
+
+/**
+ * Check API connectivity: login + root dir fetch.
+ */
+export async function cmdApiStatus(cfg: DiagnoseConfig): Promise<void> {
+  const api = new YoudaoNoteApi(cfg.cookiesPath);
+  const loginErr = api.loginByCookies();
+
+  console.log('='.repeat(60));
+  console.log('  API Status');
+  console.log('='.repeat(60));
+
+  if (loginErr) {
+    console.log(`  Cookie login: FAILED (${loginErr})`);
+    return;
+  }
+  console.log('  Cookie login: OK');
+
+  try {
+    const rootId = await api.getRootId();
+    console.log(`  Root dir ID:  ${rootId}`);
+    const info = await api.getDirInfoById(rootId);
+    const count = info.entries?.length ?? 0;
+    console.log(`  Root entries: ${count}`);
+    console.log('  API status:   OK');
+  } catch (e: unknown) {
+    console.log(`  API call:     FAILED (${e instanceof Error ? e.message : String(e)})`);
+  }
+}
+
+/**
+ * Analyze local directory: count non-.md files, images, etc.
+ */
+export function cmdLocalStats(localDir: string): void {
+  console.log('='.repeat(60));
+  console.log('  Local file analysis');
+  console.log('='.repeat(60));
+
+  const extCount = new Map<string, number>();
+  const categories = { md: 0, note: 0, images: 0, other: 0 };
+
+  walkLocal(localDir, '', extCount, categories);
+
+  console.log(`\n  .md files:        ${categories.md}`);
+  console.log(`  .note files:      ${categories.note}`);
+  console.log(`  images/attach:    ${categories.images}`);
+  console.log(`  other files:      ${categories.other}`);
+  console.log(`  total non-.md:    ${categories.note + categories.images + categories.other}`);
+
+  console.log('\n  Extension distribution:');
+  const sorted = [...extCount.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [ext, count] of sorted) {
+    console.log(`    ${ext.padEnd(15)} ${count}`);
+  }
+}
+
+function walkLocal(
+  base: string,
+  rel: string,
+  extCount: Map<string, number>,
+  categories: { md: number; note: number; images: number; other: number },
+): void {
+  const dir = rel ? join(base, rel) : base;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+
+    if (entry.isDirectory()) {
+      walkLocal(base, relPath, extCount, categories);
+      continue;
+    }
+
+    const ext = extname(entry.name).toLowerCase() || '(no ext)';
+    extCount.set(ext, (extCount.get(ext) ?? 0) + 1);
+
+    if (ext === '.md') categories.md++;
+    else if (ext === '.note') categories.note++;
+    else if (relPath.includes('/images/') || relPath.includes('/attachments/')) categories.images++;
+    else categories.other++;
+  }
 }
 
 function printExtStats(cloudSnap: Map<RelPath, CloudFile>): void {

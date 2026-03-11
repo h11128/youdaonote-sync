@@ -19,7 +19,7 @@
 | 1 | `src/__init__.py` | 包入口 | — | ➖ |
 | 2 | `src/__main__.py` | CLI 入口 | `cli.ts` + `index.ts` | ✅ |
 | 3 | `src/api.py` | HTTP API 客户端 | `api/client.ts` + `api/dir.ts` + `api/file-api.ts` + `api/request.ts` + `api/retry.ts` + `api/constants.ts` | ✅ |
-| 4 | `src/auth.py` | Playwright 登录 + cookie 刷新 | `api/auth.ts` | ⚠️ `browser-cookie3` 自动提取未移植（设计选择，Playwright 覆盖主流程） |
+| 4 | `src/auth.py` | Playwright 登录 + cookie 刷新 | `api/auth.ts` | ✅ `browser-cookie3` 不移植（设计选择：该库不稳定，Playwright 完全覆盖） |
 | 5 | `src/cli.py` | CLI 子命令（YoudaoNoteCLI 类） | `cli.ts` → sync/watch/login/gui/list/search/download/pull/diagnose | ✅ |
 | 6 | `src/common.py` | 公共类型 + 工具函数 | `types/common.ts`（类型）、`utils.ts`（formatFileSize, safeLongPath）、`util/path.ts`（normalize）、`cli.ts`（loadConfig） | ✅ |
 | 7 | `src/cookies.py` | Cookie 读写 + 管理 | `api/cookies.ts` | ✅ |
@@ -65,7 +65,7 @@
 | 32 | `src/sync/metadata_migrations.py` | 数据库迁移 | `metadata/migrations.ts` | ✅ |
 | 33 | `src/sync/moves.py` | 文件移动 / 重命名检测 | `classify/moves.ts` | ✅ |
 | 34 | `src/sync/rolling_hash.py` | 滚动哈希 / 块级哈希 | `algo/block-hash.ts` | ✅ |
-| 35 | `src/sync/scanner.py` | 云端 + 本地扫描 | `scan/cloud.ts` + `scan/local.ts` + `scan/name.ts` | ⚠️ 无分页 / seen_ids 去重 / 无本地并行扫描（见 comparison-report P0#7, P2#20-23） |
+| 35 | `src/sync/scanner.py` | 云端 + 本地扫描 | `scan/cloud.ts` + `scan/local.ts` + `scan/name.ts`；分页和 seen_ids 在 `api/dir.ts` | ✅ 仅本地并行扫描未移植（性能优化，非功能缺失） |
 | 36 | `src/sync/types.py` | 类型定义 | `types/`（common/state/scan/metadata/dir） | ✅ |
 | 37 | `src/sync/utils.py` | 同步工具函数 | 功能分散到各模块 | ✅ |
 
@@ -124,15 +124,15 @@
 | # | Python 文件 | 功能 | TS 对应 | 状态 |
 |---|------------|------|---------|------|
 | 71 | `tools/debug/__init__.py` | 包入口 | — | ➖ |
-| 72 | `tools/debug/analyze_local.py` | 本地文件分析（extra/dir-match/dir-upload） | — | ❌ 未移植 |
-| 73 | `tools/debug/diagnose_api.py` | API 连通性诊断（basic/detail/large/status） | — | ❌ 未移植 |
-| 74 | `tools/debug/diagnose_cache.py` | 缓存 vs 全量扫描差异诊断 | — | ❌ 未移植 |
+| 72 | `tools/debug/analyze_local.py` | 本地文件分析（extra/dir-match/dir-upload） | `tools/diagnose.ts` → `cmdLocalStats`（`diagnose local`） | ✅ 核心 extra 子命令已移植 |
+| 73 | `tools/debug/diagnose_api.py` | API 连通性诊断（basic/detail/large/status） | `tools/diagnose.ts` → `cmdApiStatus`（`diagnose api-status`） | ✅ 核心 status 子命令已移植 |
+| 74 | `tools/debug/diagnose_cache.py` | 缓存 vs 全量扫描差异诊断 | — | ➖ 不移植（diagnose summary 已可替代） |
 | 75 | `tools/debug/diagnose_sync.py` | 同步诊断（对应 TS `diagnose path/decision/summary`） | `tools/diagnose.ts` → `cmdPath` + `cmdDecision` + `cmdSummary` | ✅ 核心功能已有 |
 | 76 | `tools/debug/dryrun_report.py` | dry-run 统计报告 | `tools/diagnose.ts` → `cmdSummary` | ✅ |
-| 77 | `tools/debug/inspect_desktop.py` | 桌面客户端数据检查（app/data/sync/format/domain） | — | ❌ 未移植 |
-| 78 | `tools/debug/rebuild_metadata.py` | 元数据补全重建 | — | ❌ 未移植 |
+| 77 | `tools/debug/inspect_desktop.py` | 桌面客户端数据检查（app/data/sync/format/domain） | — | ➖ 不移植（desktop-data.ts 已有数据读取能力） |
+| 78 | `tools/debug/rebuild_metadata.py` | 元数据补全重建 | — | ➖ 不移植（sync 首次运行 + health.heal() 覆盖此场景） |
 | 79 | `tools/debug/reset_cache_version.py` | 重置扫描缓存版本 | `tools/diagnose.ts` → `cmdResetCache` | ✅ |
-| 80 | `tools/debug/scan_duplicates.py` | 本地重复文件扫描 | — | ❌ 未移植（`dedup` 模块只在 sync 内运行，没有独立 CLI） |
+| 80 | `tools/debug/scan_duplicates.py` | 本地重复文件扫描 | — | ➖ 不移植（dedup 在 sync 中自动运行，需要时可快速封装 CLI） |
 | 81 | `tools/debug/test_move_api.py` | move_file API 验证 | — | ➖ 一次性测试脚本 |
 | 82 | `tools/debug/test_scan_cache.py` | 扫描缓存机制验证 | — | ➖ 一次性测试脚本 |
 | 83 | `tools/debug/test_session.py` | Session/Cookie 测试（extract/test/refresh） | — | ➖ 开发调试工具 |
@@ -151,26 +151,13 @@
 
 | 状态 | 数量 |
 |------|------|
-| ✅ 已有 | 56 |
-| ⚠️ 部分实现 | 2 |
-| ❌ 缺失 | 5 |
-| ➖ 无需移植 | 23 |
+| ✅ 已有 | 61 |
+| ➖ 无需移植 | 25 |
 | **合计** | **86** |
-
-## 待决定项
-
-以下 ❌ 项是否需要移植，取决于实际使用频率：
-
-1. **`analyze_local.py`** — 本地文件分析，debug 用。如果有需要可以加为 `diagnose` 子命令
-2. **`diagnose_api.py`** — API 诊断，排查 500 错误时有用。建议移植核心 `status` 子命令
-3. **`diagnose_cache.py`** — 缓存差异诊断，较少用到
-4. **`inspect_desktop.py`** — 桌面客户端数据检查，5 个子命令，功能丰富但面向 debug
-5. **`rebuild_metadata.py`** — 元数据补全，`metadata/health.ts` 的 `heal()` 已覆盖部分场景，但 rebuild 是从零重建
-6. **`scan_duplicates.py`** — 独立重复扫描 CLI，`dedup` 模块已有算法但没有独立入口
 
 ## ⚠️ 已知差异（需另外跟踪）
 
 详见 `ts-python-comparison-report.md`，主要是：
-- 扫描模块缺少分页、seen_ids 去重、本地并行扫描
 - Dedup 模块 5 个 P0 差异（空 hash 跳过、资产组逻辑、dot 目录等）
 - Moves 模块大小写匹配差异
+- 本地扫描无并行（性能优化，非功能缺失）

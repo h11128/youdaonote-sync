@@ -197,6 +197,22 @@ function registerDiagnoseCommands(program: Command): void {
         cmdResetCache(diagnoseCfg());
       });
     });
+
+  diagnose
+    .command('api-status')
+    .description('Check API connectivity and cookie validity')
+    .action(() => {
+      void import('./tools/diagnose.js').then(({ cmdApiStatus }) => cmdApiStatus(diagnoseCfg()));
+    });
+
+  diagnose
+    .command('local')
+    .description('Analyze local directory: file types, extensions, non-.md stats')
+    .action(() => {
+      void import('./tools/diagnose.js').then(({ cmdLocalStats }) => {
+        cmdLocalStats(diagnoseCfg().localDir);
+      });
+    });
 }
 
 function diagnoseCfg(): { cookiesPath: string; metadataPath: string; localDir: string } {
