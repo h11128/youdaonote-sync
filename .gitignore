@@ -12,6 +12,10 @@ build/
 dist/
 ts-src/dist/
 
+# Test coverage reports
+coverage/
+ts-src/coverage/
+
 # Project config (auto-generated, user-specific)
 config/cookies.json
 config/browser_data/
