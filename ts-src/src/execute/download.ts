@@ -5,6 +5,7 @@ import type { FileId, ContentHash } from '../types/common.js';
 import { xmlBytesToMarkdown } from '../convert/xml-to-md.js';
 import { jsonBytesToMarkdown } from '../convert/json-to-md.js';
 import { htmlBytesToMarkdown } from '../convert/html-to-md.js';
+import { requireNonEmpty } from '../util/preconditions.js';
 
 export type FileType = 'markdown' | 'xml' | 'json' | 'html' | 'binary';
 
@@ -66,6 +67,8 @@ export async function downloadFile(
     hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
   },
 ): Promise<DownloadResult> {
+  requireNonEmpty('fileId', fileId);
+  requireNonEmpty('localPath', localPath);
   const rawData = await api.getFileById(fileId);
   const data = new Uint8Array(rawData);
 

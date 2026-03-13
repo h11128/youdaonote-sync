@@ -2,9 +2,10 @@ import type { DirId, FileId } from '../types/common.js';
 import { NoteDomain } from '../types/common.js';
 import { PUSH_URL, DELETE_URL, tpl } from './constants.js';
 import { safeJson } from './request.js';
+import { requireNonEmpty } from '../util/preconditions.js';
 
-function required(name: string, value: unknown): void {
-  if (!value) throw new Error(`${name} must not be empty`);
+function required(name: string, value: string): void {
+  requireNonEmpty(name, value);
 }
 
 export interface FileApiContext {

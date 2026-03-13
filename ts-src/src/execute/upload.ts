@@ -7,6 +7,7 @@ import { NoteDomain } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { markdownToNoteJson } from '../convert/md-to-note.js';
 import { normalizeSep } from '../scan/name.js';
+import { requireNonEmpty } from '../util/preconditions.js';
 
 const TEXT_EXTS = new Set([
   '.md',
@@ -108,6 +109,9 @@ function extractCloudMtime(result: Record<string, unknown>): EpochSeconds {
  * - Other text files: upload as Markdown domain
  */
 export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
+  requireNonEmpty('localPath', opts.localPath);
+  requireNonEmpty('relPath', opts.relPath);
+  requireNonEmpty('rootDirId', opts.rootDirId);
   const { api, meta, localPath, relPath, rootDirId } = opts;
   const parentId = await ensureParentDir(api, meta, relPath, rootDirId);
   const ext = extname(localPath).toLowerCase();

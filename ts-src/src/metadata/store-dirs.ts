@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { asRelPath, type DirId, type RelPath } from '../types/common.js';
+import { requireNonEmpty } from '../util/preconditions.js';
 
 /**
  * Directory table operations. Paths must be normalized (e.g. forward slashes) by caller.
@@ -18,9 +19,10 @@ export function setDirInfo(
   dirId: DirId,
   parentId?: DirId | null,
 ): void {
+  requireNonEmpty('dirId', dirId);
   db.prepare('INSERT OR REPLACE INTO directories (path, dir_id, parent_id) VALUES (?, ?, ?)').run(
     path,
-    dirId || '',
+    dirId,
     parentId ?? '',
   );
 }

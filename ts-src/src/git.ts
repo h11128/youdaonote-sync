@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RelPath } from './types/common.js';
+import { requireNonEmpty } from './util/preconditions.js';
 
 export interface GitCommitOpts {
   message?: string;
@@ -61,6 +62,7 @@ function buildCommitMessage(opts?: GitCommitOpts): string {
  * Selectively adds only changed files (matches Python commit_sync).
  */
 export function gitAutoCommit(localDir: string, opts?: GitCommitOpts): boolean {
+  requireNonEmpty('localDir', localDir);
   if (!existsSync(join(localDir, '.git'))) return false;
 
   try {
@@ -92,6 +94,8 @@ export function getFileContentFromGit(
   relPath: RelPath,
   ref = 'HEAD',
 ): Buffer | null {
+  requireNonEmpty('localDir', localDir);
+  requireNonEmpty('relPath', relPath);
   if (!existsSync(join(localDir, '.git'))) return null;
   try {
     const result = execFileSync('git', ['show', `${ref}:${relPath}`], {
@@ -109,6 +113,7 @@ export function getFileContentFromGit(
  * Initialize a git repository in the local directory if not already present.
  */
 export function gitInit(localDir: string): boolean {
+  requireNonEmpty('localDir', localDir);
   if (existsSync(join(localDir, '.git'))) return true;
   try {
     execFileSync('git', ['init'], { cwd: localDir, stdio: 'pipe' });

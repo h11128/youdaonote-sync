@@ -41,7 +41,8 @@ export function backupFile(filePath: string): string | null {
   try {
     copyFileSync(filePath, backupPath);
     return backupPath;
-  } catch {
+  } catch (e: unknown) {
+    console.warn(`[conflict] failed to backup ${filePath}: ${String(e)}`);
     return null;
   }
 }

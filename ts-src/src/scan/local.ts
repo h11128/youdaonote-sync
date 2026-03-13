@@ -3,6 +3,7 @@ import { join, relative, extname, dirname } from 'node:path';
 import type { LocalFile } from '../types/scan.js';
 import { asEpochSeconds, asRelPath, type RelPath } from '../types/common.js';
 import { normalizeSep, mapCloudName, compileFilter } from './name.js';
+import { requireNonEmpty } from '../util/preconditions.js';
 export { patternToRegex } from './name.js';
 
 const LOCAL_ARTIFACT_DIRS = new Set(['images', 'attachments']);
@@ -53,8 +54,8 @@ function processEntry(
       if (isConflictFile(entry.name)) return;
       addLocalFile(join(scanDir, entry.name), entry.name, localDir, result);
     }
-  } catch {
-    /* skip inaccessible entries */
+  } catch (e: unknown) {
+    console.warn(`[scan] cannot access ${join(scanDir, entry.name)}: ${String(e)}`);
   }
 }
 
@@ -63,13 +64,15 @@ export function scanLocal(
   basePath: RelPath | '' = '',
   opts?: { include?: string[]; exclude?: string[] },
 ): Map<RelPath, LocalFile> {
+  requireNonEmpty('localDir', localDir);
   const scanDir = basePath ? join(localDir, basePath) : localDir;
   const result = new Map<RelPath, LocalFile>();
 
   let entries: Dirent[];
   try {
     entries = readdirSync(scanDir, READDIR_OPTS);
-  } catch {
+  } catch (e: unknown) {
+    console.warn(`[scan] cannot read directory ${scanDir}: ${String(e)}`);
     return result;
   }
 
@@ -99,7 +102,8 @@ function scandirRecursive(dirpath: string, localDir: string): Map<RelPath, Local
   let entries: Dirent[];
   try {
     entries = readdirSync(dirpath, READDIR_OPTS);
-  } catch {
+  } catch (e: unknown) {
+    console.warn(`[scan] cannot read directory ${dirpath}: ${String(e)}`);
     return target;
   }
   for (const entry of entries) {
@@ -247,6 +251,7 @@ export async function scanLocalParallel(
   basePath: RelPath | '' = '',
   opts?: { include?: string[]; exclude?: string[] },
 ): Promise<Map<RelPath, LocalFile>> {
+  requireNonEmpty('localDir', localDir);
   const scanDir = basePath ? join(localDir, basePath) : localDir;
   const result = new Map<RelPath, LocalFile>();
 

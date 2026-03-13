@@ -2,6 +2,7 @@
  * Path and filename utilities shared by metadata, scan, and execute layers.
  * Keeps dependency direction: no module depends on scan for path logic.
  */
+import { requireNonEmpty } from './preconditions.js';
 
 const FILENAME_REPLACE_RE = /[<]/g;
 const FILENAME_DELETE_RE = /[\\/":|*?#>\n\r]/g;
@@ -18,6 +19,7 @@ const MULTI_SPACE_RE = / {2,}/g;
  * - Stem trailing whitespace → strip
  */
 export function sanitizeFilename(name: string): string {
+  requireNonEmpty('name', name);
   name = name.replace(FILENAME_REPLACE_RE, '_');
   name = name.replace(FILENAME_DELETE_RE, '');
   name = name.trim();

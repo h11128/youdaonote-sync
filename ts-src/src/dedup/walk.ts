@@ -1,6 +1,7 @@
 import { join, relative } from 'node:path';
 import { readdirSync, statSync } from 'node:fs';
 import { asEpochSeconds, asRelPath, type EpochSeconds, type RelPath } from '../types/common.js';
+import { requireNonEmpty } from '../util/preconditions.js';
 
 export interface WalkEntry {
   rel: RelPath;
@@ -14,10 +15,13 @@ export interface WalkEntry {
  * absolute path, mtime, and whether they're markdown.
  */
 export function walkFiles(dir: string, root: string, cb: (entry: WalkEntry) => void): void {
+  requireNonEmpty('dir', dir);
+  requireNonEmpty('root', root);
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (e: unknown) {
+    console.warn(`[walk] cannot read directory ${dir}: ${String(e)}`);
     return;
   }
   for (const ent of entries) {

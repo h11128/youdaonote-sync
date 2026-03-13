@@ -3,6 +3,7 @@ import { extname } from 'node:path';
 import type { ContentHash } from './types/common.js';
 import { asContentHash } from './types/common.js';
 import { initXxhash, xxh128 } from './algo/xxhash.js';
+import { requireNonEmpty } from './util/preconditions.js';
 
 const TEXT_EXTENSIONS = new Set([
   '.md',
@@ -117,15 +118,12 @@ export function computeContentHashFromBytes(
   data: Uint8Array,
   filePath: string,
 ): ContentHash | null {
-  try {
-    if (isTextFile(filePath)) {
-      const text = normalizeTextContent(Buffer.from(data), filePath);
-      return asContentHash(xxh128(text));
-    }
-    return asContentHash(xxh128(Buffer.from(data)));
-  } catch {
-    return null;
+  requireNonEmpty('filePath', filePath);
+  if (isTextFile(filePath)) {
+    const text = normalizeTextContent(Buffer.from(data), filePath);
+    return asContentHash(xxh128(text));
   }
+  return asContentHash(xxh128(Buffer.from(data)));
 }
 
 /**
@@ -136,13 +134,15 @@ export function computeContentHashFromBytes(
  * Binary files: reads and hashes raw bytes.
  */
 export function computeContentHashFromFile(filePath: string): ContentHash | null {
+  requireNonEmpty('filePath', filePath);
   try {
     statSync(filePath);
-    const data = readFileSync(filePath);
-    return computeContentHashFromBytes(data, filePath);
-  } catch {
-    return null;
+  } catch (e: unknown) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
   }
+  const data = readFileSync(filePath);
+  return computeContentHashFromBytes(data, filePath);
 }
 
 /** Ensure xxhash WASM is loaded. Must be called once before hashing. */

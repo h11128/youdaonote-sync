@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from './store.js';
@@ -11,18 +11,17 @@ import {
   type ContentHash,
 } from '../types/common.js';
 
-const TMP = join(tmpdir(), `store-extra-test-${Date.now()}`);
-const DB_PATH = join(TMP, 'meta.db');
+let tmpDir: string;
 let meta: MetadataStore;
 
 beforeEach(() => {
-  mkdirSync(TMP, { recursive: true });
-  meta = new MetadataStore(DB_PATH);
+  tmpDir = mkdtempSync(join(tmpdir(), 'store-extra-test-'));
+  meta = new MetadataStore(join(tmpDir, 'meta.db'));
 });
 
 afterEach(() => {
   meta.close();
-  rmSync(TMP, { recursive: true, force: true });
+  rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe('getSyncLog', () => {

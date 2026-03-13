@@ -24,7 +24,8 @@ export async function downloadAsset(
     mkdirSync(dirname(localPath), { recursive: true });
     writeFileSync(localPath, data);
     return localPath;
-  } catch {
+  } catch (e: unknown) {
+    console.warn(`[images] failed to download asset ${url}: ${String(e)}`);
     return null;
   }
 }

@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from
 import { join, dirname } from 'node:path';
 import { platform, homedir } from 'node:os';
 import { env } from 'node:process';
+import { requireNonEmpty } from '../util/preconditions.js';
 
 export interface CookieEntry {
   readonly name: string;
@@ -21,6 +22,7 @@ export function hasRequiredCookies(cookieNames: string[]): boolean {
 }
 
 export function loadCookies(cookiesPath: string): { cookies: CookieEntry[]; error: string } {
+  requireNonEmpty('cookiesPath', cookiesPath);
   try {
     const raw = readFileSync(cookiesPath, 'utf-8');
     const data = JSON.parse(raw) as { cookies?: unknown[] };
@@ -60,6 +62,7 @@ export function saveCookies(
   cookiesPath: string,
   backup = true,
 ): { ok: boolean; error: string } {
+  requireNonEmpty('cookiesPath', cookiesPath);
   try {
     if (backup) backupCookies(cookiesPath);
     const serialized = {
@@ -82,7 +85,8 @@ export function backupCookies(cookiesPath: string): string | null {
     const backupPath = join(backupsDir, `cookies.json.backup.${ts}`);
     copyFileSync(cookiesPath, backupPath);
     return backupPath;
-  } catch {
+  } catch (e: unknown) {
+    console.warn(`[cookies] failed to backup ${cookiesPath}: ${String(e)}`);
     return null;
   }
 }
