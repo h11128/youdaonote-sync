@@ -9,6 +9,24 @@ import { isAsset } from './types.js';
  * Collision protection: verify files with same hash also have same size.
  * Hash collisions with different sizes are dropped.
  */
+function groupBySize(paths: RelPath[], root: string, stats: DedupStats): Map<number, RelPath[]> {
+  const bySize = new Map<number, RelPath[]>();
+  for (const p of paths) {
+    try {
+      const sz = statSync(join(root, p)).size;
+      let list = bySize.get(sz);
+      if (!list) {
+        list = [];
+        bySize.set(sz, list);
+      }
+      list.push(p);
+    } catch {
+      stats.skipped++;
+    }
+  }
+  return bySize;
+}
+
 export function classifyDuplicates(
   rawGroups: Map<ContentHash, RelPath[]>,
   root: string,
@@ -17,21 +35,12 @@ export function classifyDuplicates(
   const result = new Map<string, RelPath[]>();
 
   for (const [hash, paths] of rawGroups) {
-    const bySize = new Map<number, RelPath[]>();
-    for (const p of paths) {
-      try {
-        const sz = statSync(join(root, p)).size;
-        let list = bySize.get(sz);
-        if (!list) {
-          list = [];
-          bySize.set(sz, list);
-        }
-        list.push(p);
-      } catch {
-        stats.skipped++;
-      }
+    const bySize = groupBySize(paths, root, stats);
+    if (bySize.size > 1) {
+      console.warn(
+        `[dedup] hash collision: ${hash} has ${bySize.size} different sizes — possible hash collision`,
+      );
     }
-
     for (const [sz, subPaths] of bySize) {
       if (subPaths.length > 1) {
         result.set(`${hash}_${sz}`, subPaths);

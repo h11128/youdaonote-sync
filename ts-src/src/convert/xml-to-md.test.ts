@@ -7,7 +7,7 @@ function xml(body: string, listDefs = '<list></list>'): string {
   return `<?xml version="1.0" encoding="UTF-8"?><note xmlns="${NS}">${listDefs}<body>${body}</body></note>`;
 }
 
-describe('xmlBytesToMarkdown', () => {
+describe('xmlBytesToMarkdown — basic elements', () => {
   it('converts plain paragraph', () => {
     const input = xml('<para><text>Hello world</text></para>');
     expect(xmlBytesToMarkdown(Buffer.from(input))).toContain('Hello world');
@@ -61,6 +61,42 @@ describe('xmlBytesToMarkdown', () => {
     const input = xml('<para><text>**bold** #heading</text></para>');
     const result = xmlBytesToMarkdown(Buffer.from(input));
     expect(result).toContain('**bold** #heading');
+  });
+});
+
+describe('xmlBytesToMarkdown — lists and tables', () => {
+  it('converts list item (unordered)', () => {
+    const listDefs = '<list><list id="l1" type="unordered"/></list>';
+    const input = xml('<list_item list-id="l1"><text>item text</text></list_item>', listDefs);
+    expect(xmlBytesToMarkdown(Buffer.from(input))).toContain('- item text');
+  });
+
+  it('converts list item (ordered)', () => {
+    const listDefs = '<list><list id="l2" type="ordered"/></list>';
+    const input = xml('<list_item list-id="l2"><text>first item</text></list_item>', listDefs);
+    expect(xmlBytesToMarkdown(Buffer.from(input))).toContain('1. first item');
+  });
+
+  it('converts table with JSON content', () => {
+    const tableJson = JSON.stringify({
+      widths: [1, 1],
+      cells: [{ value: 'A' }, { value: 'B' }, { value: '1' }, { value: '2' }],
+    });
+    const input = xml(`<table><content>${tableJson}</content></table>`);
+    const result = xmlBytesToMarkdown(Buffer.from(input));
+    expect(result).toContain('| A | B |');
+    expect(result).toContain('| - | - |');
+    expect(result).toContain('| 1 | 2 |');
+  });
+
+  it('escapes special chars in table cells (encodeMd)', () => {
+    const tableJson = JSON.stringify({
+      widths: [1],
+      cells: [{ value: 'a*b_c#d<e>f&g' }],
+    });
+    const input = xml(`<table><content><![CDATA[${tableJson}]]></content></table>`);
+    const result = xmlBytesToMarkdown(Buffer.from(input));
+    expect(result).toContain('a\\*b\\_c\\#d&lt;e&gt;f&amp;g');
   });
 
   it('handles empty body', () => {

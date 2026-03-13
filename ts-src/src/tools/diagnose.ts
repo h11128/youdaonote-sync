@@ -14,7 +14,7 @@
 import { basename, extname, dirname, join } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { SyncEngine } from '../engine.js';
-import type { RelPath } from '../types/common.js';
+import { asRelPath, type RelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { MetadataStore } from '../metadata/store.js';
 import { YoudaoNoteApi } from '../api/client.js';
@@ -63,7 +63,7 @@ export async function cmdPath(cfg: DiagnoseConfig, targets: string[]): Promise<v
 function printPathLookup(suspect: string, cloudSnap: Map<RelPath, CloudFile>): void {
   console.log(`\n  Local path: ${suspect}`);
 
-  const exact = cloudSnap.get(suspect as RelPath);
+  const exact = cloudSnap.get(asRelPath(suspect));
   if (exact) {
     console.log(`    -> Exact match! name=${exact.name}, isDir=${exact.isDir}`);
     return;
@@ -127,10 +127,11 @@ function printDecision(target: string, ctx: DecisionCtx): void {
   console.log(`  File: ${target}`);
   console.log('='.repeat(60));
 
-  const cloud = cloudSnap.get(target as RelPath);
-  const local = localSnap.get(target as RelPath);
-  const state = classified.get(target as RelPath);
-  const fileMeta = meta.getFileInfo(target as RelPath);
+  const targetRel = asRelPath(target);
+  const cloud = cloudSnap.get(targetRel);
+  const local = localSnap.get(targetRel);
+  const state = classified.get(targetRel);
+  const fileMeta = meta.getFileInfo(targetRel);
 
   console.log(`  cloud: ${cloud ? 'exists' : 'null'}`);
   if (cloud) console.log(`    mtime=${cloud.mtime}, name=${cloud.name}`);

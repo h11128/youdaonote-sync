@@ -2,11 +2,24 @@ import { readdirSync, statSync, promises as fsPromises, type Dirent } from 'node
 import { join, relative, extname, dirname } from 'node:path';
 import type { LocalFile } from '../types/scan.js';
 import { asEpochSeconds, asRelPath, type RelPath } from '../types/common.js';
-import { normalizeSep, mapCloudName } from './name.js';
+import { normalizeSep, mapCloudName, compileFilter } from './name.js';
+export { patternToRegex } from './name.js';
 
 const LOCAL_ARTIFACT_DIRS = new Set(['images', 'attachments']);
 const READDIR_OPTS = { withFileTypes: true, encoding: 'utf-8' } as const;
 const CONFLICT_MARKER = '.conflict.';
+
+function shouldSkipEntry(entry: Dirent): boolean {
+  return entry.name.startsWith('.') || entry.isSymbolicLink();
+}
+
+function isArtifactDir(name: string): boolean {
+  return LOCAL_ARTIFACT_DIRS.has(name);
+}
+
+function isConflictFile(name: string): boolean {
+  return name.includes(CONFLICT_MARKER);
+}
 
 /**
  * Recursively scan a local directory, returning a map of relative paths → LocalFile.
@@ -22,28 +35,26 @@ function processEntry(
   localDir: string,
   result: Map<RelPath, LocalFile>,
 ): void {
-  if (entry.name.startsWith('.')) return;
-  if (entry.isSymbolicLink()) return;
-
-  if (entry.isDirectory()) {
-    if (LOCAL_ARTIFACT_DIRS.has(entry.name)) return;
-    const fullPath = join(scanDir, entry.name);
-    const rel = asRelPath(normalizeSep(relative(localDir, fullPath)));
-    try {
+  if (shouldSkipEntry(entry)) return;
+  try {
+    if (entry.isDirectory()) {
+      if (isArtifactDir(entry.name)) return;
+      const fullPath = join(scanDir, entry.name);
+      const rel = asRelPath(normalizeSep(relative(localDir, fullPath)));
       const st = statSync(fullPath);
       result.set(rel, {
         path: fullPath,
         isDir: true,
         mtime: asEpochSeconds(Math.floor(st.mtimeMs / 1000)),
       });
-    } catch {
-      /* skip inaccessible dirs */
+      const subEntries = scandirRecursive(fullPath, localDir);
+      for (const [k, v] of subEntries) result.set(k, v);
+    } else if (entry.isFile()) {
+      if (isConflictFile(entry.name)) return;
+      addLocalFile(join(scanDir, entry.name), entry.name, localDir, result);
     }
-    const subEntries = scandirRecursive(fullPath, localDir);
-    for (const [k, v] of subEntries) result.set(k, v);
-  } else if (entry.isFile()) {
-    if (entry.name.includes(CONFLICT_MARKER)) return;
-    addLocalFile(join(scanDir, entry.name), entry.name, localDir, result);
+  } catch {
+    /* skip inaccessible entries */
   }
 }
 
@@ -83,36 +94,6 @@ function applyFilterToResult(
   }
 }
 
-function processRecursiveEntry(
-  entry: Dirent,
-  dirpath: string,
-  localDir: string,
-  target: Map<RelPath, LocalFile>,
-): void {
-  if (entry.name.startsWith('.')) return;
-  if (entry.isSymbolicLink()) return;
-  try {
-    if (entry.isDirectory()) {
-      if (LOCAL_ARTIFACT_DIRS.has(entry.name)) return;
-      const fullPath = join(dirpath, entry.name);
-      const rel = asRelPath(normalizeSep(relative(localDir, fullPath)));
-      const st = statSync(fullPath);
-      target.set(rel, {
-        path: fullPath,
-        isDir: true,
-        mtime: asEpochSeconds(Math.floor(st.mtimeMs / 1000)),
-      });
-      const sub = scandirRecursive(fullPath, localDir);
-      for (const [k, v] of sub) target.set(k, v);
-    } else if (entry.isFile()) {
-      if (entry.name.includes(CONFLICT_MARKER)) return;
-      addLocalFile(join(dirpath, entry.name), entry.name, localDir, target);
-    }
-  } catch {
-    /* skip inaccessible entries */
-  }
-}
-
 function scandirRecursive(dirpath: string, localDir: string): Map<RelPath, LocalFile> {
   const target = new Map<RelPath, LocalFile>();
   let entries: Dirent[];
@@ -122,9 +103,13 @@ function scandirRecursive(dirpath: string, localDir: string): Map<RelPath, Local
     return target;
   }
   for (const entry of entries) {
-    processRecursiveEntry(entry, dirpath, localDir, target);
+    processEntry(entry, dirpath, localDir, target);
   }
   return target;
+}
+
+function mapFileRelPath(fullPath: string, name: string, localDir: string): RelPath {
+  return asRelPath(normalizeSep(relative(localDir, join(dirname(fullPath), mapCloudName(name)))));
 }
 
 function addLocalFile(
@@ -134,11 +119,8 @@ function addLocalFile(
   target: Map<RelPath, LocalFile>,
 ): void {
   const ext = extname(name);
-  const mappedName = mapCloudName(name);
-  const parentDir = dirname(fullPath);
-  const rel = asRelPath(normalizeSep(relative(localDir, join(parentDir, mappedName))));
+  const rel = mapFileRelPath(fullPath, name, localDir);
 
-  // When both .note and .md exist for the same stem, .md takes priority
   if (target.has(rel) && (ext === '.note' || ext === '.clip')) return;
 
   try {
@@ -152,25 +134,6 @@ function addLocalFile(
   } catch {
     /* skip inaccessible files */
   }
-}
-
-function compileFilter(include: string[], exclude: string[]): (path: RelPath) => boolean {
-  const includeRes = include.map(patternToRegex);
-  const excludeRes = exclude.map(patternToRegex);
-
-  return (path: RelPath) => {
-    if (excludeRes.some((re) => re.test(path))) return false;
-    if (includeRes.length === 0) return true;
-    return includeRes.some((re) => re.test(path));
-  };
-}
-
-export function patternToRegex(pattern: string): RegExp {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
-  return new RegExp(`(^|/)${escaped}$`);
 }
 
 const EXT_MD = '.md';
@@ -188,10 +151,7 @@ async function addLocalFileAsync(
   name: string,
   localDir: string,
 ): Promise<Map<RelPath, LocalFile>> {
-  if (name.includes(CONFLICT_MARKER)) return new Map();
-  const mappedName = mapCloudName(name);
-  const parentDir = dirname(fullPath);
-  const rel = asRelPath(normalizeSep(relative(localDir, join(parentDir, mappedName))));
+  const rel = mapFileRelPath(fullPath, name, localDir);
   try {
     const st = await fsPromises.stat(fullPath);
     return new Map([
@@ -222,10 +182,10 @@ async function scandirRecursiveAsync(
     return target;
   }
   for (const entry of entries) {
-    if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue;
+    if (shouldSkipEntry(entry)) continue;
     try {
       if (entry.isDirectory()) {
-        if (LOCAL_ARTIFACT_DIRS.has(entry.name)) continue;
+        if (isArtifactDir(entry.name)) continue;
         const fullPath = join(dirpath, entry.name);
         const rel = asRelPath(normalizeSep(relative(localDir, fullPath)));
         const st = await fsPromises.stat(fullPath);
@@ -237,6 +197,7 @@ async function scandirRecursiveAsync(
         const sub = await scandirRecursiveAsync(fullPath, localDir);
         mergeIntoResult(target, sub);
       } else if (entry.isFile()) {
+        if (isConflictFile(entry.name)) continue;
         const fileMap = await addLocalFileAsync(join(dirpath, entry.name), entry.name, localDir);
         mergeIntoResult(target, fileMap);
       }
@@ -251,7 +212,7 @@ function collectTopLevelDirsAndFiles(entries: Dirent[]): { dirs: Dirent[]; files
   const dirs: Dirent[] = [];
   const files: Dirent[] = [];
   for (const e of entries) {
-    if (e.name.startsWith('.') || e.isSymbolicLink()) continue;
+    if (shouldSkipEntry(e)) continue;
     if (e.isDirectory()) dirs.push(e);
     else if (e.isFile()) files.push(e);
   }
@@ -265,7 +226,7 @@ async function addTopLevelDirEntries(
   localDir: string,
 ): Promise<void> {
   for (const e of dirs) {
-    if (LOCAL_ARTIFACT_DIRS.has(e.name)) continue;
+    if (isArtifactDir(e.name)) continue;
     const fullPath = join(scanDir, e.name);
     const rel = asRelPath(normalizeSep(relative(localDir, fullPath)));
     try {
@@ -300,7 +261,7 @@ export async function scanLocalParallel(
 
   const dirResults = await Promise.all(
     dirs
-      .filter((e) => !LOCAL_ARTIFACT_DIRS.has(e.name))
+      .filter((e) => !isArtifactDir(e.name))
       .map((e) => scandirRecursiveAsync(join(scanDir, e.name), localDir)),
   );
   for (const m of dirResults) mergeIntoResult(result, m);
@@ -308,7 +269,7 @@ export async function scanLocalParallel(
 
   const fileResults = await Promise.all(
     files
-      .filter((e) => !e.name.includes(CONFLICT_MARKER))
+      .filter((e) => !isConflictFile(e.name))
       .map((e) => addLocalFileAsync(join(scanDir, e.name), e.name, localDir)),
   );
   for (const m of fileResults) mergeIntoResult(result, m);

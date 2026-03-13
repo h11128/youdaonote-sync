@@ -1,4 +1,4 @@
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { existsSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import type { ContentHash, EpochSeconds, FileId, RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
@@ -10,7 +10,7 @@ import { classifyDuplicates, resolveGroup } from './resolve.js';
 
 function removeEmptyParents(filePath: string, root: string): void {
   let parent = dirname(filePath);
-  const absRoot = join(root);
+  const absRoot = resolve(root);
   while (parent !== absRoot && parent !== dirname(parent)) {
     try {
       if (readdirSync(parent).length === 0) {

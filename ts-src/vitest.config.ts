@@ -7,7 +7,13 @@ export default defineConfig({
     setupFiles: ['src/test-setup.ts'],
     coverage: {
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts'],
+      exclude: [
+        'src/**/*.test.ts',
+        'src/cli.ts',
+        'src/cli-browse.ts',
+        'src/smoke-test.ts',
+        'src/**/index.ts',
+      ],
     },
   },
 });

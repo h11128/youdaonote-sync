@@ -5,7 +5,7 @@ function encode(obj: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(obj));
 }
 
-describe('jsonBytesToMarkdown', () => {
+describe('jsonBytesToMarkdown — text and formatting', () => {
   it('converts plain text paragraph', () => {
     const data = encode({
       '5': [{ '5': [{ '7': [{ '8': 'Hello world' }] }] }],
@@ -39,6 +39,121 @@ describe('jsonBytesToMarkdown', () => {
       ],
     });
     expect(jsonBytesToMarkdown(data)).toBe('**bold**');
+  });
+
+  it('converts italic text', () => {
+    const data = encode({
+      '5': [
+        {
+          '5': [
+            {
+              '7': [{ '8': 'hello', '9': [{ '2': 'i' }] }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('*hello*');
+  });
+
+  it('converts unordered list', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { lt: 'unordered', ll: 1 },
+          '5': [{ '7': [{ '8': 'item1' }] }],
+          '6': 'l',
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('- item1');
+  });
+
+  it('converts ordered list', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { lt: 'ordered', ll: 1 },
+          '5': [{ '7': [{ '8': 'item1' }] }],
+          '6': 'l',
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('1. item1');
+  });
+});
+
+describe('jsonBytesToMarkdown — structural elements', () => {
+  it('converts quote / blockquote', () => {
+    const data = encode({
+      '5': [
+        {
+          '5': [{ '5': [{ '7': [{ '8': 'quoted' }] }] }],
+          '6': 'q',
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('> quoted\n');
+  });
+
+  it('converts highlight block', () => {
+    const data = encode({
+      '5': [
+        {
+          '5': [{ '5': [{ '7': [{ '8': 'highlighted' }] }] }],
+          '6': 'la',
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toContain('```');
+    expect(jsonBytesToMarkdown(data)).toContain('highlighted');
+  });
+
+  it('converts table with separator row', () => {
+    const data = encode({
+      '5': [
+        {
+          '5': [
+            {
+              '5': [
+                { '5': [{ '5': [{ '7': [{ '8': 'A' }] }] }] },
+                { '5': [{ '5': [{ '7': [{ '8': 'B' }] }] }] },
+              ],
+            },
+            {
+              '5': [
+                { '5': [{ '5': [{ '7': [{ '8': '1' }] }] }] },
+                { '5': [{ '5': [{ '7': [{ '8': '2' }] }] }] },
+              ],
+            },
+          ],
+          '6': 't',
+        },
+      ],
+    });
+    const result = jsonBytesToMarkdown(data);
+    expect(result).toContain('| A | B |');
+    expect(result).toContain('| -- | -- |');
+    expect(result).toContain('| 1 | 2 |');
+  });
+});
+
+describe('jsonBytesToMarkdown — links, images, code', () => {
+  it('converts text with link (li with hf)', () => {
+    const data = encode({
+      '5': [
+        {
+          '5': [
+            {
+              '4': { hf: 'https://example.com' },
+              '5': [{ '7': [{ '8': 'Example' }] }],
+              '6': 'li',
+            },
+          ],
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('[Example](https://example.com)');
   });
 
   it('converts image', () => {

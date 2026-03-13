@@ -10,7 +10,7 @@ const MD_REF_RE = /!?\[[^\]]*\]\(([^)]+)\)|src="([^"]+)"/g;
 function isExternalOrAbsoluteRef(refPath: string): boolean {
   if (/^(https?:|data:|note:|ftp:|mailto:|\/\/|\\\\)/.test(refPath)) return true;
   if (refPath.includes('://')) return true;
-  if (refPath.length > 2 && refPath[2] === ':') return true;
+  if (refPath.length > 2 && refPath.includes(':', 2)) return true;
   return false;
 }
 
