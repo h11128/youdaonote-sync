@@ -22,6 +22,7 @@ import { tryDiff3Merge } from './diff3-merge.js';
 import { retryWithBackoff } from '../api/retry.js';
 import { handleMove } from './move-handler.js';
 import { migrateImages } from './images.js';
+import { pLimit } from '../util/concurrency.js';
 
 export interface SyncStats {
   downloaded: number;
@@ -65,6 +66,8 @@ export interface ExecuteContext {
   rootDirId: DirId;
   localDir: string;
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
+  /** Per-session dedup map for concurrent directory creation. */
+  dirCreateInflight?: Map<string, Promise<DirId>> | undefined;
 }
 
 /**
@@ -110,24 +113,62 @@ export async function executeAll(
   direction: SyncDirection = 'both',
 ): Promise<SyncStats> {
   const stats = emptyStats();
+  const ctxWithInflight = {
+    ...ctx,
+    dirCreateInflight: ctx.dirCreateInflight ?? new Map<string, Promise<DirId>>(),
+  };
   const { dirEntries, fileEntries } = partitionEntries(classified, cloud, stats);
 
+  // Directories must be created first (sequential — parent before child)
   for (const [relPath, _state, action] of dirEntries) {
     try {
-      await executeDir(relPath, action, ctx, stats);
+      await executeDir(relPath, action, ctxWithInflight, stats);
     } catch (e: unknown) {
       stats.errors++;
       console.error(`Error processing dir ${relPath}: ${formatError(e)}`);
     }
   }
 
-  for (const [relPath, state, action] of fileEntries) {
+  // Partition files by action type for concurrent execution
+  const downloads: typeof fileEntries = [];
+  const uploads: typeof fileEntries = [];
+  const others: typeof fileEntries = [];
+  for (const entry of fileEntries) {
+    const action = entry[2];
+    if (action === 'download') downloads.push(entry);
+    else if (action === 'upload') uploads.push(entry);
+    else others.push(entry);
+  }
+
+  const FILE_CONCURRENCY = 5;
+  const limit = pLimit(FILE_CONCURRENCY);
+
+  const runEntry = async ([relPath, state, action]: [
+    RelPath,
+    FileState,
+    SyncAction,
+  ]): Promise<void> => {
     try {
-      await executeSingle({ relPath, state, action, cloud, ctx, stats, direction });
+      await executeSingle({
+        relPath,
+        state,
+        action,
+        cloud,
+        ctx: ctxWithInflight,
+        stats,
+        direction,
+      });
     } catch (e: unknown) {
       stats.errors++;
       console.error(`Error processing ${relPath}: ${formatError(e)}`);
     }
+  };
+
+  await Promise.all(downloads.map((entry) => limit(() => runEntry(entry))));
+  await Promise.all(uploads.map((entry) => limit(() => runEntry(entry))));
+
+  for (const entry of others) {
+    await runEntry(entry);
   }
 
   return Object.freeze(stats);
@@ -147,7 +188,13 @@ async function executeDir(
     mkdirSync(join(ctx.localDir, relPath), { recursive: true });
     stats.downloaded++;
   } else if (action === 'upload') {
-    await ensureParentDir(ctx.api, ctx.meta, joinRelPath(relPath, '_placeholder'), ctx.rootDirId);
+    await ensureParentDir({
+      api: ctx.api,
+      meta: ctx.meta,
+      relPath: joinRelPath(relPath, '_placeholder'),
+      rootDirId: ctx.rootDirId,
+      inflight: ctx.dirCreateInflight,
+    });
     stats.uploaded++;
   } else {
     stats.skipped++;
@@ -220,7 +267,9 @@ interface HandleUploadOpts {
 async function handleUpload(o: HandleUploadOpts): Promise<void> {
   const { relPath, localPath, metaRecord, ctx, stats } = o;
   const { api, meta, rootDirId } = ctx;
-  const uploadHash = ctx.hashFn != null ? ctx.hashFn(readFileSync(localPath), localPath) : null;
+  // Read once, reuse for hash + upload
+  const fileBuffer = readFileSync(localPath);
+  const uploadHash = ctx.hashFn != null ? ctx.hashFn(fileBuffer, localPath) : null;
   if (uploadHash) {
     const existing = meta.findCloudFileByHash(uploadHash, relPath);
     if (existing) {
@@ -234,6 +283,8 @@ async function handleUpload(o: HandleUploadOpts): Promise<void> {
     localPath,
     relPath,
     rootDirId,
+    preReadBuffer: fileBuffer,
+    dirCreateInflight: ctx.dirCreateInflight,
   };
   if (metaRecord?.fileId) ulOpts.existingFileId = metaRecord.fileId;
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;

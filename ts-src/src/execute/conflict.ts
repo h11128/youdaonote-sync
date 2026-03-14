@@ -80,7 +80,10 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
   } else {
     /* no local file to backup, proceed with upload */
   }
+  // Read once, reuse for upload + hash
+  const fileBuffer = existsSync(localPath) ? readFileSync(localPath) : undefined;
   const ulOpts: UploadFileOpts = { api, meta, localPath, relPath, rootDirId };
+  if (fileBuffer) ulOpts.preReadBuffer = fileBuffer;
   if (cloudFile?.id) ulOpts.existingFileId = cloudFile.id as FileId;
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
   const result = await retryWithBackoff(() => uploadFile(ulOpts));
@@ -88,7 +91,7 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
     fileId: result.fileId,
     cloudMtime: result.cloudMtime,
     localMtime: asEpochSeconds(readFileMtime(localPath)),
-    contentHash: ctx.hashFn ? ctx.hashFn(readFileSync(localPath), localPath) : null,
+    contentHash: ctx.hashFn && fileBuffer ? ctx.hashFn(fileBuffer, localPath) : null,
     action: 'conflict-upload',
     direction: 'push',
   });

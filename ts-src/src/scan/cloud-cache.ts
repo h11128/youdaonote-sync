@@ -29,7 +29,11 @@ export interface CloudCacheDeps {
   meta: MetadataStore;
   /** When true, skip desktop seed (e.g. in test mode with injected API). */
   skipDesktopSeed?: boolean;
+  /** Skip listRecent if last scan was within this many seconds. Default: 60. */
+  cacheTtlSeconds?: number | undefined;
 }
+
+const DEFAULT_CACHE_TTL_SECONDS = 60;
 
 /**
  * Rebuild cloud_files from metadata (compatible with scanner format).
@@ -101,15 +105,63 @@ export async function fetchCurrentVersion(api: CloudCacheDeps['api']): Promise<n
   return 0;
 }
 
+function stampScanTime(meta: MetadataStore): void {
+  meta.setState(STATE_SCAN_TIME, String(Math.floor(Date.now() / 1000)));
+}
+
+function tryTtlShortcut(meta: MetadataStore, ttl: number): Map<RelPath, CloudFile> | null {
+  if (ttl <= 0) return null;
+  const lastScanTime = meta.getStateInt(STATE_SCAN_TIME);
+  if (lastScanTime <= 0) return null;
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  if (nowEpoch - lastScanTime >= ttl) return null;
+  return loadCloudFilesFromCache(meta);
+}
+
+function reconcileRecent(
+  meta: MetadataStore,
+  recent: Record<string, unknown>[],
+  cachedVersion: number,
+  cachedFiles: Map<RelPath, CloudFile> | null,
+): Map<RelPath, CloudFile> | null {
+  if (recent.length === 0) {
+    stampScanTime(meta);
+    return cachedFiles;
+  }
+  const cloudMaxVersion = Math.max(
+    ...recent.map((e) => {
+      const fe = e.fileEntry as Record<string, unknown> | undefined;
+      return toNum(fe?.version, 0);
+    }),
+  );
+  if (cachedVersion >= cloudMaxVersion) {
+    stampScanTime(meta);
+    return cachedFiles;
+  }
+  const changed = recent.filter((e) => {
+    const fe = e.fileEntry as Record<string, unknown> | undefined;
+    return toNum(fe?.version, 0) > cachedVersion;
+  });
+  const allCovered = changed.length < recent.length;
+  if (!allCovered || !cachedFiles) return null;
+
+  applyIncrementalChanges(meta, cachedFiles, changed);
+  meta.setState(STATE_CLOUD_VERSION, String(cloudMaxVersion));
+  stampScanTime(meta);
+  meta.save();
+  return cachedFiles;
+}
+
 /**
  * Try to use cached cloud_files. Returns null when cache unavailable (full scan needed).
  *
  * Logic:
  * 1. No cached version → try desktop seed → still none → return null
- * 2. Call listRecent to get cloud changes since last cached version
- * 3. If no changes → use cache as-is
- * 4. If changes fit within listRecent window → incremental update
- * 5. If changes overflow → return null (need full scan)
+ * 2. TTL shortcut: if scanned recently, skip the network call
+ * 3. Call listRecent to get cloud changes since last cached version
+ * 4. If no changes → use cache as-is
+ * 5. If changes fit within listRecent window → incremental update
+ * 6. If changes overflow → return null (need full scan)
  */
 export async function tryCachedCloudScan(
   deps: CloudCacheDeps,
@@ -123,45 +175,16 @@ export async function tryCachedCloudScan(
     if (cachedVersion <= 0) return null;
   }
 
-  let recent: Record<string, unknown>[];
-  try {
-    recent = await api.listRecent(30);
-  } catch {
-    return loadCloudFilesFromCache(meta);
-  }
+  const ttlResult = tryTtlShortcut(meta, deps.cacheTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS);
+  if (ttlResult) return ttlResult;
 
-  if (recent.length === 0) {
-    return loadCloudFilesFromCache(meta);
-  }
+  const [recentResult, cachedFiles] = await Promise.all([
+    api.listRecent(30).catch(() => null),
+    Promise.resolve(loadCloudFilesFromCache(meta)),
+  ]);
 
-  const cloudMaxVersion = Math.max(
-    ...recent.map((e) => {
-      const fe = e.fileEntry as Record<string, unknown> | undefined;
-      return toNum(fe?.version, 0);
-    }),
-  );
-
-  if (cachedVersion >= cloudMaxVersion) {
-    return loadCloudFilesFromCache(meta);
-  }
-
-  const changed = recent.filter((e) => {
-    const fe = e.fileEntry as Record<string, unknown> | undefined;
-    return toNum(fe?.version, 0) > cachedVersion;
-  });
-  const allCovered = changed.length < recent.length;
-
-  if (!allCovered) return null;
-
-  const cached = loadCloudFilesFromCache(meta);
-  if (!cached) return null;
-
-  applyIncrementalChanges(meta, cached, changed);
-  meta.setState(STATE_CLOUD_VERSION, String(cloudMaxVersion));
-  meta.setState(STATE_SCAN_TIME, String(Math.floor(Date.now() / 1000)));
-  meta.save();
-
-  return cached;
+  if (recentResult === null) return cachedFiles;
+  return reconcileRecent(meta, recentResult, cachedVersion, cachedFiles);
 }
 
 /**

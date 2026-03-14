@@ -17,6 +17,7 @@ import { sanitizeFilename, normalizeSep } from '../util/path.js';
 import * as storeDirs from './store-dirs.js';
 import * as storeState from './store-state.js';
 import * as storeFiles from './store-files.js';
+import * as storeHashCache from './store-hash-cache.js';
 
 /**
  * SQLite-backed metadata store for sync state.
@@ -43,6 +44,7 @@ export class MetadataStore {
       },
     };
     runAllMigrations(this.db, accessor, sanitizeFilename);
+    storeHashCache.validateHashCacheVersion(this.db);
   }
 
   close(): void {
@@ -208,6 +210,30 @@ export class MetadataStore {
 
   setCloudContentHash(localPath: RelPath, cloudHash: ContentHash): void {
     storeFiles.setCloudContentHash(this.db, this.normalizePath(localPath), cloudHash);
+  }
+
+  // ========== Hash cache ==========
+
+  getCachedHash(path: RelPath, mtime: EpochSeconds, size: number): ContentHash | null {
+    return storeHashCache.getCachedHash(this.db, this.normalizePath(path), mtime, size);
+  }
+
+  setCachedHash(path: RelPath, mtime: EpochSeconds, size: number, hash: ContentHash): void {
+    storeHashCache.setCachedHash(this.db, { path: this.normalizePath(path), mtime, size, hash });
+  }
+
+  getCachedHashesBulk(
+    entries: readonly { relPath: RelPath; mtime: EpochSeconds; size: number }[],
+  ): Map<RelPath, ContentHash> {
+    return storeHashCache.getCachedHashesBulk(this.db, entries);
+  }
+
+  setCachedHashesBulk(
+    entries: readonly { path: string; mtime: EpochSeconds; size: number; hash: ContentHash }[],
+  ): void {
+    this.batch(() => {
+      storeHashCache.setCachedHashesBulk(this.db, entries);
+    });
   }
 
   // ========== Sync state & log & file_base (delegate to store-state) ==========

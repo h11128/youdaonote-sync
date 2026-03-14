@@ -25,7 +25,13 @@ async function moveCloudFile(
   const { api, meta, rootDirId } = ctx;
   if (!cloudFile) return false;
   try {
-    const newParentId = await ensureParentDir(api, meta, relPath, rootDirId);
+    const newParentId = await ensureParentDir({
+      api,
+      meta,
+      relPath,
+      rootDirId,
+      inflight: ctx.dirCreateInflight,
+    });
     await retryWithBackoff(() => api.moveFile(oldFileId, newParentId, cloudFile.domain));
     const oldName = basename(oldPath);
     const newName = basename(relPath);

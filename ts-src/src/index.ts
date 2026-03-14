@@ -4,7 +4,12 @@ export { SyncWatcher } from './watcher.js';
 export { createCli } from './cli.js';
 export { gitAutoCommit, gitInit } from './git.js';
 export { findDuplicates, removeDuplicateMetadata } from './dedup/index.js';
-export { computeContentHashFromBytes, computeContentHashFromFile } from './hash.js';
+export {
+  computeContentHashFromBytes,
+  computeContentHashFromFile,
+  computeContentHashFromFileAsync,
+  computeHashesConcurrent,
+} from './hash.js';
 
 // Algorithm modules
 export * from './algo/index.js';

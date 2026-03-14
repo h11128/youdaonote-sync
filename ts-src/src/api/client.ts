@@ -8,6 +8,7 @@ import { ROOT_ID_URL, FILE_URL, LIST_RECENT_URL, tpl, BASE_HEADERS } from './con
 import { safeJson } from './request.js';
 import { fetchDirList } from './dir.js';
 import * as fileApi from './file-api.js';
+import { retryWithBackoff } from './retry.js';
 
 export class YoudaoNoteApi {
   private cookiesPath: string;
@@ -71,54 +72,64 @@ export class YoudaoNoteApi {
   // ========== HTTP ==========
 
   private async httpPost(url: string, body?: URLSearchParams | FormData): Promise<Response> {
-    const headers: Record<string, string> = {
-      ...BASE_HEADERS,
-      Cookie: this.cookieHeader,
-    };
-    if (body instanceof URLSearchParams) {
-      headers['Content-Type'] = 'application/x-www-form-urlencoded';
-    }
+    return retryWithBackoff(
+      async () => {
+        const headers: Record<string, string> = {
+          ...BASE_HEADERS,
+          Cookie: this.cookieHeader,
+        };
+        if (body instanceof URLSearchParams) {
+          headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        }
 
-    const fetchOpts: RequestInit = { method: 'POST', headers };
-    if (body) fetchOpts.body = body;
+        const fetchOpts: RequestInit = { method: 'POST', headers };
+        if (body) fetchOpts.body = body;
 
-    let resp = await fetch(url, fetchOpts);
+        let resp = await fetch(url, fetchOpts);
 
-    if ((await this.isAuthError(resp)) && this.refreshSession()) {
-      url = this.refreshUrl(url);
-      if (body instanceof URLSearchParams && body.has('cstk') && this.cstk) {
-        body.set('cstk', this.cstk);
-      }
-      headers.Cookie = this.cookieHeader;
-      const retryOpts: RequestInit = { method: 'POST', headers };
-      if (body) retryOpts.body = body;
-      resp = await fetch(url, retryOpts);
-    }
+        if ((await this.isAuthError(resp)) && this.refreshSession()) {
+          url = this.refreshUrl(url);
+          if (body instanceof URLSearchParams && body.has('cstk') && this.cstk) {
+            body.set('cstk', this.cstk);
+          }
+          headers.Cookie = this.cookieHeader;
+          const retryOpts: RequestInit = { method: 'POST', headers };
+          if (body) retryOpts.body = body;
+          resp = await fetch(url, retryOpts);
+        }
 
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}: ${await resp.text().catch(() => '')}`);
-    }
-    return resp;
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}: ${await resp.text().catch(() => '')}`);
+        }
+        return resp;
+      },
+      { maxRetries: 2 },
+    );
   }
 
   private async httpGet(url: string): Promise<Response> {
-    const headers: Record<string, string> = {
-      ...BASE_HEADERS,
-      Cookie: this.cookieHeader,
-    };
+    return retryWithBackoff(
+      async () => {
+        const headers: Record<string, string> = {
+          ...BASE_HEADERS,
+          Cookie: this.cookieHeader,
+        };
 
-    let resp = await fetch(url, { headers });
+        let resp = await fetch(url, { headers });
 
-    if ((await this.isAuthError(resp)) && this.refreshSession()) {
-      url = this.refreshUrl(url);
-      headers.Cookie = this.cookieHeader;
-      resp = await fetch(url, { headers });
-    }
+        if ((await this.isAuthError(resp)) && this.refreshSession()) {
+          url = this.refreshUrl(url);
+          headers.Cookie = this.cookieHeader;
+          resp = await fetch(url, { headers });
+        }
 
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}: ${await resp.text().catch(() => '')}`);
-    }
-    return resp;
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}: ${await resp.text().catch(() => '')}`);
+        }
+        return resp;
+      },
+      { maxRetries: 2 },
+    );
   }
 
   private async isAuthError(resp: Response): Promise<boolean> {
@@ -147,8 +158,19 @@ export class YoudaoNoteApi {
     return ('WEB' + randomUUID().replace(/-/g, '')) as FileId;
   }
 
+  /**
+   * Get root directory ID. Uses in-memory cache, then persistent cache
+   * (via onRootIdResolved callback), then falls back to API call.
+   */
   async getRootId(): Promise<DirId> {
     if (this.cachedRootId) return this.cachedRootId;
+
+    // Try persistent cache
+    if (this.persistedRootId) {
+      this.cachedRootId = this.persistedRootId;
+      return this.cachedRootId;
+    }
+
     this.requireAuth();
     const cstk = this.cstk;
     if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
@@ -169,7 +191,27 @@ export class YoudaoNoteApi {
     } else {
       throw new Error(`Cannot extract root dir ID from API response`);
     }
+
+    this.onRootIdResolved?.(this.cachedRootId);
     return this.cachedRootId;
+  }
+
+  private persistedRootId: DirId | null = null;
+  private onRootIdResolved: ((id: DirId) => void) | null = null;
+
+  /**
+   * Set a previously persisted root dir ID (avoids the API call).
+   * Call this before getRootId() if the ID was saved from a prior session.
+   */
+  setPersistedRootId(id: DirId): void {
+    if (id) this.persistedRootId = id;
+  }
+
+  /**
+   * Register callback to persist root dir ID after first successful API fetch.
+   */
+  setOnRootIdResolved(cb: (id: DirId) => void): void {
+    this.onRootIdResolved = cb;
   }
 
   async getDirInfoById(dirId: DirId): Promise<DirInfoByIdResponse> {

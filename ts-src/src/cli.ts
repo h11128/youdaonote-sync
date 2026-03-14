@@ -198,6 +198,11 @@ function registerDiagnoseCommands(program: Command): void {
       });
     });
 
+  registerDiagnoseToolCommands(diagnose);
+  registerDiagnoseCacheCommands(diagnose);
+}
+
+function registerDiagnoseToolCommands(diagnose: Command): void {
   diagnose
     .command('api-status')
     .description('Check API connectivity and cookie validity')
@@ -214,7 +219,16 @@ function registerDiagnoseCommands(program: Command): void {
       });
     });
 
-  registerDiagnoseCacheCommands(diagnose);
+  diagnose
+    .command('profile')
+    .description('Dry-run with per-phase timing and CPU profiling')
+    .option('--no-cpu', 'Skip CPU profiling (faster)')
+    .option('--top <n>', 'Number of hot functions to show', '20')
+    .action((opts: { cpu: boolean; top: string }) => {
+      void import('./tools/profile-command.js').then(({ cmdProfile }) =>
+        cmdProfile(diagnoseCfg(), { cpu: opts.cpu, top: parseInt(opts.top, 10) }),
+      );
+    });
 }
 
 function registerDiagnoseCacheCommands(diagnose: Command): void {

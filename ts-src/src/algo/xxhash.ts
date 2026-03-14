@@ -1,7 +1,8 @@
+import { createRequire } from 'node:module';
 import type { XXHashAPI } from 'xxhash-wasm';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { XXH3_128 } = require('xxh3-ts') as { XXH3_128: (data: Buffer, seed?: bigint) => bigint };
+const require_ = createRequire(import.meta.url);
+const { XXH3_128 } = require_('xxh3-ts') as { XXH3_128: (data: Buffer, seed?: bigint) => bigint };
 
 let api: XXHashAPI | null = null;
 let initPromise: Promise<void> | null = null;

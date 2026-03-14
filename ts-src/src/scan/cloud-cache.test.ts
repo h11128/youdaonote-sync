@@ -58,7 +58,12 @@ function makeCloudFile(id: string, name: string, parentId = 'root'): CloudFile {
 describe('tryCachedCloudScan: basic caching', () => {
   it('returns null when no cached version exists', async () => {
     const api = { listRecent: () => Promise.resolve([] as Record<string, unknown>[]) };
-    const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
     expect(result).toBeNull();
   });
 
@@ -68,7 +73,12 @@ describe('tryCachedCloudScan: basic caching', () => {
     saveScanVersion(meta, snap, 10);
 
     const api = { listRecent: () => Promise.resolve([] as Record<string, unknown>[]) };
-    const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
     expect(result).not.toBeNull();
     expect(result!.has(asRelPath('doc.md'))).toBe(true);
   });
@@ -81,7 +91,12 @@ describe('tryCachedCloudScan: basic caching', () => {
     const api = {
       listRecent: () => Promise.resolve([makeEntry('f-1', 'doc.note', 10)]),
     };
-    const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
     expect(result).not.toBeNull();
     expect(result!.has(asRelPath('doc.md'))).toBe(true);
   });
@@ -98,7 +113,12 @@ describe('tryCachedCloudScan: basic caching', () => {
           makeEntry('f-1', 'doc.note', 15, { mtime: 2000 }),
         ]),
     };
-    const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
     expect(result).not.toBeNull();
     expect(result!.get(asRelPath('doc.md'))!.mtime).toBe(2000);
   });
@@ -120,7 +140,12 @@ describe('tryCachedCloudScan: incremental new entries', () => {
           makeEntry('f-new', 'brand-new.note', 15, { parentId: 'dir-notes' }),
         ]),
     };
-    const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
     expect(result).not.toBeNull();
     expect(result!.has(asRelPath('notes/brand-new.md'))).toBe(true);
     expect(result!.get(asRelPath('notes/brand-new.md'))!.id).toBe('f-new');
@@ -140,7 +165,12 @@ describe('tryCachedCloudScan: incremental new entries', () => {
           makeEntry('dir-photos', 'photos', 15, { parentId: 'root', dir: true }),
         ]),
     };
-    const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
     expect(result).not.toBeNull();
     expect(result!.has(asRelPath('photos'))).toBe(true);
     expect(result!.get(asRelPath('photos'))!.isDir).toBe(true);
@@ -158,7 +188,12 @@ describe('tryCachedCloudScan: incremental new entries', () => {
           makeEntry('f-orphan', 'orphan.note', 15, { parentId: 'unknown-dir' }),
         ]),
     };
-    const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
     expect(result).not.toBeNull();
     expect(result!.has(asRelPath('doc.md'))).toBe(true);
     expect([...result!.keys()].some((k) => k.includes('orphan'))).toBe(false);
@@ -175,7 +210,12 @@ describe('tryCachedCloudScan: error handling and overflow', () => {
       makeEntry(`f-${i}`, `file${i}.note`, 10 + i),
     );
     const api = { listRecent: () => Promise.resolve(entries) };
-    const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
     expect(result).toBeNull();
   });
 
@@ -187,7 +227,12 @@ describe('tryCachedCloudScan: error handling and overflow', () => {
     const api = {
       listRecent: () => Promise.reject(new Error('network')),
     };
-    const result = await tryCachedCloudScan({ api, meta, skipDesktopSeed: true });
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
     expect(result).not.toBeNull();
     expect(result!.has(asRelPath('doc.md'))).toBe(true);
   });

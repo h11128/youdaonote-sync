@@ -6,7 +6,8 @@ import type { FileState, SyncAction } from './types/state.js';
 import { stateToAction } from './types/state.js';
 import { patternToRegex } from './scan/local.js';
 import { emptyStats, type SyncStats } from './execute/executor.js';
-import { computeContentHashFromFile } from './hash.js';
+import { computeContentHashFromFileAsync } from './hash.js';
+import { pLimit } from './util/concurrency.js';
 
 const HASHABLE_EXTS = new Set([
   '.md',
@@ -243,12 +244,13 @@ export function buildDedupInputs(
 /**
  * Pre-compute content hashes for files on both sides (warm the cache).
  * Only computes for hashable extensions that haven't been computed yet.
+ * Uses bounded concurrency for parallel I/O.
  */
-export function warmupHashCache(
+export async function warmupHashCache(
   cloudSnap: ReadonlyMap<RelPath, CloudFile>,
   localSnap: ReadonlyMap<RelPath, LocalFile>,
   localHashes: Map<RelPath, ContentHash | null>,
-): void {
+): Promise<void> {
   const toCompute: { relPath: RelPath; absPath: string }[] = [];
   for (const [relPath, local] of localSnap) {
     if (local.isDir || localHashes.has(relPath)) continue;
@@ -257,14 +259,16 @@ export function warmupHashCache(
     if (!HASHABLE_EXTS.has(ext)) continue;
     toCompute.push({ relPath, absPath: local.path });
   }
-  const BATCH = 50;
-  for (let i = 0; i < toCompute.length; i += BATCH) {
-    const batch = toCompute.slice(i, i + BATCH);
-    for (const { relPath, absPath } of batch) {
-      const hash = computeContentHashFromFile(absPath);
-      localHashes.set(relPath, hash);
-    }
-  }
+  const CONCURRENCY = 8;
+  const limit = pLimit(CONCURRENCY);
+  await Promise.all(
+    toCompute.map(({ relPath, absPath }) =>
+      limit(async () => {
+        const hash = await computeContentHashFromFileAsync(absPath);
+        localHashes.set(relPath, hash);
+      }),
+    ),
+  );
 }
 
 export function applyRefinementIfChanged(

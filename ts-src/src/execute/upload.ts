@@ -43,16 +43,23 @@ export interface UploadResult {
   readonly cloudMtime: EpochSeconds;
 }
 
+export interface EnsureParentDirOpts {
+  api: YoudaoNoteApi;
+  meta: MetadataStore;
+  relPath: RelPath;
+  rootDirId: DirId;
+  inflight?: Map<string, Promise<DirId>> | undefined;
+}
+
 /**
  * Ensure all parent directories exist in the cloud, creating them as needed.
  * Returns the DirId of the immediate parent directory.
+ *
+ * When `inflight` is provided, deduplicates concurrent createDir calls
+ * for the same path within the same sync session.
  */
-export async function ensureParentDir(
-  api: YoudaoNoteApi,
-  meta: MetadataStore,
-  relPath: RelPath,
-  rootDirId: DirId,
-): Promise<DirId> {
+export async function ensureParentDir(o: EnsureParentDirOpts): Promise<DirId> {
+  const { api, meta, relPath, rootDirId, inflight } = o;
   const parts = normalizeSep(relPath).split('/');
   parts.pop(); // remove filename
 
@@ -68,12 +75,30 @@ export async function ensureParentDir(
       continue;
     }
 
-    const result = await api.createDir(parentId, part);
-    const fe = result.fileEntry as Record<string, unknown> | undefined;
-    const newId = (fe?.id ?? '') as DirId;
-    if (newId) {
-      meta.setDirInfo(currentPath, newId, parentId);
-      parentId = newId;
+    if (inflight) {
+      const existing = inflight.get(currentPath);
+      if (existing) {
+        parentId = await existing;
+        continue;
+      }
+    }
+
+    const createPromise = (async () => {
+      const result = await api.createDir(parentId, part);
+      const fe = result.fileEntry as Record<string, unknown> | undefined;
+      const newId = (fe?.id ?? '') as DirId;
+      if (newId) {
+        meta.setDirInfo(currentPath, newId, parentId);
+        return newId;
+      }
+      return parentId;
+    })();
+
+    inflight?.set(currentPath, createPromise);
+    try {
+      parentId = await createPromise;
+    } finally {
+      inflight?.delete(currentPath);
     }
   }
 
@@ -88,6 +113,10 @@ export interface UploadFileOpts {
   rootDirId: DirId;
   existingFileId?: FileId;
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
+  /** Pre-read file buffer to avoid redundant disk reads. */
+  preReadBuffer?: Buffer;
+  /** Per-session dedup map for concurrent directory creation. */
+  dirCreateInflight?: Map<string, Promise<DirId>> | undefined;
 }
 
 function isTextFile(ext: string): boolean {
@@ -113,7 +142,13 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
   requireNonEmpty('relPath', opts.relPath);
   requireNonEmpty('rootDirId', opts.rootDirId);
   const { api, meta, localPath, relPath, rootDirId } = opts;
-  const parentId = await ensureParentDir(api, meta, relPath, rootDirId);
+  const parentId = await ensureParentDir({
+    api,
+    meta,
+    relPath,
+    rootDirId,
+    inflight: opts.dirCreateInflight,
+  });
   const ext = extname(localPath).toLowerCase();
   const isCreate = !opts.existingFileId;
   const fileId = opts.existingFileId ?? YoudaoNoteApi.generateFileId();
@@ -121,8 +156,10 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
   const popped = parts.pop();
   const name: string = popped ?? basename(relPath);
 
+  const rawBuf = opts.preReadBuffer ?? readFileSync(localPath);
+
   if (!isTextFile(ext)) {
-    const fileData = new Uint8Array(readFileSync(localPath));
+    const fileData = new Uint8Array(rawBuf);
     const result = await api.pushBinaryFile({
       fileId,
       parentId,
@@ -133,7 +170,7 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
     return { fileId, cloudMtime: extractCloudMtime(result) };
   }
 
-  const content = readFileSync(localPath, 'utf-8');
+  const content = rawBuf.toString('utf-8');
   let domain = NoteDomain.MARKDOWN;
   let bodyString = content;
 

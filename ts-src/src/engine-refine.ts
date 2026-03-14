@@ -5,6 +5,7 @@ import type { MetadataStore } from './metadata/store.js';
 import { refineCloudModified } from './classify/refine.js';
 import { retryWithBackoff } from './api/retry.js';
 import { collectConflictCandidates, applyRefinementIfChanged } from './engine-helpers.js';
+import { pLimit } from './util/concurrency.js';
 
 export interface RefineAllDeps {
   classified: Map<RelPath, FileState>;
@@ -31,24 +32,38 @@ async function getCloudHash(
 /**
  * For cloudModifiedContent and conflict entries, download cloud content,
  * compute hash, and use refineCloudModified to potentially downgrade.
+ * Uses bounded concurrency to fetch cloud content in parallel.
  */
 export async function refineAllConflicts(deps: RefineAllDeps): Promise<void> {
   const candidates = collectConflictCandidates(deps.classified, deps.cloudSnap);
   if (candidates.length === 0) return;
 
-  for (const { relPath, cloudFile } of candidates) {
-    try {
-      const cloudHash = await getCloudHash(deps, relPath, cloudFile);
-      if (!cloudHash) continue;
-      const localHash = deps.localHashes.get(relPath);
-      if (!localHash) continue;
+  const CONCURRENCY = 4;
+  const limit = pLimit(CONCURRENCY);
 
-      const metaRecord = deps.meta.getFileInfo(relPath);
-      const refined = refineCloudModified(localHash, cloudHash, metaRecord);
-      applyRefinementIfChanged(relPath, refined, deps.classified);
-      deps.meta.setCloudContentHash(relPath, cloudHash);
-    } catch {
-      // keep original classification on failure
-    }
+  // Fetch cloud hashes concurrently, then apply refinements sequentially
+  // (Map mutation is not safe across concurrent writes to the same key)
+  const results = await Promise.all(
+    candidates.map(({ relPath, cloudFile }) =>
+      limit(async () => {
+        try {
+          const cloudHash = await getCloudHash(deps, relPath, cloudFile);
+          return { relPath, cloudHash };
+        } catch {
+          return { relPath, cloudHash: null };
+        }
+      }),
+    ),
+  );
+
+  for (const { relPath, cloudHash } of results) {
+    if (!cloudHash) continue;
+    const localHash = deps.localHashes.get(relPath);
+    if (!localHash) continue;
+
+    const metaRecord = deps.meta.getFileInfo(relPath);
+    const refined = refineCloudModified(localHash, cloudHash, metaRecord);
+    applyRefinementIfChanged(relPath, refined, deps.classified);
+    deps.meta.setCloudContentHash(relPath, cloudHash);
   }
 }

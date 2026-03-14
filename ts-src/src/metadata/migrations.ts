@@ -59,6 +59,12 @@ const MIGRATION_SQL: readonly string[] = [
       value TEXT NOT NULL
   )`,
   'ALTER TABLE files ADD COLUMN original_domain INTEGER',
+  `CREATE TABLE IF NOT EXISTS hash_cache (
+      path TEXT PRIMARY KEY,
+      mtime INTEGER NOT NULL,
+      size INTEGER NOT NULL,
+      hash TEXT NOT NULL
+  )`,
 ];
 
 export function initSchema(db: Database.Database): void {

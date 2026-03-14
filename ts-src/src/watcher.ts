@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { normalize } from 'node:path';
 import { SyncEngine } from './engine.js';
-import type { SyncEngineConfig } from './engine.js';
+import type { SyncEngineConfig } from './types/engine-config.js';
 
 /**
  * Sync watcher with local filesystem monitoring + cloud polling.
