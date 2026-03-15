@@ -1,10 +1,17 @@
 {
   "private": true,
-  "description": "Root package — git hooks only. App code lives in ts-src/.",
+  "description": "Root package — git hooks + lint-staged. App code lives in ts-src/.",
   "scripts": {
     "prepare": "husky"
   },
   "devDependencies": {
-    "husky": "^9.0.0"
+    "husky": "^9.0.0",
+    "lint-staged": "^16.3.2"
+  },
+  "lint-staged": {
+    "ts-src/src/**/*.ts": [
+      "npx --prefix ts-src eslint --fix",
+      "npx --prefix ts-src prettier --write"
+    ]
   }
 }

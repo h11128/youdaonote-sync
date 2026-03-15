@@ -19,8 +19,10 @@ export function getConfigDir(): string {
     return process.env.YOUDAONOTE_CONFIG_DIR;
   }
   const appData = process.env.APPDATA ?? join(homedir(), '.config');
-  return join(appData, 'youdaonote-sync');
+  return join(appData, APP_NAME);
 }
+
+const APP_NAME = 'youdaonote-sync';
 
 let migrationWarned = false;
 

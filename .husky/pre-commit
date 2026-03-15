@@ -1,9 +1,8 @@
 #!/usr/bin/env sh
 
-cd ts-src || exit 1
-
-# Lint + format staged .ts files
+# Lint + format staged .ts files (runs from repo root so lint-staged stash works)
 npx lint-staged
 
 # TypeScript type check (catches errors that per-file linting misses)
+cd ts-src || exit 1
 npm run typecheck
