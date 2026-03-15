@@ -112,6 +112,8 @@ export interface UploadFileOpts {
   relPath: RelPath;
   rootDirId: DirId;
   existingFileId?: FileId;
+  /** Domain of the existing cloud file (from metadata). When set, overrides extension-based domain detection. */
+  existingDomain?: NoteDomain;
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
   /** Pre-read file buffer to avoid redundant disk reads. */
   preReadBuffer?: Buffer;
@@ -159,33 +161,21 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
   const rawBuf = opts.preReadBuffer ?? readFileSync(localPath);
 
   if (!isTextFile(ext)) {
-    const fileData = new Uint8Array(rawBuf);
     const result = await api.pushBinaryFile({
       fileId,
       parentId,
       name,
-      fileData,
+      fileData: new Uint8Array(rawBuf),
       isCreate,
     });
     return { fileId, cloudMtime: extractCloudMtime(result) };
   }
 
   const content = rawBuf.toString('utf-8');
-  let domain = NoteDomain.MARKDOWN;
-  let bodyString = content;
+  const needsNote = ext === '.note' || ext === '.clip' || opts.existingDomain === NoteDomain.NOTE;
+  const domain = needsNote ? NoteDomain.NOTE : NoteDomain.MARKDOWN;
+  const bodyString = needsNote ? markdownToNoteJson(content) : content;
 
-  if (ext === '.note' || ext === '.clip') {
-    domain = NoteDomain.NOTE;
-    bodyString = markdownToNoteJson(content);
-  }
-
-  const result = await api.pushFile({
-    fileId,
-    parentId,
-    name,
-    domain,
-    bodyString,
-    isCreate,
-  });
+  const result = await api.pushFile({ fileId, parentId, name, domain, bodyString, isCreate });
   return { fileId, cloudMtime: extractCloudMtime(result) };
 }

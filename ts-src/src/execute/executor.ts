@@ -1,27 +1,19 @@
 import { readFileSync, statSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 import type { MetadataStore } from '../metadata/store.js';
-import { NoteDomain } from '../types/common.js';
-import type {
-  ContentHash,
-  DirId,
-  EpochSeconds,
-  FileId,
-  RelPath,
-  SyncDirection,
-} from '../types/common.js';
+import type { NoteDomain } from '../types/common.js';
+import type { ContentHash, DirId, FileId, RelPath, SyncDirection } from '../types/common.js';
 import { asEpochSeconds, joinRelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
-import { downloadFile } from './download.js';
+import { handleDownload } from './download.js';
 import { uploadFile, ensureParentDir, type UploadFileOpts } from './upload.js';
 import { conflictFallback, type ConflictOpts } from './conflict.js';
 import { tryDiff3Merge } from './diff3-merge.js';
 import { retryWithBackoff } from '../api/retry.js';
 import { handleMove } from './move-handler.js';
-import { migrateImages } from './images.js';
 import { pLimit } from '../util/concurrency.js';
 
 export interface SyncStats {
@@ -52,11 +44,11 @@ export function emptyStats(): SyncStats {
   };
 }
 
-function readFileMtime(path: string, fallback?: number): number {
+function readFileMtime(path: string): number {
   try {
     return Math.floor(statSync(path).mtimeMs / 1000);
   } catch {
-    return fallback ?? Math.floor(Date.now() / 1000);
+    return Math.floor(Date.now() / 1000);
   }
 }
 
@@ -68,6 +60,8 @@ export interface ExecuteContext {
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
   /** Per-session dedup map for concurrent directory creation. */
   dirCreateInflight?: Map<string, Promise<DirId>> | undefined;
+  /** Local snapshot — used to detect directories when cloud entry is missing. */
+  localSnap?: ReadonlyMap<RelPath, { isDir: boolean }> | undefined;
 }
 
 /**
@@ -83,6 +77,7 @@ export interface ExecuteContext {
 function partitionEntries(
   classified: ReadonlyMap<RelPath, FileState>,
   cloud: ReadonlyMap<RelPath, CloudFile>,
+  local: ReadonlyMap<RelPath, { isDir: boolean }> | undefined,
   stats: SyncStats,
 ): {
   dirEntries: [RelPath, FileState, SyncAction][];
@@ -96,7 +91,7 @@ function partitionEntries(
       stats.skipped++;
       continue;
     }
-    const isDir = cloud.get(relPath)?.isDir ?? false;
+    const isDir = cloud.get(relPath)?.isDir ?? local?.get(relPath)?.isDir ?? false;
     (isDir ? dirEntries : fileEntries).push([relPath, state, action]);
   }
   return { dirEntries, fileEntries };
@@ -105,6 +100,17 @@ function partitionEntries(
 function formatError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+function resolveUploadMeta(
+  record: { fileId?: FileId; domain?: number } | undefined,
+  cloudFile: CloudFile | undefined,
+): { fileId?: FileId; domain?: number } | undefined {
+  if (record != null) return record;
+  const domain = cloudFile?.domain;
+  return domain != null ? { domain } : undefined;
+}
+
+type Entry = [RelPath, FileState, SyncAction];
 
 export async function executeAll(
   classified: ReadonlyMap<RelPath, FileState>,
@@ -117,9 +123,8 @@ export async function executeAll(
     ...ctx,
     dirCreateInflight: ctx.dirCreateInflight ?? new Map<string, Promise<DirId>>(),
   };
-  const { dirEntries, fileEntries } = partitionEntries(classified, cloud, stats);
+  const { dirEntries, fileEntries } = partitionEntries(classified, cloud, ctx.localSnap, stats);
 
-  // Directories must be created first (sequential — parent before child)
   for (const [relPath, _state, action] of dirEntries) {
     try {
       await executeDir(relPath, action, ctxWithInflight, stats);
@@ -129,10 +134,23 @@ export async function executeAll(
     }
   }
 
-  // Partition files by action type for concurrent execution
-  const downloads: typeof fileEntries = [];
-  const uploads: typeof fileEntries = [];
-  const others: typeof fileEntries = [];
+  await runFileEntries(fileEntries, { cloud, ctx: ctxWithInflight, stats, direction });
+  return Object.freeze(stats);
+}
+
+async function runFileEntries(
+  fileEntries: Entry[],
+  opts: {
+    cloud: ReadonlyMap<RelPath, CloudFile>;
+    ctx: ExecuteContext;
+    stats: SyncStats;
+    direction: SyncDirection;
+  },
+): Promise<void> {
+  const { cloud, ctx, stats, direction } = opts;
+  const downloads: Entry[] = [];
+  const uploads: Entry[] = [];
+  const others: Entry[] = [];
   for (const entry of fileEntries) {
     const action = entry[2];
     if (action === 'download') downloads.push(entry);
@@ -140,38 +158,19 @@ export async function executeAll(
     else others.push(entry);
   }
 
-  const FILE_CONCURRENCY = 5;
-  const limit = pLimit(FILE_CONCURRENCY);
-
-  const runEntry = async ([relPath, state, action]: [
-    RelPath,
-    FileState,
-    SyncAction,
-  ]): Promise<void> => {
+  const limit = pLimit(5);
+  const run = async ([relPath, state, action]: Entry): Promise<void> => {
     try {
-      await executeSingle({
-        relPath,
-        state,
-        action,
-        cloud,
-        ctx: ctxWithInflight,
-        stats,
-        direction,
-      });
+      await executeSingle({ relPath, state, action, cloud, ctx, stats, direction });
     } catch (e: unknown) {
       stats.errors++;
       console.error(`Error processing ${relPath}: ${formatError(e)}`);
     }
   };
 
-  await Promise.all(downloads.map((entry) => limit(() => runEntry(entry))));
-  await Promise.all(uploads.map((entry) => limit(() => runEntry(entry))));
-
-  for (const entry of others) {
-    await runEntry(entry);
-  }
-
-  return Object.freeze(stats);
+  await Promise.all(downloads.map((e) => limit(() => run(e))));
+  await Promise.all(uploads.map((e) => limit(() => run(e))));
+  for (const entry of others) await run(entry);
 }
 
 /**
@@ -211,60 +210,13 @@ interface ExecuteSingleOpts {
   direction: SyncDirection;
 }
 
-interface HandleDownloadOpts {
+async function handleUpload(o: {
   relPath: RelPath;
   localPath: string;
-  cloudFile: CloudFile;
+  metaRecord: { fileId?: FileId; domain?: number } | undefined;
   ctx: ExecuteContext;
   stats: SyncStats;
-}
-
-async function handleDownload(o: HandleDownloadOpts): Promise<void> {
-  const { relPath, localPath, cloudFile, ctx, stats } = o;
-  const { api, meta } = ctx;
-  const dlOpts: {
-    cloudMtime?: EpochSeconds;
-    hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
-  } = { cloudMtime: cloudFile.mtime };
-  if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
-  const result = await retryWithBackoff(() =>
-    downloadFile(api, cloudFile.id as FileId, localPath, dlOpts),
-  );
-  meta.recordSync(relPath, {
-    fileId: cloudFile.id as FileId,
-    cloudMtime: cloudFile.mtime,
-    localMtime: asEpochSeconds(readFileMtime(localPath, cloudFile.mtime)),
-    parentId: cloudFile.parentId,
-    domain: cloudFile.domain,
-    contentHash: result.contentHash,
-    cloudContentHash: result.contentHash,
-    action: 'download',
-    direction: 'pull',
-  });
-  if (cloudFile.domain === NoteDomain.NOTE && result.contentHash) {
-    meta.saveBaseContent(relPath, Buffer.from(result.rawData), result.contentHash);
-  }
-  try {
-    const imagesDir = join(dirname(localPath), 'images');
-    const attachDir = join(dirname(localPath), 'attachments');
-    const cookie = api.getCookieHeader();
-    await migrateImages(localPath, imagesDir, attachDir, { Cookie: cookie });
-  } catch {
-    /* image migration is best-effort */
-  }
-  stats.downloaded++;
-  stats.changedPaths.push(localPath);
-}
-
-interface HandleUploadOpts {
-  relPath: RelPath;
-  localPath: string;
-  metaRecord: { fileId?: FileId } | undefined;
-  ctx: ExecuteContext;
-  stats: SyncStats;
-}
-
-async function handleUpload(o: HandleUploadOpts): Promise<void> {
+}): Promise<void> {
   const { relPath, localPath, metaRecord, ctx, stats } = o;
   const { api, meta, rootDirId } = ctx;
   // Read once, reuse for hash + upload
@@ -287,6 +239,7 @@ async function handleUpload(o: HandleUploadOpts): Promise<void> {
     dirCreateInflight: ctx.dirCreateInflight,
   };
   if (metaRecord?.fileId) ulOpts.existingFileId = metaRecord.fileId;
+  if (metaRecord?.domain != null) ulOpts.existingDomain = metaRecord.domain as NoteDomain;
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
   const result = await retryWithBackoff(() => uploadFile(ulOpts));
   meta.recordSync(relPath, {
@@ -332,10 +285,12 @@ async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
       }
       return handleDownload({ relPath, localPath, cloudFile, ctx, stats });
     },
-    upload: () =>
-      handleUpload({ relPath, localPath, metaRecord: metaRecord ?? undefined, ctx, stats }),
+    upload: () => {
+      const uploadMeta = resolveUploadMeta(metaRecord ?? undefined, cloudFile);
+      return handleUpload({ relPath, localPath, metaRecord: uploadMeta, ctx, stats });
+    },
     conflict: () => handleConflict({ relPath, localPath, cloudFile, ctx, stats, direction }),
-    move: () => handleMove({ relPath, state, cloudFile, ctx, stats }),
+    move: () => handleMove({ relPath, state, ctx, stats }),
     skip: () => Promise.resolve(),
   };
   const handler = handlers[action];

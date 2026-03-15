@@ -2,7 +2,6 @@ import { basename, dirname, join } from 'node:path';
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import type { FileState } from '../types/state.js';
 import { asEpochSeconds, type FileId, type RelPath } from '../types/common.js';
-import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { ExecuteContext, SyncStats } from './executor.js';
 import { ensureParentDir } from './upload.js';
@@ -11,19 +10,20 @@ import { retryWithBackoff } from '../api/retry.js';
 export interface HandleMoveOpts {
   relPath: RelPath;
   state: FileState;
-  cloudFile: CloudFile | undefined;
   ctx: ExecuteContext;
   stats: SyncStats;
 }
 
-async function moveCloudFile(
-  o: HandleMoveOpts,
-  oldFileId: FileId,
-  oldPath: RelPath,
-): Promise<boolean> {
-  const { relPath, cloudFile, ctx, stats } = o;
+async function moveCloudFile(opts: {
+  relPath: RelPath;
+  oldPath: RelPath;
+  oldFileId: FileId;
+  domain: number;
+  ctx: ExecuteContext;
+  stats: SyncStats;
+}): Promise<boolean> {
+  const { relPath, oldPath, oldFileId, domain, ctx, stats } = opts;
   const { api, meta, rootDirId } = ctx;
-  if (!cloudFile) return false;
   try {
     const newParentId = await ensureParentDir({
       api,
@@ -32,11 +32,11 @@ async function moveCloudFile(
       rootDirId,
       inflight: ctx.dirCreateInflight,
     });
-    await retryWithBackoff(() => api.moveFile(oldFileId, newParentId, cloudFile.domain));
+    await retryWithBackoff(() => api.moveFile(oldFileId, newParentId, domain));
     const oldName = basename(oldPath);
     const newName = basename(relPath);
     if (oldName !== newName) {
-      await retryWithBackoff(() => api.renameFile(oldFileId, newName, cloudFile.domain));
+      await retryWithBackoff(() => api.renameFile(oldFileId, newName, domain));
     }
     return true;
   } catch {
@@ -44,7 +44,7 @@ async function moveCloudFile(
       oldPath,
       newPath: relPath,
       fileId: oldFileId,
-      domain: cloudFile.domain,
+      domain,
     });
     return false;
   }
@@ -67,10 +67,18 @@ export async function handleMove(o: HandleMoveOpts): Promise<void> {
   if (state.kind !== 'moved') return;
   const { meta, localDir } = ctx;
   const oldPath = state.oldPath;
-  const oldFileId = meta.getFileInfo(oldPath)?.fileId;
-  if (!oldFileId || !o.cloudFile) return;
+  const oldMeta = meta.getFileInfo(oldPath);
+  if (!oldMeta?.fileId) return;
+  const oldFileId = oldMeta.fileId;
 
-  const ok = await moveCloudFile(o, oldFileId, oldPath);
+  const ok = await moveCloudFile({
+    relPath,
+    oldPath,
+    oldFileId,
+    domain: oldMeta.domain,
+    ctx,
+    stats,
+  });
   if (!ok) return;
 
   try {

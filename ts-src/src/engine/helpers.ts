@@ -8,6 +8,7 @@ import { patternToRegex } from '../scan/local.js';
 import { emptyStats, type SyncStats } from '../execute/executor.js';
 import { computeContentHashFromFileAsync } from '../algo/hash.js';
 import { pLimit } from '../util/concurrency.js';
+import { writeDryrunReport } from './helpers-dryrun.js';
 
 const HASHABLE_EXTS = new Set([
   '.md',
@@ -121,9 +122,7 @@ function printUploadWarnings(warnings: { path: RelPath; reasons: string[] }[]): 
   console.log();
 }
 
-/**
- * Print per-item preview of sync actions (matches Python print_preview).
- */
+/** Print per-item preview of sync actions. */
 export function printPreview(classified: Map<RelPath, FileState>): void {
   const groups: Record<string, string[]> = {};
   for (const [path, state] of classified) {
@@ -149,9 +148,7 @@ export function printPreview(classified: Map<RelPath, FileState>): void {
   }
 }
 
-/**
- * Print summary of dry-run results (matches Python print_dryrun_summary).
- */
+/** Print summary of dry-run results. */
 export function printDryrunSummary(classified: Map<RelPath, FileState>): void {
   let dl = 0;
   let ul = 0;
@@ -186,24 +183,28 @@ export function printDryrunSummary(classified: Map<RelPath, FileState>): void {
   if (move) console.log(`  Moves:     ${move}`);
 }
 
-/**
- * Diagnose suspicious UPLOADs in dry-run results (matches Python diagnose_dryrun).
- * Warns when a file marked for upload has metadata suggesting it was previously synced.
- */
-export function diagnoseDryrun(classified: Map<RelPath, FileState>, meta: MetadataStore): void {
+/** Diagnose suspicious UPLOADs and optionally write a markdown report. */
+export function diagnoseDryrun(
+  classified: Map<RelPath, FileState>,
+  meta: MetadataStore,
+  reportBaseDir?: string,
+): void {
   printPreview(classified);
   printDryrunSummary(classified);
 
   const warnings = collectUploadWarnings(classified, meta);
-  if (warnings.length === 0) return;
-  printUploadWarnings(warnings);
+  if (warnings.length > 0) printUploadWarnings(warnings);
+
+  if (reportBaseDir) {
+    const reportPath = writeDryrunReport(classified, warnings, reportBaseDir);
+    console.log(`\n📄 Report saved to: ${reportPath}`);
+  }
 }
 
 export function dryRunStats(classified: Map<RelPath, FileState>): SyncStats {
   const stats = emptyStats();
   for (const state of classified.values()) {
-    const action = stateToAction(state);
-    switch (action) {
+    switch (stateToAction(state)) {
       case 'skip':
         stats.skipped++;
         break;

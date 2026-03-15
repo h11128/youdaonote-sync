@@ -1,11 +1,22 @@
-import { writeFileSync, mkdirSync, utimesSync, renameSync, unlinkSync } from 'node:fs';
+import { statSync, writeFileSync, mkdirSync, utimesSync, renameSync, unlinkSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import type { YoudaoNoteApi } from '../api/client.js';
-import type { FileId, ContentHash } from '../types/common.js';
+import { NoteDomain } from '../types/common.js';
+import {
+  asEpochSeconds,
+  type ContentHash,
+  type EpochSeconds,
+  type FileId,
+  type RelPath,
+} from '../types/common.js';
+import type { CloudFile } from '../types/scan.js';
 import { xmlBytesToMarkdown } from '../convert/xml-to-md.js';
 import { jsonBytesToMarkdown } from '../convert/json-to-md.js';
 import { htmlBytesToMarkdown } from '../convert/html-to-md.js';
 import { requireNonEmpty } from '../util/preconditions.js';
+import { retryWithBackoff } from '../api/retry.js';
+import { migrateImages } from './images.js';
+import type { ExecuteContext, SyncStats } from './executor.js';
 
 export type FileType = 'markdown' | 'xml' | 'json' | 'html' | 'binary';
 
@@ -110,4 +121,59 @@ export async function downloadFile(
   const contentHash = opts?.hashFn?.(contentBytes, localPath) ?? null;
 
   return { localPath, fileType, contentHash, rawData: data };
+}
+
+function readFileMtime(path: string, fallback?: number): number {
+  try {
+    return Math.floor(statSync(path).mtimeMs / 1000);
+  } catch {
+    return fallback ?? Math.floor(Date.now() / 1000);
+  }
+}
+
+async function tryMigrateImages(localPath: string, api: YoudaoNoteApi): Promise<void> {
+  try {
+    const dir = dirname(localPath);
+    await migrateImages(localPath, join(dir, 'images'), join(dir, 'attachments'), {
+      Cookie: api.getCookieHeader(),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+export async function handleDownload(o: {
+  relPath: RelPath;
+  localPath: string;
+  cloudFile: CloudFile;
+  ctx: ExecuteContext;
+  stats: SyncStats;
+}): Promise<void> {
+  const { relPath, localPath, cloudFile, ctx, stats } = o;
+  const { api, meta } = ctx;
+  const dlOpts: {
+    cloudMtime?: EpochSeconds;
+    hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
+  } = { cloudMtime: cloudFile.mtime };
+  if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
+  const result = await retryWithBackoff(() =>
+    downloadFile(api, cloudFile.id as FileId, localPath, dlOpts),
+  );
+  meta.recordSync(relPath, {
+    fileId: cloudFile.id as FileId,
+    cloudMtime: cloudFile.mtime,
+    localMtime: asEpochSeconds(readFileMtime(localPath, cloudFile.mtime)),
+    parentId: cloudFile.parentId,
+    domain: cloudFile.domain,
+    contentHash: result.contentHash,
+    cloudContentHash: result.contentHash,
+    action: 'download',
+    direction: 'pull',
+  });
+  if (cloudFile.domain === NoteDomain.NOTE && result.contentHash) {
+    meta.saveBaseContent(relPath, Buffer.from(result.rawData), result.contentHash);
+  }
+  await tryMigrateImages(localPath, api);
+  stats.downloaded++;
+  stats.changedPaths.push(localPath);
 }

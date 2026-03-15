@@ -22,6 +22,7 @@ export async function runExecuteSync(
   ctx: {
     classified: Map<RelPath, FileState>;
     cloudSnap: Map<RelPath, CloudFile>;
+    localSnap?: Map<RelPath, LocalFile>;
     rootDirId: DirId;
     direction: SyncDirection;
   },
@@ -36,6 +37,7 @@ export async function runExecuteSync(
     rootDirId: ctx.rootDirId,
     localDir: config.localDir,
     hashFn,
+    localSnap: ctx.localSnap,
   };
   const stats = await executeAll(ctx.classified, ctx.cloudSnap, executeCtx, ctx.direction);
   if (stats.failedMoves.length > 0) {

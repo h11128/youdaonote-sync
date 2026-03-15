@@ -37,8 +37,7 @@ const DEFAULT_CACHE_TTL_SECONDS = 60;
 
 /**
  * Rebuild cloud_files from metadata (compatible with scanner format).
- * Only loads file records with file_id. Directories are excluded to avoid
- * phantom downloads from stale directory records.
+ * Loads file records with file_id AND directory records from the directories table.
  */
 export function loadCloudFilesFromCache(meta: MetadataStore): Map<RelPath, CloudFile> | null {
   const summaries = meta.getCloudFileSummaries();
@@ -57,6 +56,20 @@ export function loadCloudFilesFromCache(meta: MetadataStore): Map<RelPath, Cloud
       domain: info.domain as NoteDomain,
     });
   }
+
+  for (const [path, dir] of meta.getAllDirs()) {
+    if (result.has(path)) continue;
+    result.set(path, {
+      id: dir.dirId,
+      parentId: dir.parentId ?? ('' as DirId),
+      name: basename(path),
+      isDir: true,
+      mtime: asEpochSeconds(0),
+      ctime: asEpochSeconds(0),
+      domain: 0 as NoteDomain,
+    });
+  }
+
   return result.size > 0 ? result : null;
 }
 

@@ -6,8 +6,7 @@ import { handleMove, fallbackDeleteOldFiles } from './move-handler.js';
 import { emptyStats } from './executor.js';
 import { MetadataStore } from '../metadata/store.js';
 import { asDirId, asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
-import type { FileId, NoteDomain } from '../types/common.js';
-import type { CloudFile } from '../types/scan.js';
+import type { FileId } from '../types/common.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 
 function makeMockApi(): YoudaoNoteApi {
@@ -16,18 +15,6 @@ function makeMockApi(): YoudaoNoteApi {
     renameFile: vi.fn().mockResolvedValue({}),
     createDir: vi.fn().mockResolvedValue({ fileEntry: { id: 'dir-1' } }),
   } as unknown as YoudaoNoteApi;
-}
-
-function makeCloudFile(id: string, name: string): CloudFile {
-  return {
-    id: asFileId(id),
-    parentId: asDirId('root'),
-    name,
-    isDir: false,
-    mtime: asEpochSeconds(1000),
-    ctime: asEpochSeconds(900),
-    domain: 1 as NoteDomain,
-  };
 }
 
 function setupMoveContext() {
@@ -64,7 +51,6 @@ describe('handleMove: local file operations', () => {
     await handleMove({
       relPath: asRelPath('new-name.md'),
       state: { kind: 'moved', oldPath: asRelPath('old-name.md') },
-      cloudFile: makeCloudFile('f1', 'new-name.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
       stats,
     });
@@ -86,7 +72,6 @@ describe('handleMove: local file operations', () => {
     await handleMove({
       relPath: asRelPath('subdir/deep/note.md'),
       state: { kind: 'moved', oldPath: asRelPath('note.md') },
-      cloudFile: makeCloudFile('f2', 'note.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
       stats,
     });
@@ -107,7 +92,6 @@ describe('handleMove: local file operations', () => {
     await handleMove({
       relPath: asRelPath('b.md'),
       state: { kind: 'moved', oldPath: asRelPath('a.md') },
-      cloudFile: makeCloudFile('f3', 'b.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
       stats,
     });
@@ -147,7 +131,6 @@ describe('handleMove: error handling and metadata', () => {
     await handleMove({
       relPath: asRelPath('y.md'),
       state: { kind: 'moved', oldPath: asRelPath('x.md') },
-      cloudFile: makeCloudFile('f4', 'y.md'),
       ctx: { api, meta, rootDirId: asDirId('root'), localDir },
       stats,
     });
@@ -170,7 +153,6 @@ describe('handleMove: error handling and metadata', () => {
     await handleMove({
       relPath: asRelPath('new.md'),
       state: { kind: 'moved', oldPath: asRelPath('old.md') },
-      cloudFile: makeCloudFile('f5', 'new.md'),
       ctx: { api: makeMockApi(), meta, rootDirId: asDirId('root'), localDir },
       stats,
     });
@@ -188,7 +170,6 @@ describe('handleMove: error handling and metadata', () => {
     await handleMove({
       relPath: asRelPath('x.md'),
       state: { kind: 'localNew' },
-      cloudFile: makeCloudFile('f6', 'x.md'),
       ctx: { api, meta, rootDirId: asDirId('root'), localDir },
       stats,
     });

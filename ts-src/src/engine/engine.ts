@@ -1,3 +1,4 @@
+import { dirname } from 'node:path';
 import { asDirId, type ContentHash, type DirId, type RelPath } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { FileState } from '../types/state.js';
@@ -104,12 +105,13 @@ export class SyncEngine {
     if (direction !== 'both') filterByDirection(classified, direction);
 
     if (dryRun) {
-      diagnoseDryrun(classified, this.meta);
+      const configDir = dirname(this.config.metadataPath);
+      diagnoseDryrun(classified, this.meta, configDir);
       return { stats: dryRunStats(classified), classified };
     }
 
     const stats = await runExecuteSync(
-      { classified, cloudSnap, rootDirId, direction },
+      { classified, cloudSnap, localSnap, rootDirId, direction },
       this.config,
       this.api,
       this.meta,
