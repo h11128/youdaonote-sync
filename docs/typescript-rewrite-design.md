@@ -498,90 +498,105 @@ ts-src/src/
     "better-sqlite3": "^11.0.0",
     "commander": "^12.0.0",
     "fast-xml-parser": "^4.0.0",
-    "xxhash-wasm": "^1.0.0"
+    "xxhash-wasm": "^1.0.0",
+    "xxh3-ts": "^2.0.1"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
+    "typescript-eslint": "^8.56.1",
     "vitest": "^2.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "@fast-check/vitest": "^0.1.0",
     "@types/better-sqlite3": "^7.0.0",
     "@types/node": "^22.0.0",
-    "tsup": "^8.0.0"
+    "tsup": "^8.0.0",
+    "eslint": "^10.0.2",
+    "eslint-plugin-import-x": "^4.16.2",
+    "eslint-plugin-sonarjs": "^4.0.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.1"
   }
 }
 ```
 
-HTTP 用 Node.js 内置 `fetch`（Node 18+）。
+HTTP 用 Node.js 内置 `fetch`（Node 18+）。浏览器自动登录可选安装 `playwright`。
 
 ## 七、实施阶段
 
-### Phase 1: 脚手架 + 类型
+### Phase 1: 脚手架 + 类型 ✅
 
 - `package.json` + `tsconfig.json` (strict: true, noUncheckedIndexedAccess: true)
 - vitest + fast-check 配置
 - `types/` 全部类型定义
 - 编译验证通过
 
-### Phase 2: Decision Table + 测试
+### Phase 2: Decision Table + 测试 ✅
 
 - `classify/conditions.ts` + `classify/rules.ts` + `classify/classify.ts`
-- `classify/refine.ts` + `classify/moves.ts`
+- `classify/refine.ts` + `classify/moves.ts` + `classify/calibrate.ts` + `classify/cross-dir-match.ts`
 - 每个 FileState 至少一个测试用例（14 状态 = 14+ 测试）
 - fast-check 完备性验证
-- **这是核心，必须先做到 100% 覆盖再进入下一阶段**
 
-### Phase 3: Metadata + Scanner
+### Phase 3: Metadata + Scanner ✅
 
-- `metadata/store.ts` — better-sqlite3 封装
-- `metadata/migrations.ts` — 沿用现有 schema
-- `scan/cloud.ts` + `scan/local.ts` + `scan/name.ts`
-- 用现有 Python 生成的 metadata.db 做集成测试
+- `metadata/store.ts` — better-sqlite3 封装，拆分为 store-files/store-dirs/store-hash-cache 等子模块
+- `metadata/migrations.ts` — schema 迁移
+- `scan/cloud.ts` + `scan/cloud-cache.ts` + `scan/local.ts` + `scan/name.ts`
 
-### Phase 4: API + Transfer + Convert
+### Phase 4: API + Transfer + Convert ✅
 
-- `api/client.ts` + `api/cookies.ts` + `api/auth.ts`
-- `execute/download.ts` + `execute/upload.ts` + `execute/images.ts`
-- `convert/xml-to-md.ts` + `convert/json-to-md.ts` + `convert/md-to-note.ts`
-- 用已有 Python 测试用例的输入/输出做验证
+- `api/client.ts` + `api/cookies.ts` + `api/auth.ts` + `api/dir.ts` + `api/file-api.ts`
+- `execute/download.ts` + `execute/upload.ts` + `execute/images.ts` + `execute/move-handler.ts`
+- `convert/xml-to-md.ts` + `convert/json-to-md.ts` + `convert/html-to-md.ts` + `convert/md-to-note.ts`
 
-### Phase 5: Engine + CLI
+### Phase 5: Engine + CLI ✅
 
 - `engine/engine.ts` — scan → classify → refine → detectMoves → execute
 - `engine/watcher.ts` + `util/git.ts` + `dedup/`
-- `cli/cli.ts` — sync, pull, login, list, search, download
-- 端到端测试：dry-run 对比 Python 输出
+- `cli/cli.ts` — sync, pull, login, list, search, download, browse, diagnose, gui
+- 端到端测试 + dry-run 验证
 
-### Phase 6: 验证 + 切换
+### Phase 6: 验证 + 切换 ✅
 
 - Python dry-run vs TypeScript dry-run 输出对比
-- 真实数据同步（先 dry-run 确认一致，再实际执行）
-- 确认无回归 → Python 代码归档，TS 成为主线
+- 真实数据同步验证
+- Python 代码归档，TS 成为主线
+- 额外完成：algo/（Bloom Filter、Merkle Tree、block hash）、browse/、gui/、tools/、perf/ 模块
 
 ## 八、风险与缓解
 
-| 风险 | 影响 | 缓解 |
-|------|------|------|
-| classify 逻辑移植遗漏 | 高 | TDD：先写测试再写实现；从现有 `decide_action` 测试用例直接移植 |
-| XML/JSON 转换边界格式 | 中 | 移植现有 Python 测试用例到 vitest，逐格式验证 |
-| 有道云 API 调试不便 | 中 | 保留 `tools/debug/` Python 脚本；TS 版用 fetch 等价实现 |
-| better-sqlite3 native binding | 低 | prebuild 支持 Windows/macOS/Linux |
-| GUI 缺失 | 低 | GUI 只用于浏览/下载，与同步引擎独立，后续按需重建 |
+| 风险 | 影响 | 缓解 | 状态 |
+|------|------|------|------|
+| classify 逻辑移植遗漏 | 高 | TDD + fast-check 完备性验证 | ✅ 已验证 |
+| XML/JSON 转换边界格式 | 中 | 移植 Python 测试用例，逐格式验证 | ✅ 已验证 |
+| 有道云 API 调试不便 | 中 | `tools/diagnose.ts` 提供 path/decision/summary 诊断 | ✅ 已实现 |
+| better-sqlite3 native binding | 低 | prebuild 支持 Windows/macOS/Linux | ✅ 无问题 |
+| GUI 缺失 | 低 | `gui/server.ts` + `gui/ui.ts` 已实现 HTTP GUI | ✅ 已实现 |
 
-## 九、代码量估算
+## 九、代码量（实际）
 
-| 模块 | 行数 |
-|------|------|
-| types/ | ~200 |
-| classify/ (rules + engine + refine + moves) | ~350 |
-| scan/ (cloud + local + name) | ~400 |
-| metadata/ (store + migrations + health + seed) | ~600 |
-| api/ (client + cookies + auth) | ~500 |
-| execute/ (download + upload + images + conflict) | ~500 |
-| convert/ (xml + json + md-to-note) | ~500 |
-| engine + watcher + git + dedup | ~500 |
-| cli + index | ~150 |
-| **源码合计** | **~3,700** |
-| 测试 | ~2,500 |
-| **总计** | **~6,200** |
+> 截至 2026-03-15 统计。
 
-当前 Python 源码 ~7,000 行。新代码量更少的原因：Decision Table 替代大段 if/else、hash 索引替代复杂的 move 检测、TypeScript 类型系统替代手动类型检查。
+| 模块 | 源码行数 |
+|------|----------|
+| types/ | ~190 |
+| api/ | ~1,400 |
+| scan/ | ~850 |
+| classify/ | ~840 |
+| engine/ | ~1,020 |
+| execute/ | ~1,210 |
+| convert/ | ~740 |
+| metadata/ | ~1,660 |
+| algo/ | ~1,080 |
+| dedup/ | ~890 |
+| browse/ | ~320 |
+| gui/ | ~390 |
+| cli/ | ~460 |
+| tools/ | ~750 |
+| perf/ | ~250 |
+| util/ | ~390 |
+| **源码合计** | **~12,450** |
+| 测试 | ~9,930 |
+| **总计** | **~22,380** |
+
+比最初估算大 3 倍多，主要原因：新增了 `algo/`（Bloom Filter、Merkle Tree、block hash）、`dedup/`（模块化拆分）、`browse/`、`gui/`、`tools/`、`perf/` 等超出原 Python 范围的模块，以及 metadata store 拆分为多个子模块后的体量增长。
