@@ -349,46 +349,109 @@ test.prop([fc.boolean(), fc.boolean(), fc.boolean(), tri, tri, tri])(
 ## 五、模块结构
 
 ```
-ts-src/
+ts-src/src/
 ├── types/
-│   ├── common.ts           # FileId, DirId, ContentHash, NoteDomain
-│   ├── state.ts            # FileState, SyncAction, stateToAction
+│   ├── common.ts           # branded types: FileId, DirId, RelPath, EpochSeconds, NoteDomain
+│   ├── state.ts            # FileState (discriminated union), SyncAction, stateToAction()
 │   ├── scan.ts             # CloudFile, LocalFile
-│   └── metadata.ts         # MetadataRecord
-├── classify/
-│   ├── conditions.ts       # extractConditions()
-│   ├── rules.ts            # RULES, REFINE_RULES
-│   ├── classify.ts         # classify(), matchesRule()
-│   ├── refine.ts           # refineCloudModified()
-│   └── moves.ts            # detectMoves()
-├── scan/
-│   ├── cloud.ts            # scanCloud(): BFS + 并发 fetch
-│   ├── local.ts            # scanLocal(): recursive readdir
-│   └── name.ts             # sanitizeFilename(), mapCloudName()
-├── metadata/
-│   ├── store.ts            # MetadataStore (better-sqlite3)
-│   ├── migrations.ts       # schema 迁移
-│   ├── health.ts           # 元数据自愈
-│   └── seed.ts             # 从桌面客户端导入种子数据
+│   ├── metadata.ts         # MetadataRecord
+│   └── engine-config.ts    # SyncEngineConfig
 ├── api/
 │   ├── client.ts           # YoudaoNoteApi (fetch)
 │   ├── cookies.ts          # Cookie 管理
-│   └── auth.ts             # 登录流程
+│   ├── auth.ts             # 登录流程（Playwright 扫码）
+│   ├── dir.ts              # 目录操作 API
+│   ├── file-api.ts         # 文件操作 API
+│   ├── request.ts          # HTTP 请求封装
+│   ├── retry.ts            # retryWithBackoff()
+│   └── constants.ts        # API URL 常量
+├── scan/
+│   ├── cloud.ts            # scanCloud(): BFS + 并发 fetch
+│   ├── cloud-cache.ts      # 缓存云端扫描结果，增量更新
+│   ├── local.ts            # scanLocal(): recursive readdir
+│   └── name.ts             # sanitizeFilename(), mapCloudName()
+├── classify/
+│   ├── rules.ts            # RULES, REFINE_RULES
+│   ├── conditions.ts       # 规则条件函数
+│   ├── classify.ts         # classify(), matchesRule()
+│   ├── calibrate.ts        # 分类校准（hash 比较精细化）
+│   ├── refine.ts           # refineCloudModified()
+│   ├── moves.ts            # detectMoves()
+│   └── cross-dir-match.ts  # 跨目录移动检测
+├── engine/
+│   ├── engine.ts           # SyncEngine: scan → classify → execute
+│   ├── execute.ts          # runExecuteSync(): 桥接 engine 和 executor
+│   ├── helpers.ts          # dry-run 诊断、预览输出
+│   ├── helpers-dryrun.ts   # Markdown 报告生成
+│   ├── refine.ts           # engine 级 refine 逻辑
+│   └── watcher.ts          # --watch 轮询模式
 ├── execute/
+│   ├── types.ts            # SyncStats, ExecuteContext, emptyStats()
 │   ├── executor.ts         # executeAll(): 并发调度
-│   ├── download.ts         # downloadFile()
+│   ├── download.ts         # downloadFile(), handleDownload()
 │   ├── upload.ts           # uploadFile(), ensureParentDir()
+│   ├── move-handler.ts     # handleMove(), fallbackDeleteOldFiles()
+│   ├── conflict.ts         # conflictFallback(): 备份+下载
+│   ├── diff3-merge.ts      # tryDiff3Merge(): 三路合并
 │   ├── images.ts           # 图片 URL 迁移
-│   └── conflict.ts         # diff3 合并 / 备份+下载
+│   └── image-upload.ts     # SM.MS 图床上传
 ├── convert/
 │   ├── xml-to-md.ts        # Youdao XML → Markdown
 │   ├── json-to-md.ts       # Youdao JSON → Markdown
+│   ├── html-to-md.ts       # HTML → Markdown
 │   └── md-to-note.ts       # Markdown → Youdao JSON
-├── engine.ts               # SyncEngine: scan → classify → execute
-├── watcher.ts              # --watch 轮询模式
-├── git.ts                  # Git 自动提交
-├── dedup.ts                # 基于 hash 的去重
-├── cli.ts                  # commander CLI
+├── metadata/
+│   ├── store.ts            # MetadataStore (better-sqlite3)
+│   ├── store-files.ts      # 文件记录 CRUD
+│   ├── store-dirs.ts       # 目录记录 CRUD
+│   ├── store-hash-cache.ts # 内容 hash 缓存
+│   ├── store-file-base.ts  # 基准内容存储（diff3 用）
+│   ├── store-state.ts      # 同步状态管理
+│   ├── store-state-kv.ts   # 键值对状态存储
+│   ├── store-sync-log.ts   # 同步日志
+│   ├── desktop-data.ts     # 从桌面客户端导入种子数据
+│   ├── migrations.ts       # schema 迁移
+│   └── health.ts           # 元数据自愈
+├── algo/
+│   ├── hash.ts             # computeContentHash(): 标准化 + XXH3-128
+│   ├── xxhash.ts           # xxhash-wasm 封装
+│   ├── bloom.ts            # Bloom Filter（重复检测）
+│   ├── merkle.ts           # Merkle Tree（目录变化检测）
+│   ├── block-hash.ts       # 分块 hash（大文件比较）
+│   ├── merge.ts            # threeWayMerge(): 文本三路合并
+│   └── edit-index.ts       # 编辑距离索引
+├── dedup/
+│   ├── walk.ts             # 遍历重复候选
+│   ├── orphan.ts           # 孤立文件检测
+│   ├── resolve.ts          # 去重决策
+│   ├── execute.ts          # 去重执行（删除）
+│   ├── refs.ts             # 引用关系
+│   ├── hash-index.ts       # hash 索引
+│   └── compat.ts           # Python hash 兼容
+├── browse/
+│   ├── search.ts           # 云端搜索
+│   └── pull.ts             # 单次拉取（非同步）
+├── gui/
+│   ├── server.ts           # HTTP GUI 服务器
+│   └── ui.ts               # 前端 HTML 生成
+├── cli/
+│   ├── cli.ts              # commander CLI 入口
+│   └── browse.ts           # browse 子命令
+├── tools/
+│   ├── diagnose.ts         # diagnose 诊断命令
+│   ├── diagnose-commands.ts # 诊断子命令实现
+│   └── profile-command.ts  # 性能 profiling 命令
+├── perf/
+│   ├── analyzer.ts         # 性能分析器
+│   └── profiler.ts         # 性能数据采集
+├── util/
+│   ├── utils.ts            # readFileMtime(), formatFileSize()
+│   ├── path.ts             # 路径处理工具
+│   ├── preconditions.ts    # requireNonEmpty() 等前置条件检查
+│   ├── concurrency.ts      # pLimit(): 并发限流
+│   ├── lock.ts             # 文件锁（防并发同步）
+│   ├── git.ts              # Git 自动提交
+│   └── config-dir.ts       # 配置目录解析
 └── index.ts
 ```
 
@@ -399,33 +462,33 @@ ts-src/
 | `sync/types.py` | 重写 | `types/*.ts` — branded types + discriminated union |
 | `sync/utils.py` (decide_action) | 重写 | `classify/rules.ts` — Decision Table |
 | `sync/utils.py` (sanitize 等) | 重写 | `scan/name.ts`, `execute/` |
-| `sync/decision.py` (calibrate) | 吸收 | calibrate 逻辑融入 `classify/classify.ts` |
+| `sync/decision.py` (calibrate) | 吸收 | `classify/calibrate.ts` |
 | `sync/moves.py` | 重写 | `classify/moves.ts` — 纯 hash 匹配 |
 | `sync/scanner.py` | 重写 | `scan/cloud.ts` + `scan/local.ts` |
 | `sync/metadata.py` | 重写 | `metadata/store.ts` |
 | `sync/metadata_aux.py` | 合并 | 并入 `metadata/store.ts` |
 | `sync/metadata_migrations.py` | 重写 | `metadata/migrations.ts` |
 | `sync/metadata_health.py` | 重写 | `metadata/health.ts` |
-| `sync/engine.py` | 重写 | `engine.ts` — 20 步 → 3 步 |
+| `sync/engine.py` | 重写 | `engine/engine.ts` — 20 步 → 3 步 |
 | `sync/merge.py` | 重写 | `execute/conflict.ts` |
-| `sync/dedup.py` | 重写 | `dedup.ts` |
-| `sync/git_helper.py` | 重写 | `git.ts` |
-| `sync/desktop_data.py` | 重写 | `metadata/seed.ts` |
-| `sync/bloom.py`, `rolling_hash.py` | 丢弃 | hash index 天然替代布隆过滤器 |
-| `sync/merkle.py` | 丢弃 | 目录变更由 scan 快照 diff 检测 |
+| `sync/dedup.py` | 重写 | `dedup/` — 模块化拆分 |
+| `sync/git_helper.py` | 重写 | `util/git.ts` |
+| `sync/desktop_data.py` | 重写 | `metadata/desktop-data.ts` |
+| `sync/bloom.py`, `rolling_hash.py` | 重写 | `algo/bloom.ts`, `algo/block-hash.ts` |
+| `sync/merkle.py` | 重写 | `algo/merkle.ts` |
 | `api.py` | 重写 | `api/client.ts` |
 | `cookies.py` | 重写 | `api/cookies.ts` |
 | `auth.py`, `login.py` | 重写 | `api/auth.ts` |
 | `convert/*.py` | 重写 | `convert/*.ts` |
 | `transfer/download.py` | 重写 | `execute/download.ts` |
 | `transfer/upload.py` | 重写 | `execute/upload.ts` |
-| `transfer/image.py`, `image_upload.py` | 重写 | `execute/images.ts` |
-| `transfer/search.py`, `pull.py` | 重写 | CLI 子命令 |
-| `watcher.py` | 重写 | `watcher.ts` |
-| `gui/` | 暂不重写 | 浏览/搜索/下载 GUI 与同步引擎独立，后续可用 Electron 重建 |
+| `transfer/image.py`, `image_upload.py` | 重写 | `execute/images.ts`, `execute/image-upload.ts` |
+| `transfer/search.py`, `pull.py` | 重写 | `browse/search.ts`, `browse/pull.ts` |
+| `watcher.py` | 重写 | `engine/watcher.ts` |
+| `gui/` | 重写 | `gui/server.ts`, `gui/ui.ts` — HTTP GUI 服务器 |
 | `protocols.py` | 丢弃 | TypeScript interface 原生替代 |
 | `common.py` | 重写 | `types/common.ts` |
-| `cli.py`, `__main__.py` | 重写 | `cli.ts` + `index.ts` |
+| `cli.py`, `__main__.py` | 重写 | `cli/cli.ts` + `index.ts` |
 
 ## 六、依赖
 
@@ -483,9 +546,9 @@ HTTP 用 Node.js 内置 `fetch`（Node 18+）。
 
 ### Phase 5: Engine + CLI
 
-- `engine.ts` — scan → classify → refine → detectMoves → execute
-- `watcher.ts` + `git.ts` + `dedup.ts`
-- `cli.ts` — sync, pull, login, list, search, download
+- `engine/engine.ts` — scan → classify → refine → detectMoves → execute
+- `engine/watcher.ts` + `util/git.ts` + `dedup/`
+- `cli/cli.ts` — sync, pull, login, list, search, download
 - 端到端测试：dry-run 对比 Python 输出
 
 ### Phase 6: 验证 + 切换

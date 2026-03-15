@@ -146,33 +146,41 @@ npx youdaonote-sync diagnose reset-cache
 ```
 ├── ts-src/                    # TypeScript 源码
 │   ├── src/
-│   │   ├── cli.ts             # CLI 入口（commander）
-│   │   ├── engine.ts          # 同步引擎主流程
-│   │   ├── watcher.ts         # 自动同步守护进程（fs.watch + 轮询）
+│   │   ├── types/             # branded types、FileState、CloudFile 等
 │   │   ├── api/               # 有道云笔记 API
 │   │   │   ├── client.ts      # API 封装（fetch）
 │   │   │   ├── auth.ts        # 浏览器认证（Playwright 登录）
 │   │   │   ├── cookies.ts     # Cookie 管理
 │   │   │   └── ...
+│   │   ├── scan/              # 文件扫描（云端 BFS + 本地 readdir + 缓存）
 │   │   ├── classify/          # 同步分类（状态机决策）
 │   │   │   ├── classify.ts    # 文件状态分类
 │   │   │   ├── calibrate.ts   # 元数据校准
 │   │   │   ├── moves.ts       # 移动/重命名检测
 │   │   │   └── ...
-│   │   ├── execute/           # 同步执行
+│   │   ├── engine/            # 同步引擎（编排层）
+│   │   │   ├── engine.ts      # SyncEngine: scan → classify → execute
+│   │   │   ├── execute.ts     # 桥接 engine 和 executor
+│   │   │   ├── watcher.ts     # 自动同步守护进程（fs.watch + 轮询）
+│   │   │   └── helpers*.ts    # dry-run 报告生成
+│   │   ├── execute/           # 同步执行（单文件操作）
+│   │   │   ├── types.ts       # SyncStats, ExecuteContext
+│   │   │   ├── executor.ts    # executeAll(): 并发调度
 │   │   │   ├── download.ts    # 下载 + 格式转换
 │   │   │   ├── upload.ts      # 上传
-│   │   │   ├── images.ts      # 图片下载 + URL 改写
-│   │   │   ├── image-upload.ts # SM.MS 图床上传
-│   │   │   └── ...
+│   │   │   ├── move-handler.ts # 移动/重命名
+│   │   │   ├── conflict.ts    # 冲突处理 + diff3 合并
+│   │   │   └── images*.ts     # 图片下载/URL 改写/图床上传
 │   │   ├── metadata/          # 同步元数据（SQLite）
-│   │   ├── scan/              # 文件扫描（云端 + 本地）
-│   │   ├── convert/           # 格式转换（XML/JSON/HTML -> Markdown）
+│   │   ├── convert/           # 格式转换（XML/JSON/HTML → Markdown）
+│   │   ├── algo/              # 算法（XXH3 hash、Bloom Filter、Merkle Tree、diff3）
 │   │   ├── dedup/             # 去重逻辑
-│   │   ├── algo/              # 算法（Bloom Filter、Merkle Tree、diff3）
+│   │   ├── browse/            # 搜索、单次拉取
 │   │   ├── gui/               # Web GUI（HTTP 服务器 + 单页应用）
-│   │   ├── tools/             # 诊断工具
-│   │   └── types/             # TypeScript 类型定义
+│   │   ├── cli/               # commander CLI 入口
+│   │   ├── tools/             # 诊断工具（diagnose、profile）
+│   │   ├── perf/              # 性能分析器
+│   │   └── util/              # 工具函数（路径、并发、锁、git、前置条件）
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── vitest.config.ts
