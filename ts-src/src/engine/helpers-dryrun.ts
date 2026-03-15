@@ -3,6 +3,7 @@ import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import type { RelPath } from '../types/common.js';
 import type { FileState } from '../types/state.js';
 import { stateToAction, type SyncAction } from '../types/state.js';
+import { requireNonEmpty } from '../util/preconditions.js';
 
 const REPORT_ORDER: SyncAction[] = ['download', 'upload', 'conflict', 'move'];
 const REPORT_LABELS: Record<string, string> = {
@@ -31,6 +32,7 @@ export function writeDryrunReport(
   warnings: { path: RelPath; reasons: string[] }[],
   baseDir: string,
 ): string {
+  requireNonEmpty('baseDir', baseDir);
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10);
   const timeStr = now.toISOString().slice(11, 19).replace(/:/g, '');
@@ -66,18 +68,20 @@ export function writeDryrunReport(
     lines.push('');
   }
 
-  if (warnings.length > 0) {
-    lines.push(`## ⚠ Suspicious Uploads (${warnings.length})`);
-    lines.push('');
-    lines.push('Files marked for upload but previously synced per metadata:');
-    lines.push('');
-    for (const { path, reasons } of warnings) {
-      lines.push(`- **${path}**`);
-      for (const r of reasons) lines.push(`  - ${r}`);
-    }
-    lines.push('');
-  }
-
+  appendWarnings(lines, warnings);
   writeFileSync(reportPath, lines.join('\n'), 'utf-8');
   return reportPath;
+}
+
+function appendWarnings(lines: string[], warnings: { path: RelPath; reasons: string[] }[]): void {
+  if (warnings.length === 0) return;
+  lines.push(`## ⚠ Suspicious Uploads (${warnings.length})`);
+  lines.push('');
+  lines.push('Files marked for upload but previously synced per metadata:');
+  lines.push('');
+  for (const { path, reasons } of warnings) {
+    lines.push(`- **${path}**`);
+    for (const r of reasons) lines.push(`  - ${r}`);
+  }
+  lines.push('');
 }

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { extname } from 'node:path';
 import type { YoudaoNoteApi } from '../api/client.js';
 import type { MetadataStore } from '../metadata/store.js';
@@ -14,6 +14,7 @@ import { uploadFile, type UploadFileOpts } from './upload.js';
 import { backupFile } from './conflict.js';
 import { threeWayMerge } from '../algo/merge.js';
 import { getFileContentFromGit } from '../util/git.js';
+import { readFileMtime } from '../util/utils.js';
 
 const MERGEABLE_EXTS = new Set(['.md', '.txt']);
 
@@ -23,14 +24,6 @@ export interface Diff3Context {
   rootDirId: DirId;
   localDir: string;
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
-}
-
-function readFileMtime(path: string): number {
-  try {
-    return Math.floor(statSync(path).mtimeMs / 1000);
-  } catch {
-    return Math.floor(Date.now() / 1000);
-  }
 }
 
 /**

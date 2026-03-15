@@ -1,11 +1,8 @@
-import { readFileSync, statSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
-import type { YoudaoNoteApi } from '../api/client.js';
-import type { MetadataStore } from '../metadata/store.js';
-import type { NoteDomain } from '../types/common.js';
-import type { ContentHash, DirId, FileId, RelPath, SyncDirection } from '../types/common.js';
+import type { DirId, FileId, NoteDomain, RelPath, SyncDirection } from '../types/common.js';
 import { asEpochSeconds, joinRelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { handleDownload } from './download.js';
@@ -15,54 +12,10 @@ import { tryDiff3Merge } from './diff3-merge.js';
 import { retryWithBackoff } from '../api/retry.js';
 import { handleMove } from './move-handler.js';
 import { pLimit } from '../util/concurrency.js';
+import { readFileMtime } from '../util/utils.js';
+import { emptyStats, type ExecuteContext, type SyncStats } from './types.js';
 
-export interface SyncStats {
-  downloaded: number;
-  uploaded: number;
-  skipped: number;
-  conflicts: number;
-  errors: number;
-  moved: number;
-  merged: number;
-  readonly changedPaths: string[];
-  readonly failedMoves: { oldPath: RelPath; newPath: RelPath; fileId: FileId; domain: number }[];
-  readonly uploadedPaths: Set<RelPath>;
-}
-
-export function emptyStats(): SyncStats {
-  return {
-    downloaded: 0,
-    uploaded: 0,
-    skipped: 0,
-    conflicts: 0,
-    errors: 0,
-    moved: 0,
-    merged: 0,
-    changedPaths: [],
-    failedMoves: [],
-    uploadedPaths: new Set<RelPath>(),
-  };
-}
-
-function readFileMtime(path: string): number {
-  try {
-    return Math.floor(statSync(path).mtimeMs / 1000);
-  } catch {
-    return Math.floor(Date.now() / 1000);
-  }
-}
-
-export interface ExecuteContext {
-  api: YoudaoNoteApi;
-  meta: MetadataStore;
-  rootDirId: DirId;
-  localDir: string;
-  hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
-  /** Per-session dedup map for concurrent directory creation. */
-  dirCreateInflight?: Map<string, Promise<DirId>> | undefined;
-  /** Local snapshot — used to detect directories when cloud entry is missing. */
-  localSnap?: ReadonlyMap<RelPath, { isDir: boolean }> | undefined;
-}
+export { emptyStats, type ExecuteContext, type SyncStats } from './types.js';
 
 /**
  * Execute all sync actions based on classified file states.
@@ -102,9 +55,9 @@ function formatError(e: unknown): string {
 }
 
 function resolveUploadMeta(
-  record: { fileId?: FileId; domain?: number } | undefined,
+  record: { fileId?: FileId; domain?: NoteDomain } | undefined,
   cloudFile: CloudFile | undefined,
-): { fileId?: FileId; domain?: number } | undefined {
+): { fileId?: FileId; domain?: NoteDomain } | undefined {
   if (record != null) return record;
   const domain = cloudFile?.domain;
   return domain != null ? { domain } : undefined;
@@ -213,7 +166,7 @@ interface ExecuteSingleOpts {
 async function handleUpload(o: {
   relPath: RelPath;
   localPath: string;
-  metaRecord: { fileId?: FileId; domain?: number } | undefined;
+  metaRecord: { fileId?: FileId; domain?: NoteDomain } | undefined;
   ctx: ExecuteContext;
   stats: SyncStats;
 }): Promise<void> {
@@ -239,7 +192,7 @@ async function handleUpload(o: {
     dirCreateInflight: ctx.dirCreateInflight,
   };
   if (metaRecord?.fileId) ulOpts.existingFileId = metaRecord.fileId;
-  if (metaRecord?.domain != null) ulOpts.existingDomain = metaRecord.domain as NoteDomain;
+  if (metaRecord?.domain != null) ulOpts.existingDomain = metaRecord.domain;
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
   const result = await retryWithBackoff(() => uploadFile(ulOpts));
   meta.recordSync(relPath, {

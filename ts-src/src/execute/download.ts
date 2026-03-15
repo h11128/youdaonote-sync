@@ -1,4 +1,4 @@
-import { statSync, writeFileSync, mkdirSync, utimesSync, renameSync, unlinkSync } from 'node:fs';
+import { writeFileSync, mkdirSync, utimesSync, renameSync, unlinkSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import type { YoudaoNoteApi } from '../api/client.js';
 import { NoteDomain } from '../types/common.js';
@@ -15,8 +15,9 @@ import { jsonBytesToMarkdown } from '../convert/json-to-md.js';
 import { htmlBytesToMarkdown } from '../convert/html-to-md.js';
 import { requireNonEmpty } from '../util/preconditions.js';
 import { retryWithBackoff } from '../api/retry.js';
+import { readFileMtime } from '../util/utils.js';
 import { migrateImages } from './images.js';
-import type { ExecuteContext, SyncStats } from './executor.js';
+import type { ExecuteContext, SyncStats } from './types.js';
 
 export type FileType = 'markdown' | 'xml' | 'json' | 'html' | 'binary';
 
@@ -121,14 +122,6 @@ export async function downloadFile(
   const contentHash = opts?.hashFn?.(contentBytes, localPath) ?? null;
 
   return { localPath, fileType, contentHash, rawData: data };
-}
-
-function readFileMtime(path: string, fallback?: number): number {
-  try {
-    return Math.floor(statSync(path).mtimeMs / 1000);
-  } catch {
-    return fallback ?? Math.floor(Date.now() / 1000);
-  }
 }
 
 async function tryMigrateImages(localPath: string, api: YoudaoNoteApi): Promise<void> {

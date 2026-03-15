@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { handleMove, fallbackDeleteOldFiles } from './move-handler.js';
 import { emptyStats } from './executor.js';
 import { MetadataStore } from '../metadata/store.js';
-import { asDirId, asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
+import { asDirId, asEpochSeconds, asFileId, asRelPath, NoteDomain } from '../types/common.js';
 import type { FileId } from '../types/common.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 
@@ -137,6 +137,7 @@ describe('handleMove: error handling and metadata', () => {
 
     expect(existsSync(join(localDir, 'x.md'))).toBe(true);
     expect(stats.moved).toBe(0);
+    expect(stats.errors).toBe(1);
     expect(stats.failedMoves).toHaveLength(1);
     expect(stats.failedMoves[0]?.oldPath).toBe(asRelPath('x.md'));
   });
@@ -161,6 +162,22 @@ describe('handleMove: error handling and metadata', () => {
     const newRecord = meta.getFileInfo(asRelPath('new.md'));
     expect(newRecord).not.toBeNull();
     expect(newRecord?.fileId).toBe('f5');
+  });
+
+  it('errors when old path has no metadata', async () => {
+    const stats = emptyStats();
+    const api = makeMockApi();
+
+    await handleMove({
+      relPath: asRelPath('new.md'),
+      state: { kind: 'moved', oldPath: asRelPath('nonexistent.md') },
+      ctx: { api, meta, rootDirId: asDirId('root'), localDir },
+      stats,
+    });
+
+    expect(stats.moved).toBe(0);
+    expect(stats.errors).toBe(1);
+    expect(api.moveFile).not.toHaveBeenCalled();
   });
 
   it('skips non-moved states', async () => {
@@ -204,7 +221,7 @@ describe('fallbackDeleteOldFiles', () => {
       oldPath: asRelPath('old.md'),
       newPath: asRelPath('new.md'),
       fileId: asFileId('f-old'),
-      domain: 1,
+      domain: NoteDomain.MARKDOWN,
     });
     stats.uploadedPaths.add(asRelPath('new.md'));
 
@@ -231,7 +248,7 @@ describe('fallbackDeleteOldFiles', () => {
       oldPath: asRelPath('old.md'),
       newPath: asRelPath('new.md'),
       fileId: asFileId('f-old'),
-      domain: 1,
+      domain: NoteDomain.MARKDOWN,
     });
     // uploadedPaths is empty — newPath was NOT uploaded
 
@@ -258,7 +275,7 @@ describe('fallbackDeleteOldFiles', () => {
       oldPath: asRelPath('old.md'),
       newPath: asRelPath('new.md'),
       fileId: asFileId('f-old'),
-      domain: 1,
+      domain: NoteDomain.MARKDOWN,
     });
     stats.uploadedPaths.add(asRelPath('new.md'));
 

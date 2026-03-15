@@ -5,5 +5,6 @@ export type { UploadResult } from './upload.js';
 export { backupFile } from './conflict.js';
 export { migrateImages, downloadAsset } from './images.js';
 export { uploadToSmms } from './image-upload.js';
-export { executeAll, emptyStats } from './executor.js';
-export type { SyncStats, ExecuteContext } from './executor.js';
+export { executeAll } from './executor.js';
+export { emptyStats } from './types.js';
+export type { SyncStats, ExecuteContext } from './types.js';

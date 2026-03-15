@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { printPreview, printDryrunSummary, diagnoseDryrun } from './helpers.js';
+import { groupByAction, writeDryrunReport } from './helpers-dryrun.js';
 import type { FileState } from '../types/state.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { asRelPath } from '../types/common.js';
@@ -113,5 +117,82 @@ describe('diagnoseDryrun', () => {
     const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(output).toContain('Dry-Run Preview');
     expect(output).toContain('Dry-Run Summary');
+  });
+});
+
+describe('groupByAction', () => {
+  it('groups entries by their sync action', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('a.md'), { kind: 'cloudNew' }],
+      [asRelPath('b.md'), { kind: 'localNew' }],
+      [asRelPath('c.md'), { kind: 'cloudNew' }],
+      [asRelPath('d.md'), { kind: 'synced' }],
+    ]);
+
+    const groups = groupByAction(classified);
+
+    expect(groups.get('download')).toEqual([asRelPath('a.md'), asRelPath('c.md')]);
+    expect(groups.get('upload')).toEqual([asRelPath('b.md')]);
+    expect(groups.get('skip')).toEqual([asRelPath('d.md')]);
+    expect(groups.get('conflict')).toBeUndefined();
+  });
+
+  it('returns empty map for empty input', () => {
+    const groups = groupByAction(new Map());
+    expect(groups.size).toBe(0);
+  });
+});
+
+describe('writeDryrunReport', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'dryrun-report-'));
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('writes a markdown report file and returns its path', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('a.md'), { kind: 'cloudNew' }],
+      [asRelPath('b.md'), { kind: 'localNew' }],
+      [asRelPath('c.md'), { kind: 'synced' }],
+    ]);
+
+    const reportPath = writeDryrunReport(classified, [], tmpDir);
+
+    expect(reportPath).toContain('.local-reports');
+    expect(reportPath).toMatch(/dry-run-.*\.md$/);
+    const content = readFileSync(reportPath, 'utf-8');
+    expect(content).toContain('# Dry-Run Report');
+    expect(content).toContain('Total changes | 2');
+    expect(content).toContain('↓ Download');
+    expect(content).toContain('a.md');
+    expect(content).toContain('↑ Upload');
+    expect(content).toContain('b.md');
+    expect(content).toContain('Unchanged (skipped) | 1');
+  });
+
+  it('includes warnings section when warnings are provided', () => {
+    const classified = new Map<RelPath, FileState>([[asRelPath('x.md'), { kind: 'localNew' }]]);
+    const warnings = [{ path: asRelPath('x.md'), reasons: ['hash mismatch', 'mtime differs'] }];
+
+    const reportPath = writeDryrunReport(classified, warnings, tmpDir);
+    const content = readFileSync(reportPath, 'utf-8');
+
+    expect(content).toContain('Suspicious Uploads');
+    expect(content).toContain('x.md');
+    expect(content).toContain('hash mismatch');
+    expect(content).toContain('mtime differs');
+  });
+
+  it('omits warnings section when no warnings', () => {
+    const classified = new Map<RelPath, FileState>([[asRelPath('a.md'), { kind: 'localNew' }]]);
+
+    const reportPath = writeDryrunReport(classified, [], tmpDir);
+    const content = readFileSync(reportPath, 'utf-8');
+
+    expect(content).not.toContain('Suspicious');
   });
 });

@@ -1,9 +1,9 @@
 import { basename, dirname, join } from 'node:path';
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import type { FileState } from '../types/state.js';
-import { asEpochSeconds, type FileId, type RelPath } from '../types/common.js';
+import { asEpochSeconds, type FileId, type NoteDomain, type RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
-import type { ExecuteContext, SyncStats } from './executor.js';
+import type { ExecuteContext, SyncStats } from './types.js';
 import { ensureParentDir } from './upload.js';
 import { retryWithBackoff } from '../api/retry.js';
 
@@ -18,7 +18,7 @@ async function moveCloudFile(opts: {
   relPath: RelPath;
   oldPath: RelPath;
   oldFileId: FileId;
-  domain: number;
+  domain: NoteDomain;
   ctx: ExecuteContext;
   stats: SyncStats;
 }): Promise<boolean> {
@@ -68,7 +68,11 @@ export async function handleMove(o: HandleMoveOpts): Promise<void> {
   const { meta, localDir } = ctx;
   const oldPath = state.oldPath;
   const oldMeta = meta.getFileInfo(oldPath);
-  if (!oldMeta?.fileId) return;
+  if (!oldMeta?.fileId) {
+    console.error(`Skip move ${relPath}: no metadata for old path ${oldPath}`);
+    stats.errors++;
+    return;
+  }
   const oldFileId = oldMeta.fileId;
 
   const ok = await moveCloudFile({
@@ -79,7 +83,10 @@ export async function handleMove(o: HandleMoveOpts): Promise<void> {
     ctx,
     stats,
   });
-  if (!ok) return;
+  if (!ok) {
+    stats.errors++;
+    return;
+  }
 
   try {
     moveLocalFile(localDir, oldPath, relPath);

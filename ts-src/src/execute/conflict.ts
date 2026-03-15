@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import {
   asEpochSeconds,
@@ -11,8 +11,9 @@ import {
 import type { CloudFile } from '../types/scan.js';
 import { downloadFile } from './download.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
-import type { ExecuteContext, SyncStats } from './executor.js';
+import type { ExecuteContext, SyncStats } from './types.js';
 import { retryWithBackoff } from '../api/retry.js';
+import { readFileMtime } from '../util/utils.js';
 
 /**
  * Create a conflict backup of a file.
@@ -44,14 +45,6 @@ export function backupFile(filePath: string): string | null {
   } catch (e: unknown) {
     console.warn(`[conflict] failed to backup ${filePath}: ${String(e)}`);
     return null;
-  }
-}
-
-function readFileMtime(path: string, fallback?: number): number {
-  try {
-    return Math.floor(statSync(path).mtimeMs / 1000);
-  } catch {
-    return fallback ?? Math.floor(Date.now() / 1000);
   }
 }
 

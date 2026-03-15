@@ -8,9 +8,9 @@ import {
   asEpochSeconds,
   asRelPath,
   joinRelPath,
+  NoteDomain,
   type DirId,
   type FileId,
-  type NoteDomain,
   type RelPath,
 } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
@@ -66,7 +66,7 @@ export function loadCloudFilesFromCache(meta: MetadataStore): Map<RelPath, Cloud
       isDir: true,
       mtime: asEpochSeconds(0),
       ctime: asEpochSeconds(0),
-      domain: 0 as NoteDomain,
+      domain: NoteDomain.NOTE,
     });
   }
 
@@ -245,7 +245,7 @@ function processDirEntry(opts: DirEntryParams): void {
     isDir: true,
     mtime: asEpochSeconds(0),
     ctime: asEpochSeconds(0),
-    domain: 0 as NoteDomain,
+    domain: NoteDomain.NOTE,
   });
   meta.setDirInfo(relPath, fid as DirId, parentId as DirId);
 }
