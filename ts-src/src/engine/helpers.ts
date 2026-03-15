@@ -1,13 +1,13 @@
 import { extname } from 'node:path';
-import type { MetadataStore } from './metadata/store.js';
-import type { ContentHash, EpochSeconds, RelPath } from './types/common.js';
-import type { CloudFile, LocalFile } from './types/scan.js';
-import type { FileState, SyncAction } from './types/state.js';
-import { stateToAction } from './types/state.js';
-import { patternToRegex } from './scan/local.js';
-import { emptyStats, type SyncStats } from './execute/executor.js';
-import { computeContentHashFromFileAsync } from './hash.js';
-import { pLimit } from './util/concurrency.js';
+import type { MetadataStore } from '../metadata/store.js';
+import type { ContentHash, EpochSeconds, RelPath } from '../types/common.js';
+import type { CloudFile, LocalFile } from '../types/scan.js';
+import type { FileState, SyncAction } from '../types/state.js';
+import { stateToAction } from '../types/state.js';
+import { patternToRegex } from '../scan/local.js';
+import { emptyStats, type SyncStats } from '../execute/executor.js';
+import { computeContentHashFromFileAsync } from '../algo/hash.js';
+import { pLimit } from '../util/concurrency.js';
 
 const HASHABLE_EXTS = new Set([
   '.md',

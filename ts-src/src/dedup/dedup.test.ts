@@ -2,10 +2,10 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { MetadataStore } from './metadata/store.js';
-import { asFileId, asContentHash, asEpochSeconds, asRelPath } from './types/common.js';
-import type { FileId } from './types/common.js';
-import { autoDedup, buildRefIndex, buildHashIndex, findDuplicates } from './dedup/index.js';
+import { MetadataStore } from '../metadata/store.js';
+import { asFileId, asContentHash, asEpochSeconds, asRelPath } from '../types/common.js';
+import type { FileId } from '../types/common.js';
+import { autoDedup, buildRefIndex, buildHashIndex, findDuplicates } from './index.js';
 
 function setupDedupContext() {
   const tmpDir = mkdtempSync(join(tmpdir(), 'dedup-test-'));

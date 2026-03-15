@@ -12,15 +12,15 @@ import { join } from 'node:path';
 import { platform, env } from 'node:process';
 import { homedir } from 'node:os';
 import Database from 'better-sqlite3';
-import type { MetadataStore } from './metadata/store.js';
+import type { MetadataStore } from './store.js';
 import {
   asEpochSeconds,
   joinRelPath,
   type DirId,
   type FileId,
   type RelPath,
-} from './types/common.js';
-import { mapCloudName } from './scan/name.js';
+} from '../types/common.js';
+import { mapCloudName } from '../scan/name.js';
 
 export function findDesktopDataDir(): string | null {
   let base: string;

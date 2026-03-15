@@ -4,10 +4,10 @@
 import { join } from 'node:path';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import type { YoudaoNoteApi } from './api/client.js';
-import type { DirInfoByIdResponse } from './types/dir.js';
-import { asDirId } from './types/common.js';
-import type { FileId } from './types/common.js';
+import type { YoudaoNoteApi } from '../api/client.js';
+import type { DirInfoByIdResponse } from '../types/dir.js';
+import { asDirId } from '../types/common.js';
+import type { FileId } from '../types/common.js';
 
 export interface MakeCloudEntryOpts {
   parentId?: string;

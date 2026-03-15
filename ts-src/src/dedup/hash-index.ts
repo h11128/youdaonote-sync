@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import { type ContentHash, type EpochSeconds, type RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
-import { computeContentHashFromFile } from '../hash.js';
+import { computeContentHashFromFile } from '../algo/hash.js';
 import { walkFiles } from './walk.js';
 
 export interface BuildIndexOpts {

@@ -21,7 +21,7 @@ const engineMethods = vi.hoisted(() => {
   return { collectItems, close };
 });
 
-vi.mock('../engine.js', () => ({
+vi.mock('../engine/engine.js', () => ({
   SyncEngine: class {
     collectItems = engineMethods.collectItems;
     close = engineMethods.close;

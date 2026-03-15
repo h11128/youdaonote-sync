@@ -23,9 +23,9 @@
  */
 
 import { join } from 'node:path';
-import { YoudaoNoteApi } from './api/client.js';
-import { NoteDomain } from './types/common.js';
-import type { FileId, DirId } from './types/common.js';
+import { YoudaoNoteApi } from './client.js';
+import { NoteDomain } from '../types/common.js';
+import type { FileId, DirId } from '../types/common.js';
 
 const KEEP = process.argv.includes('--keep');
 const TEST_DIR_NAME = `_smoke_test_${Date.now()}`;

@@ -1,11 +1,11 @@
-import type { ContentHash, FileId, RelPath } from './types/common.js';
-import type { CloudFile } from './types/scan.js';
-import type { FileState } from './types/state.js';
-import type { MetadataStore } from './metadata/store.js';
-import { refineCloudModified } from './classify/refine.js';
-import { retryWithBackoff } from './api/retry.js';
-import { collectConflictCandidates, applyRefinementIfChanged } from './engine-helpers.js';
-import { pLimit } from './util/concurrency.js';
+import type { ContentHash, FileId, RelPath } from '../types/common.js';
+import type { CloudFile } from '../types/scan.js';
+import type { FileState } from '../types/state.js';
+import type { MetadataStore } from '../metadata/store.js';
+import { refineCloudModified } from '../classify/refine.js';
+import { retryWithBackoff } from '../api/retry.js';
+import { collectConflictCandidates, applyRefinementIfChanged } from './helpers.js';
+import { pLimit } from '../util/concurrency.js';
 
 export interface RefineAllDeps {
   classified: Map<RelPath, FileState>;

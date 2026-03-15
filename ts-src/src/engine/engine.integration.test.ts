@@ -10,12 +10,12 @@ import { join } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { SyncEngine } from './engine.js';
-import { MetadataStore } from './metadata/store.js';
-import type { YoudaoNoteApi } from './api/client.js';
-import type { DirInfoByIdResponse } from './types/dir.js';
-import { asDirId, asEpochSeconds, asFileId, asRelPath } from './types/common.js';
-import type { FileId } from './types/common.js';
-import { computeContentHashFromFile } from './hash.js';
+import { MetadataStore } from '../metadata/store.js';
+import type { YoudaoNoteApi } from '../api/client.js';
+import type { DirInfoByIdResponse } from '../types/dir.js';
+import { asDirId, asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
+import type { FileId } from '../types/common.js';
+import { computeContentHashFromFile } from '../algo/hash.js';
 
 function makeCloudEntry(id: string, name: string, mtime: number, parentId = 'root') {
   return {

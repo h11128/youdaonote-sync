@@ -17,7 +17,7 @@ import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { mapCloudName, sanitizeFilename } from '../scan/name.js';
 
-import { seedMetadataFromDesktop } from '../desktop-data.js';
+import { seedMetadataFromDesktop } from '../metadata/desktop-data.js';
 
 export const STATE_CLOUD_VERSION = 'last_cloud_version';
 export const STATE_SCAN_TIME = 'last_scan_time';

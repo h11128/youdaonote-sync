@@ -2,9 +2,9 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { writeFileSync, existsSync } from 'node:fs';
 import { SyncEngine } from './engine.js';
-import { MetadataStore } from './metadata/store.js';
-import { asContentHash, asEpochSeconds, asRelPath } from './types/common.js';
-import type { FileId } from './types/common.js';
+import { MetadataStore } from '../metadata/store.js';
+import { asContentHash, asEpochSeconds, asRelPath } from '../types/common.js';
+import type { FileId } from '../types/common.js';
 import { makeCloudEntry, buildMockApi, setupE2EContext } from './e2e-fixtures.js';
 
 describe('E2E: uploadedPaths — merge and upload', () => {

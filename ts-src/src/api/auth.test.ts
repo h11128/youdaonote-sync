@@ -87,7 +87,7 @@ describe('refreshCookiesIfNeeded', () => {
     const { refreshCookiesIfNeeded } = await import('./auth.js');
     expect(await refreshCookiesIfNeeded()).toBe(false);
     const callArg = vi.mocked(existsSync).mock.calls[0]?.[0] ?? '';
-    expect(callArg).toContain('config');
+    expect(callArg).toContain('youdaonote-sync');
     expect(callArg).toContain('browser_data');
   });
 

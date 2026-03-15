@@ -5,10 +5,10 @@
 
 import type { Command } from 'commander';
 import { join } from 'node:path';
-import { YoudaoNoteApi } from './api/client.js';
-import { formatFileSize } from './utils.js';
-import type { DirId } from './types/common.js';
-import type { DirectoryEntry } from './browse/search.js';
+import { YoudaoNoteApi } from '../api/client.js';
+import { formatFileSize } from '../util/utils.js';
+import type { DirId } from '../types/common.js';
+import type { DirectoryEntry } from '../browse/search.js';
 
 function loginApi(configDir: string): YoudaoNoteApi {
   const api = new YoudaoNoteApi(join(configDir, 'cookies.json'));
@@ -66,8 +66,8 @@ export function registerBrowseCommands(
 
 async function runList(configDir: string, opts: { path?: string; depth: string }): Promise<void> {
   const api = loginApi(configDir);
-  const { getDirectoryEntries, findFolderByPath } = await import('./browse/search.js');
-  const { asDirId } = await import('./types/common.js');
+  const { getDirectoryEntries, findFolderByPath } = await import('../browse/search.js');
+  const { asDirId } = await import('../types/common.js');
 
   let dirId: DirId = await api.getRootId();
   if (opts.path) {
@@ -112,7 +112,7 @@ async function runSearch(
   opts: { name: string; type: string; exact?: boolean },
 ): Promise<void> {
   const api = loginApi(configDir);
-  const { searchByName } = await import('./browse/search.js');
+  const { searchByName } = await import('../browse/search.js');
   const results = await searchByName(
     api,
     opts.name,
@@ -136,10 +136,10 @@ async function runDownload(
   opts: { cloudPath: string; out: string },
 ): Promise<void> {
   const api = loginApi(configDir);
-  const { findFolderByPath, getDirectoryEntries } = await import('./browse/search.js');
-  const { downloadFolder } = await import('./browse/pull.js');
-  const { downloadFile } = await import('./execute/download.js');
-  const { asFileId, asDirId } = await import('./types/common.js');
+  const { findFolderByPath, getDirectoryEntries } = await import('../browse/search.js');
+  const { downloadFolder } = await import('../browse/pull.js');
+  const { downloadFile } = await import('../execute/download.js');
+  const { asFileId, asDirId } = await import('../types/common.js');
 
   const parts = opts.cloudPath.split('/').filter(Boolean);
   const parentPath = parts.slice(0, -1).join('/');
@@ -174,7 +174,7 @@ async function runPull(
   opts: { dir?: string; cloudDir?: string },
 ): Promise<void> {
   const api = loginApi(configDir);
-  const { pullAll } = await import('./browse/pull.js');
+  const { pullAll } = await import('../browse/pull.js');
   const config = loadConfig(configDir);
   const cfgDir = config.local_dir;
   const localDir = opts.dir ?? (cfgDir ? cfgDir : join(process.cwd(), 'youdaonote-pull'));

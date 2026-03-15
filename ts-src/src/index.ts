@@ -1,15 +1,15 @@
-export { SyncEngine } from './engine.js';
-export type { SyncEngineConfig, SyncResult } from './engine.js';
-export { SyncWatcher } from './watcher.js';
-export { createCli } from './cli.js';
-export { gitAutoCommit, gitInit } from './git.js';
+export { SyncEngine } from './engine/engine.js';
+export type { SyncEngineConfig, SyncResult } from './engine/engine.js';
+export { SyncWatcher } from './engine/watcher.js';
+export { createCli } from './cli/cli.js';
+export { gitAutoCommit, gitInit } from './util/git.js';
 export { findDuplicates, removeDuplicateMetadata } from './dedup/index.js';
 export {
   computeContentHashFromBytes,
   computeContentHashFromFile,
   computeContentHashFromFileAsync,
   computeHashesConcurrent,
-} from './hash.js';
+} from './algo/hash.js';
 
 // Algorithm modules
 export * from './algo/index.js';

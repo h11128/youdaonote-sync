@@ -1,34 +1,34 @@
-import { asDirId, type ContentHash, type DirId, type RelPath } from './types/common.js';
-import type { CloudFile, LocalFile } from './types/scan.js';
-import type { FileState } from './types/state.js';
-import { YoudaoNoteApi } from './api/client.js';
-import { MetadataStore } from './metadata/store.js';
-import { heal } from './metadata/health.js';
-import { scanCloud } from './scan/cloud.js';
-import { scanLocalParallel } from './scan/local.js';
-import { classifyAll } from './classify/classify.js';
-import { detectMoves } from './classify/moves.js';
-import { calibrateMetadata } from './classify/calibrate.js';
-import { emptyStats } from './execute/executor.js';
-import type { SyncStats } from './execute/executor.js';
+import { asDirId, type ContentHash, type DirId, type RelPath } from '../types/common.js';
+import type { CloudFile, LocalFile } from '../types/scan.js';
+import type { FileState } from '../types/state.js';
+import { YoudaoNoteApi } from '../api/client.js';
+import { MetadataStore } from '../metadata/store.js';
+import { heal } from '../metadata/health.js';
+import { scanCloud } from '../scan/cloud.js';
+import { scanLocalParallel } from '../scan/local.js';
+import { classifyAll } from '../classify/classify.js';
+import { detectMoves } from '../classify/moves.js';
+import { calibrateMetadata } from '../classify/calibrate.js';
+import { emptyStats } from '../execute/executor.js';
+import type { SyncStats } from '../execute/executor.js';
 import {
   diagnoseDryrun,
   dryRunStats,
   filterCloudSnap,
   filterByDirection,
   warmupHashCache,
-} from './engine-helpers.js';
-import { refineAllConflicts } from './engine-refine.js';
-import { computeContentHashFromBytes, computeHashesConcurrent, initXxhash } from './hash.js';
-import type { HashFileEntry } from './hash.js';
-import { SyncLock } from './lock.js';
-import { discardOrphanDuplicates } from './dedup/index.js';
-import { tryCachedCloudScan, saveScanVersion, fetchCurrentVersion } from './scan/cloud-cache.js';
-import { runExecuteSync, runPostSyncCleanup } from './engine-execute.js';
-export type { SyncDirection } from './types/common.js';
-export type { SyncEngineConfig } from './types/engine-config.js';
-import type { SyncEngineConfig } from './types/engine-config.js';
-import type { SyncProfiler } from './perf/profiler.js';
+} from './helpers.js';
+import { refineAllConflicts } from './refine.js';
+import { computeContentHashFromBytes, computeHashesConcurrent, initXxhash } from '../algo/hash.js';
+import type { HashFileEntry } from '../algo/hash.js';
+import { SyncLock } from '../util/lock.js';
+import { discardOrphanDuplicates } from '../dedup/index.js';
+import { tryCachedCloudScan, saveScanVersion, fetchCurrentVersion } from '../scan/cloud-cache.js';
+import { runExecuteSync, runPostSyncCleanup } from './execute.js';
+export type { SyncDirection } from '../types/common.js';
+export type { SyncEngineConfig } from '../types/engine-config.js';
+import type { SyncEngineConfig } from '../types/engine-config.js';
+import type { SyncProfiler } from '../perf/profiler.js';
 
 export interface SyncResult {
   stats: SyncStats;

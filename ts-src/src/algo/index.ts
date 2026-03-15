@@ -13,3 +13,10 @@ export {
   xxh32ToString,
   isXxhashReady,
 } from './xxhash.js';
+export {
+  computeContentHashFromBytes,
+  computeContentHashFromFile,
+  computeContentHashFromFileAsync,
+  computeHashesConcurrent,
+} from './hash.js';
+export type { HashFileEntry, HashCacheLookup, HashConcurrentResult } from './hash.js';

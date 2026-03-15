@@ -12,15 +12,12 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { saveCookies, hasRequiredCookies, type CookieEntry } from './cookies.js';
+import { getConfigDir } from '../util/config-dir.js';
 
 const NOTE_URL = 'https://note.youdao.com/web/';
 const REQUIRED_COOKIE_NAMES = ['YNOTE_CSTK', 'YNOTE_LOGIN', 'YNOTE_SESS'];
 const LOGIN_TIMEOUT_S = 300;
 const POLL_INTERVAL_S = 2;
-
-function getConfigDir(): string {
-  return join(process.cwd(), 'config');
-}
 
 function getBrowserDataDir(): string {
   return join(getConfigDir(), 'browser_data');

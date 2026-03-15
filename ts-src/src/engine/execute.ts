@@ -3,20 +3,20 @@
  * the main engine file within the 300-line limit.
  */
 
-import type { ContentHash, DirId, RelPath, SyncDirection } from './types/common.js';
-import type { CloudFile, LocalFile } from './types/scan.js';
-import type { FileState } from './types/state.js';
-import type { YoudaoNoteApi } from './api/client.js';
-import type { MetadataStore } from './metadata/store.js';
-import { gc } from './metadata/health.js';
-import { executeAll } from './execute/executor.js';
-import type { SyncStats, ExecuteContext } from './execute/executor.js';
-import { fallbackDeleteOldFiles } from './execute/move-handler.js';
-import { buildDedupInputs, cleanupStalePaths } from './engine-helpers.js';
-import { computeContentHashFromBytes } from './hash.js';
-import { autoDedup } from './dedup/index.js';
-import { gitAutoCommit } from './git.js';
-import type { SyncEngineConfig } from './types/engine-config.js';
+import type { ContentHash, DirId, RelPath, SyncDirection } from '../types/common.js';
+import type { CloudFile, LocalFile } from '../types/scan.js';
+import type { FileState } from '../types/state.js';
+import type { YoudaoNoteApi } from '../api/client.js';
+import type { MetadataStore } from '../metadata/store.js';
+import { gc } from '../metadata/health.js';
+import { executeAll } from '../execute/executor.js';
+import type { SyncStats, ExecuteContext } from '../execute/executor.js';
+import { fallbackDeleteOldFiles } from '../execute/move-handler.js';
+import { buildDedupInputs, cleanupStalePaths } from './helpers.js';
+import { computeContentHashFromBytes } from '../algo/hash.js';
+import { autoDedup } from '../dedup/index.js';
+import { gitAutoCommit } from '../util/git.js';
+import type { SyncEngineConfig } from '../types/engine-config.js';
 
 export async function runExecuteSync(
   ctx: {

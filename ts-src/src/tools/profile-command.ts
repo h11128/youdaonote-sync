@@ -4,7 +4,7 @@
  */
 
 import { dirname, extname, join } from 'node:path';
-import { SyncEngine } from '../engine.js';
+import { SyncEngine } from '../engine/engine.js';
 import { SyncProfiler, fmtMs } from '../perf/profiler.js';
 import { analyzeCpuProfile, printCpuReport } from '../perf/analyzer.js';
 import type { DiagnoseConfig } from './diagnose.js';

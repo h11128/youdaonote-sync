@@ -5,17 +5,17 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { SyncEngine } from './engine.js';
-import { MetadataStore } from './metadata/store.js';
-import type { YoudaoNoteApi } from './api/client.js';
-import type { DirInfoByIdResponse } from './types/dir.js';
-import { asDirId, asFileId, asContentHash, asEpochSeconds, asRelPath } from './types/common.js';
-import type { FileId, ContentHash, RelPath } from './types/common.js';
-import { computeContentHashFromFile } from './hash.js';
-import { autoDedup } from './dedup/index.js';
-import { discardOrphanDuplicates } from './dedup/orphan.js';
-import { gc } from './metadata/health.js';
-import { makeCloudEntry, buildMockApi, setupE2EContext } from './e2e-fixtures.js';
+import { SyncEngine } from '../engine/engine.js';
+import { MetadataStore } from '../metadata/store.js';
+import type { YoudaoNoteApi } from '../api/client.js';
+import type { DirInfoByIdResponse } from '../types/dir.js';
+import { asDirId, asFileId, asContentHash, asEpochSeconds, asRelPath } from '../types/common.js';
+import type { FileId, ContentHash, RelPath } from '../types/common.js';
+import { computeContentHashFromFile } from '../algo/hash.js';
+import { autoDedup } from './index.js';
+import { discardOrphanDuplicates } from './orphan.js';
+import { gc } from '../metadata/health.js';
+import { makeCloudEntry, buildMockApi, setupE2EContext } from '../engine/e2e-fixtures.js';
 
 describe('E2E: upload dedup', () => {
   let localDir: string;

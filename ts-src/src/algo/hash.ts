@@ -1,10 +1,10 @@
 import { readFileSync, statSync, promises as fsPromises } from 'node:fs';
 import { extname } from 'node:path';
-import type { ContentHash, EpochSeconds, RelPath } from './types/common.js';
-import { asContentHash } from './types/common.js';
-import { initXxhash, xxh128 } from './algo/xxhash.js';
-import { requireNonEmpty } from './util/preconditions.js';
-import { pLimit } from './util/concurrency.js';
+import type { ContentHash, EpochSeconds, RelPath } from '../types/common.js';
+import { asContentHash } from '../types/common.js';
+import { initXxhash, xxh128 } from './xxhash.js';
+import { requireNonEmpty } from '../util/preconditions.js';
+import { pLimit } from '../util/concurrency.js';
 
 const TEXT_EXTENSIONS = new Set([
   '.md',

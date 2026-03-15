@@ -15,7 +15,7 @@ import {
   type RelPath,
 } from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
-import { computeContentHashFromFile } from '../hash.js';
+import { computeContentHashFromFile } from '../algo/hash.js';
 
 function calibrateDir(meta: MetadataStore, relPath: RelPath, cloudFile: CloudFile): boolean {
   if (meta.getDirId(relPath) || !cloudFile.id) return false;

@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { RelPath } from './types/common.js';
-import { requireNonEmpty } from './util/preconditions.js';
+import type { RelPath } from '../types/common.js';
+import { requireNonEmpty } from './preconditions.js';
 
 export interface GitCommitOpts {
   message?: string;

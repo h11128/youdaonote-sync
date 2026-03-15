@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { printPreview, printDryrunSummary, diagnoseDryrun } from './engine-helpers.js';
-import type { FileState } from './types/state.js';
-import type { MetadataStore } from './metadata/store.js';
-import { asRelPath } from './types/common.js';
-import type { RelPath } from './types/common.js';
+import { printPreview, printDryrunSummary, diagnoseDryrun } from './helpers.js';
+import type { FileState } from '../types/state.js';
+import type { MetadataStore } from '../metadata/store.js';
+import { asRelPath } from '../types/common.js';
+import type { RelPath } from '../types/common.js';
 
 const noop = vi.fn();
 

@@ -13,7 +13,7 @@
 
 import { basename, extname, dirname, join } from 'node:path';
 import { readdirSync } from 'node:fs';
-import { SyncEngine } from '../engine.js';
+import { SyncEngine } from '../engine/engine.js';
 import { asRelPath, type RelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { MetadataStore } from '../metadata/store.js';

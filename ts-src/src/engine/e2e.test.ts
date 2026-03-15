@@ -10,10 +10,10 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { SyncEngine } from './engine.js';
-import { MetadataStore } from './metadata/store.js';
-import { asContentHash, asEpochSeconds, asRelPath } from './types/common.js';
-import type { FileId } from './types/common.js';
-import { computeContentHashFromFile, computeContentHashFromBytes } from './hash.js';
+import { MetadataStore } from '../metadata/store.js';
+import { asContentHash, asEpochSeconds, asRelPath } from '../types/common.js';
+import type { FileId } from '../types/common.js';
+import { computeContentHashFromFile, computeContentHashFromBytes } from '../algo/hash.js';
 import { makeCloudEntry, buildMockApi, setupE2EContext } from './e2e-fixtures.js';
 
 describe('E2E: upload and download', () => {

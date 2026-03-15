@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type RelPath, asEpochSeconds } from '../types/common.js';
 import type { MetadataStore } from './store.js';
-import { computeContentHashFromFile } from '../hash.js';
+import { computeContentHashFromFile } from '../algo/hash.js';
 
 export enum VerifyIssueType {
   ORPHAN = 'orphan',

@@ -16,12 +16,8 @@ ts-src/dist/
 coverage/
 ts-src/coverage/
 
-# Project config (auto-generated, user-specific)
-config/cookies.json
-config/browser_data/
-config/sync_metadata.json
-config/sync_metadata.db
-config/sync_metadata.db.db
+# Project config (user-specific runtime data)
+config/
 captured_api_requests.json
 logs/
 backups/
@@ -37,10 +33,9 @@ youdaonote-export/
 # Performance profiling
 profiles/
 
-# Python legacy (can be removed once .venv is deleted)
+# Python legacy
 __pycache__/
 *.py[cod]
-.venv/
 .pytest_cache/
 .coverage
 htmlcov/

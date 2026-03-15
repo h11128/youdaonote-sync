@@ -13,7 +13,7 @@ import type { CloudFile } from '../types/scan.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
 import { backupFile } from './conflict.js';
 import { threeWayMerge } from '../algo/merge.js';
-import { getFileContentFromGit } from '../git.js';
+import { getFileContentFromGit } from '../util/git.js';
 
 const MERGEABLE_EXTS = new Set(['.md', '.txt']);
 

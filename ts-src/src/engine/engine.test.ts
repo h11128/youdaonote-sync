@@ -3,13 +3,13 @@ import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { SyncEngine } from './engine.js';
-import { filterCloudSnap, filterByDirection } from './engine-helpers.js';
-import type { YoudaoNoteApi } from './api/client.js';
-import { asDirId, asEpochSeconds, asFileId, asRelPath } from './types/common.js';
-import type { NoteDomain, RelPath } from './types/common.js';
-import type { CloudFile } from './types/scan.js';
-import type { FileState } from './types/state.js';
-import type { DirInfoByIdResponse } from './types/dir.js';
+import { filterCloudSnap, filterByDirection } from './helpers.js';
+import type { YoudaoNoteApi } from '../api/client.js';
+import { asDirId, asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
+import type { NoteDomain, RelPath } from '../types/common.js';
+import type { CloudFile } from '../types/scan.js';
+import type { FileState } from '../types/state.js';
+import type { DirInfoByIdResponse } from '../types/dir.js';
 
 describe('SyncEngine', () => {
   let tmpDir: string;
@@ -30,7 +30,7 @@ describe('SyncEngine', () => {
     } as unknown as YoudaoNoteApi;
 
     const metaPath = join(tmpDir, 'meta.db');
-    const { MetadataStore } = await import('./metadata/store.js');
+    const { MetadataStore } = await import('../metadata/store.js');
     const meta = new MetadataStore(metaPath);
 
     const engine = new SyncEngine({

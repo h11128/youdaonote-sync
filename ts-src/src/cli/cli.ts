@@ -1,9 +1,10 @@
 import { Command } from 'commander';
 import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
-import { SyncEngine } from './engine.js';
-import { SyncWatcher } from './watcher.js';
-import { registerBrowseCommands } from './cli-browse.js';
+import { SyncEngine } from '../engine/engine.js';
+import { SyncWatcher } from '../engine/watcher.js';
+import { registerBrowseCommands } from './browse.js';
+import { getConfigDir, warnIfLegacyConfig } from '../util/config-dir.js';
 
 interface Config {
   local_dir: string;
@@ -24,10 +25,6 @@ function loadConfig(configDir: string): Config {
 
 const COOKIES_FILE = 'cookies.json';
 const METADATA_FILE = 'sync_metadata.db';
-
-function getConfigDir(): string {
-  return join(process.cwd(), 'config');
-}
 
 interface SyncActionOpts {
   dryRun?: boolean;
@@ -99,6 +96,8 @@ function runWatchAction(opts: { interval: string; git?: boolean }): void {
 }
 
 export function createCli(): Command {
+  warnIfLegacyConfig();
+
   const program = new Command();
   program
     .name('youdaonote-sync')
@@ -139,7 +138,7 @@ function registerSyncCommands(program: Command): void {
     .command('login')
     .description('Login via browser (Playwright)')
     .action(() => {
-      void import('./api/auth.js').then(({ browserLogin }) =>
+      void import('../api/auth.js').then(({ browserLogin }) =>
         browserLogin().then((code) => process.exit(code)),
       );
     });
@@ -151,7 +150,7 @@ function registerSyncCommands(program: Command): void {
     .action((opts: { port: string }) => {
       const cfgDir = getConfigDir();
       const cfg = loadConfig(cfgDir);
-      void import('./gui/server.js').then(({ startGuiServer }) => {
+      void import('../gui/server.js').then(({ startGuiServer }) => {
         startGuiServer({
           cookiesPath: join(cfgDir, COOKIES_FILE),
           defaultDownloadDir: cfg.local_dir || join(process.cwd(), 'youdaonote-sync'),
@@ -169,7 +168,7 @@ function registerDiagnoseCommands(program: Command): void {
     .description('Search for paths in cloud scan results')
     .requiredOption('--target <paths...>', 'File paths to look up')
     .action((opts: { target: string[] }) => {
-      void import('./tools/diagnose.js').then(({ cmdPath }) => cmdPath(diagnoseCfg(), opts.target));
+      void import('../tools/diagnose.js').then(({ cmdPath }) => cmdPath(diagnoseCfg(), opts.target));
     });
 
   diagnose
@@ -177,7 +176,7 @@ function registerDiagnoseCommands(program: Command): void {
     .description('Re-run classify for specific files and show details')
     .requiredOption('--target <paths...>', 'File paths to analyze')
     .action((opts: { target: string[] }) => {
-      void import('./tools/diagnose.js').then(({ cmdDecision }) =>
+      void import('../tools/diagnose.js').then(({ cmdDecision }) =>
         cmdDecision(diagnoseCfg(), opts.target),
       );
     });
@@ -186,14 +185,14 @@ function registerDiagnoseCommands(program: Command): void {
     .command('summary')
     .description('Dry-run summary: classify all files and show stats')
     .action(() => {
-      void import('./tools/diagnose.js').then(({ cmdSummary }) => cmdSummary(diagnoseCfg()));
+      void import('../tools/diagnose.js').then(({ cmdSummary }) => cmdSummary(diagnoseCfg()));
     });
 
   diagnose
     .command('reset-cache')
     .description('Reset scan cache version to force full cloud scan')
     .action(() => {
-      void import('./tools/diagnose.js').then(({ cmdResetCache }) => {
+      void import('../tools/diagnose.js').then(({ cmdResetCache }) => {
         cmdResetCache(diagnoseCfg());
       });
     });
@@ -207,14 +206,14 @@ function registerDiagnoseToolCommands(diagnose: Command): void {
     .command('api-status')
     .description('Check API connectivity and cookie validity')
     .action(() => {
-      void import('./tools/diagnose.js').then(({ cmdApiStatus }) => cmdApiStatus(diagnoseCfg()));
+      void import('../tools/diagnose.js').then(({ cmdApiStatus }) => cmdApiStatus(diagnoseCfg()));
     });
 
   diagnose
     .command('local')
     .description('Analyze local directory: file types, extensions, non-.md stats')
     .action(() => {
-      void import('./tools/diagnose.js').then(({ cmdLocalStats }) => {
+      void import('../tools/diagnose.js').then(({ cmdLocalStats }) => {
         cmdLocalStats(diagnoseCfg().localDir);
       });
     });
@@ -225,7 +224,7 @@ function registerDiagnoseToolCommands(diagnose: Command): void {
     .option('--no-cpu', 'Skip CPU profiling (faster)')
     .option('--top <n>', 'Number of hot functions to show', '20')
     .action((opts: { cpu: boolean; top: string }) => {
-      void import('./tools/profile-command.js').then(({ cmdProfile }) =>
+      void import('../tools/profile-command.js').then(({ cmdProfile }) =>
         cmdProfile(diagnoseCfg(), { cpu: opts.cpu, top: parseInt(opts.top, 10) }),
       );
     });
@@ -236,7 +235,7 @@ function registerDiagnoseCacheCommands(diagnose: Command): void {
     .command('cache')
     .description('Report metadata cache stats: file counts, file_id, cloud_mtime, local existence')
     .action(() => {
-      void import('./tools/diagnose.js').then(({ cmdCache }) => {
+      void import('../tools/diagnose.js').then(({ cmdCache }) => {
         cmdCache(diagnoseCfg());
       });
     });
@@ -246,7 +245,7 @@ function registerDiagnoseCacheCommands(diagnose: Command): void {
     .description('Rebuild metadata from cloud + local scan')
     .option('--dry-run', 'Preview changes without writing')
     .action((opts: { dryRun?: boolean }) => {
-      void import('./tools/diagnose.js').then(({ cmdRebuild }) => {
+      void import('../tools/diagnose.js').then(({ cmdRebuild }) => {
         void cmdRebuild(diagnoseCfg(), opts.dryRun ?? false);
       });
     });
@@ -256,7 +255,7 @@ function registerDiagnoseCacheCommands(diagnose: Command): void {
     .description('Scan for duplicate files by content hash')
     .option('--dir <path>', 'Directory to scan (default: config local_dir)')
     .action((opts: { dir?: string }) => {
-      void import('./tools/diagnose.js').then(({ cmdDuplicates }) => {
+      void import('../tools/diagnose.js').then(({ cmdDuplicates }) => {
         const cfg = diagnoseCfg();
         cmdDuplicates(opts.dir ?? cfg.localDir);
       });

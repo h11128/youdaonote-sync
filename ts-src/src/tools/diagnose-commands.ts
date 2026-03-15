@@ -6,12 +6,12 @@
 import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { SyncEngine } from '../engine.js';
+import { SyncEngine } from '../engine/engine.js';
 import { asDirId, asEpochSeconds, asFileId, type RelPath } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { MetadataRecord } from '../types/metadata.js';
 import { MetadataStore } from '../metadata/store.js';
-import { computeContentHashFromFile, initXxhash } from '../hash.js';
+import { computeContentHashFromFile, initXxhash } from '../algo/hash.js';
 import type { DiagnoseConfig } from './diagnose.js';
 
 function createEngineForRebuild(cfg: DiagnoseConfig): SyncEngine {

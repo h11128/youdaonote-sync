@@ -8,7 +8,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { formatFileSize } from '../utils.js';
+import { formatFileSize } from '../util/utils.js';
 import { YoudaoNoteApi } from '../api/client.js';
 import type { DirId, FileId } from '../types/common.js';
 import type { DirFileEntry } from '../types/dir.js';
