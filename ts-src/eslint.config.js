@@ -2,6 +2,7 @@ import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import sonarjs from 'eslint-plugin-sonarjs';
+import importPlugin from 'eslint-plugin-import-x';
 
 export default tseslint.config(
   {
@@ -53,6 +54,14 @@ export default tseslint.config(
       'sonarjs/no-duplicated-branches': 'error',
       'sonarjs/no-identical-expressions': 'error',
       'sonarjs/no-identical-conditions': 'error',
+    },
+  },
+
+  // ── Import hygiene ────────────────────────────────────────
+  {
+    plugins: { 'import-x': importPlugin },
+    rules: {
+      'import-x/no-cycle': ['error', { ignoreExternal: true }],
     },
   },
 
