@@ -3,7 +3,7 @@ import type { CloudFile } from '../types/scan.js';
 import type { FileState } from '../types/state.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { refineCloudModified } from '../classify/refine.js';
-import { retryWithBackoff } from '../api/retry.js';
+
 import { collectConflictCandidates, applyRefinementIfChanged } from './helpers.js';
 import { pLimit } from '../util/concurrency.js';
 
@@ -25,7 +25,7 @@ async function getCloudHash(
   if (cached?.cloudContentHash && cached.cloudMtime === cloudFile.mtime) {
     return cached.cloudContentHash;
   }
-  const raw = await retryWithBackoff(() => deps.api.getFileById(cloudFile.id as FileId));
+  const raw = await deps.api.getFileById(cloudFile.id as FileId);
   return deps.hashFn(new Uint8Array(raw), relPath);
 }
 

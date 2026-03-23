@@ -8,13 +8,18 @@
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { SyncEngine } from './engine.js';
 import { MetadataStore } from '../metadata/store.js';
 import { asContentHash, asEpochSeconds, asRelPath } from '../types/common.js';
 import type { FileId } from '../types/common.js';
 import { computeContentHashFromFile, computeContentHashFromBytes } from '../algo/hash.js';
-import { makeCloudEntry, buildMockApi, setupE2EContext } from './e2e-fixtures.js';
+import {
+  makeCloudEntry,
+  buildMockApi,
+  setupE2EContext,
+  type MockApiRecorder,
+} from './e2e-fixtures.js';
 
 describe('E2E: upload and download', () => {
   let localDir: string;
@@ -480,6 +485,171 @@ describe('E2E: stale metadata cleanup', () => {
     if (record) {
       expect(record.fileId).toBeFalsy();
     }
+
+    engine.close();
+  });
+});
+
+describe('E2E: deleteCloud propagation', () => {
+  let localDir: string;
+  let metaPath: string;
+  let cleanup: () => void;
+
+  beforeEach(() => {
+    const ctx = setupE2EContext();
+    localDir = ctx.localDir;
+    metaPath = ctx.metaPath;
+    cleanup = ctx.cleanup;
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('deletes cloud file when local file was deleted and propagateDeletes is on', async () => {
+    const meta = new MetadataStore(metaPath);
+    const now = Math.floor(Date.now() / 1000);
+
+    meta.setFileInfo(asRelPath('gone-local.md'), {
+      fileId: 'f-gone' as FileId,
+      cloudMtime: asEpochSeconds(now - 100),
+      localMtime: asEpochSeconds(now - 100),
+      contentHash: asContentHash('hash-1'),
+      lastSyncAt: asEpochSeconds(now - 50),
+    });
+    meta.save();
+
+    const cloudEntries = [makeCloudEntry('f-gone', 'gone-local.md', now - 100)];
+    const cloudFiles = new Map([['f-gone', 'old content']]);
+    const recorder: MockApiRecorder = { pushed: [], deleted: [], moved: [], dirs: [] };
+    const mockApi = buildMockApi(cloudEntries, cloudFiles, recorder);
+
+    const engine = new SyncEngine({
+      cookiesPath: '',
+      metadataPath: metaPath,
+      localDir,
+      api: mockApi,
+      meta,
+      autoGit: false,
+      propagateDeletes: true,
+    });
+
+    const result = await engine.sync();
+
+    expect(result.stats.deletedCloud).toBe(1);
+    expect(recorder.deleted).toContain('f-gone');
+    expect(meta.getFileInfo(asRelPath('gone-local.md'))).toBeNull();
+
+    engine.close();
+  });
+});
+
+describe('E2E: deleteLocal propagation', () => {
+  let localDir: string;
+  let metaPath: string;
+  let cleanup: () => void;
+
+  beforeEach(() => {
+    const ctx = setupE2EContext();
+    localDir = ctx.localDir;
+    metaPath = ctx.metaPath;
+    cleanup = ctx.cleanup;
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('moves local file to .trash when cloud file was deleted and propagateDeletes is on', async () => {
+    const meta = new MetadataStore(metaPath);
+
+    const filePath = join(localDir, 'cloud-gone.md');
+    writeFileSync(filePath, 'will be trashed');
+    const fileMtime = asEpochSeconds(Math.floor(statSync(filePath).mtimeMs / 1000));
+
+    meta.setFileInfo(asRelPath('cloud-gone.md'), {
+      fileId: 'f-cg' as FileId,
+      cloudMtime: fileMtime,
+      localMtime: fileMtime,
+      contentHash: asContentHash('hash-2'),
+      lastSyncAt: fileMtime,
+    });
+    meta.save();
+
+    const mockApi = buildMockApi([], new Map());
+
+    const engine = new SyncEngine({
+      cookiesPath: '',
+      metadataPath: metaPath,
+      localDir,
+      api: mockApi,
+      meta,
+      autoGit: false,
+      propagateDeletes: true,
+    });
+
+    const result = await engine.sync();
+
+    expect(result.stats.deletedLocal).toBe(1);
+    expect(existsSync(join(localDir, 'cloud-gone.md'))).toBe(false);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const trashDest = join(localDir, '.trash', today, 'cloud-gone.md');
+    expect(existsSync(trashDest)).toBe(true);
+    expect(meta.getFileInfo(asRelPath('cloud-gone.md'))).toBeNull();
+
+    engine.close();
+  });
+});
+
+describe('E2E: delete propagation disabled', () => {
+  let localDir: string;
+  let metaPath: string;
+  let cleanup: () => void;
+
+  beforeEach(() => {
+    const ctx = setupE2EContext();
+    localDir = ctx.localDir;
+    metaPath = ctx.metaPath;
+    cleanup = ctx.cleanup;
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('does NOT delete when propagateDeletes is off (default)', async () => {
+    const meta = new MetadataStore(metaPath);
+    const now = Math.floor(Date.now() / 1000);
+
+    meta.setFileInfo(asRelPath('keep.md'), {
+      fileId: 'f-keep' as FileId,
+      cloudMtime: asEpochSeconds(now - 100),
+      localMtime: asEpochSeconds(now - 100),
+      contentHash: asContentHash('hash-3'),
+      lastSyncAt: asEpochSeconds(now - 50),
+    });
+    meta.save();
+
+    const cloudEntries = [makeCloudEntry('f-keep', 'keep.md', now - 100)];
+    const cloudFiles = new Map([['f-keep', 'content']]);
+    const recorder: MockApiRecorder = {
+      pushed: [],
+      deleted: [],
+      moved: [],
+      dirs: [],
+    };
+    const mockApi = buildMockApi(cloudEntries, cloudFiles, recorder);
+
+    const engine = new SyncEngine({
+      cookiesPath: '',
+      metadataPath: metaPath,
+      localDir,
+      api: mockApi,
+      meta,
+      autoGit: false,
+    });
+
+    await engine.sync();
+
+    expect(recorder.deleted).toHaveLength(0);
 
     engine.close();
   });

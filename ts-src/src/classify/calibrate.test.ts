@@ -51,6 +51,9 @@ describe('calibrateMetadata: file calibration', () => {
     const filePath = join(TMP, 'new.md');
     writeFileSync(filePath, 'hello world');
 
+    const preHash = 'pre-computed-hash' as ContentHash;
+    const localHashes = new Map<RelPath, ContentHash | null>([[asRelPath('new.md'), preHash]]);
+
     const cloud = new Map<RelPath, CloudFile>([
       [asRelPath('new.md'), makeCloudFile({ id: 'cf-new' as FileId, name: 'new.md' })],
     ]);
@@ -58,14 +61,14 @@ describe('calibrateMetadata: file calibration', () => {
       [asRelPath('new.md'), makeLocalFile({ path: filePath })],
     ]);
 
-    const count = calibrateMetadata(meta, cloud, local, new Map());
+    const count = calibrateMetadata(meta, cloud, local, localHashes);
     expect(count).toBeGreaterThan(0);
 
     const info = meta.getFileInfo(asRelPath('new.md'));
     expect(info).not.toBeNull();
     expect(info!.fileId).toBe('cf-new');
     expect(info!.cloudMtime).toBe(1000);
-    expect(info!.contentHash).not.toBeNull();
+    expect(info!.contentHash).toBe(preHash);
     expect(info!.lastSyncAt).toBeGreaterThan(0);
   });
 
@@ -150,6 +153,22 @@ describe('calibrateMetadata: edge cases', () => {
 
     const count = calibrateMetadata(meta, cloud, local, new Map());
     expect(count).toBe(0);
+  });
+
+  it('does not calibrate when file exists on both sides but hash is missing from localHashes', () => {
+    const filePath = join(TMP, 'no-hash.md');
+    writeFileSync(filePath, 'some content');
+
+    const cloud = new Map<RelPath, CloudFile>([
+      [asRelPath('no-hash.md'), makeCloudFile({ id: 'cf-nh' as FileId, name: 'no-hash.md' })],
+    ]);
+    const local = new Map<RelPath, LocalFile>([
+      [asRelPath('no-hash.md'), makeLocalFile({ path: filePath })],
+    ]);
+
+    const count = calibrateMetadata(meta, cloud, local, new Map());
+    expect(count).toBe(0);
+    expect(meta.getFileInfo(asRelPath('no-hash.md'))).toBeNull();
   });
 
   it('uses pre-computed hash from localHashes map', () => {

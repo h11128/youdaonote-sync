@@ -13,6 +13,7 @@ export interface SyncEngineConfig {
   direction?: SyncDirection | undefined;
   autoGit?: boolean | undefined;
   autoDedup?: boolean | undefined;
+  propagateDeletes?: boolean | undefined;
   hashFn?: ((data: Uint8Array, path: string) => ContentHash | null) | undefined;
   /** Optional: inject for testing; otherwise created from cookiesPath/metadataPath. */
   api?: YoudaoNoteApi;

@@ -2,6 +2,12 @@ import type { YoudaoNoteApi } from '../api/client.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { ContentHash, DirId, FileId, NoteDomain, RelPath } from '../types/common.js';
 
+export interface FailedFile {
+  path: RelPath;
+  action: string;
+  error: string;
+}
+
 export interface SyncStats {
   downloaded: number;
   uploaded: number;
@@ -10,7 +16,10 @@ export interface SyncStats {
   errors: number;
   moved: number;
   merged: number;
+  deletedCloud: number;
+  deletedLocal: number;
   readonly changedPaths: string[];
+  readonly failedFiles: FailedFile[];
   readonly failedMoves: {
     oldPath: RelPath;
     newPath: RelPath;
@@ -29,7 +38,10 @@ export function emptyStats(): SyncStats {
     errors: 0,
     moved: 0,
     merged: 0,
+    deletedCloud: 0,
+    deletedLocal: 0,
     changedPaths: [],
+    failedFiles: [],
     failedMoves: [],
     uploadedPaths: new Set<RelPath>(),
   };

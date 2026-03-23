@@ -26,7 +26,7 @@ GitHub Issue: vitest-dev/vitest#9507
 
 **规则**: 禁 `<br/>`、subgraph 用英文 ID + 中文 label。
 
-**Cursor Markdown Preview 不渲染 mermaid**: Cursor 内置 Markdown 预览器不走 `bierner.markdown-mermaid` 插件，所有 mermaid 代码块（包括基础的 `pie`、`flowchart`）都报 "No diagram type detected"。解决方案：用 CLI 渲染为 SVG 后用 `![](./assets/xxx.svg)` 嵌入，mermaid 源码放在 `<details>` 折叠块里保留。
+**Cursor Markdown Preview 渲染 mermaid**: 安装 `bierner.markdown-mermaid` 插件后，需要 Reload Window 才能生效。首次安装后如果仍报 "No diagram type detected"，再 Reload 一次即可。已验证 classDiagram、flowchart、sequenceDiagram 均可正常渲染（2026-03-22）。
 
 **beta 后缀**: `radar-beta`（非 `radar`）、`xychart-beta` — Mermaid v11.12 仍需 `-beta` 后缀。中文标签在 CLI 渲染时可能导致解析失败（`pie title` 的括号、`xychart-beta` 的中文月份），改用英文标签。
 

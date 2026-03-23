@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { SyncEngine } from './engine.js';
+import { SyncEngine, collectDeleteOverrides } from './engine.js';
 import { filterCloudSnap, filterByDirection } from './helpers.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 import { asDirId, asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
@@ -144,5 +144,59 @@ describe('filterByDirection', () => {
     expect(classified.get(asRelPath('local-mod.md'))?.kind).toBe('localModified');
     expect(classified.get(asRelPath('cloud-new.md'))?.kind).toBe('gone');
     expect(classified.get(asRelPath('conflict.md'))?.kind).toBe('gone');
+  });
+});
+
+describe('collectDeleteOverrides', () => {
+  it('maps localDeleted to deleteCloud', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('gone-local.md'), { kind: 'localDeleted' }],
+    ]);
+
+    const overrides = collectDeleteOverrides(classified);
+
+    expect(overrides.get(asRelPath('gone-local.md'))).toBe('deleteCloud');
+  });
+
+  it('maps cloudDeleted to deleteLocal', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('gone-cloud.md'), { kind: 'cloudDeleted' }],
+    ]);
+
+    const overrides = collectDeleteOverrides(classified);
+
+    expect(overrides.get(asRelPath('gone-cloud.md'))).toBe('deleteLocal');
+  });
+
+  it('ignores non-deleted states', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('synced.md'), { kind: 'synced' }],
+      [asRelPath('new.md'), { kind: 'localNew' }],
+      [asRelPath('conflict.md'), { kind: 'conflict' }],
+    ]);
+
+    const overrides = collectDeleteOverrides(classified);
+
+    expect(overrides.size).toBe(0);
+  });
+
+  it('handles mixed entries correctly', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('a.md'), { kind: 'localDeleted' }],
+      [asRelPath('b.md'), { kind: 'cloudDeleted' }],
+      [asRelPath('c.md'), { kind: 'synced' }],
+      [asRelPath('d.md'), { kind: 'localNew' }],
+    ]);
+
+    const overrides = collectDeleteOverrides(classified);
+
+    expect(overrides.size).toBe(2);
+    expect(overrides.get(asRelPath('a.md'))).toBe('deleteCloud');
+    expect(overrides.get(asRelPath('b.md'))).toBe('deleteLocal');
+  });
+
+  it('returns empty map for empty input', () => {
+    const overrides = collectDeleteOverrides(new Map());
+    expect(overrides.size).toBe(0);
   });
 });

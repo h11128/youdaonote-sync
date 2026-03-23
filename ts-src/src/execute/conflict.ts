@@ -12,7 +12,7 @@ import type { CloudFile } from '../types/scan.js';
 import { downloadFile } from './download.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
 import type { ExecuteContext, SyncStats } from './types.js';
-import { retryWithBackoff } from '../api/retry.js';
+
 import { readFileMtime } from '../util/utils.js';
 
 /**
@@ -79,7 +79,7 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
   if (fileBuffer) ulOpts.preReadBuffer = fileBuffer;
   if (cloudFile?.id) ulOpts.existingFileId = cloudFile.id as FileId;
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
-  const result = await retryWithBackoff(() => uploadFile(ulOpts));
+  const result = await uploadFile(ulOpts);
   meta.recordSync(relPath, {
     fileId: result.fileId,
     cloudMtime: result.cloudMtime,
@@ -106,9 +106,7 @@ async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
     hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
   } = { cloudMtime: cloudFile.mtime };
   if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
-  const result = await retryWithBackoff(() =>
-    downloadFile(api, cloudFile.id as FileId, localPath, dlOpts),
-  );
+  const result = await downloadFile(api, cloudFile.id as FileId, localPath, dlOpts);
   meta.recordSync(relPath, {
     fileId: cloudFile.id as FileId,
     cloudMtime: cloudFile.mtime,

@@ -16,7 +16,14 @@ export type FileState =
   | { readonly kind: 'moved'; readonly oldPath: RelPath }
   | { readonly kind: 'gone' };
 
-export type SyncAction = 'skip' | 'upload' | 'download' | 'conflict' | 'move';
+export type SyncAction =
+  | 'skip'
+  | 'upload'
+  | 'download'
+  | 'conflict'
+  | 'move'
+  | 'deleteCloud'
+  | 'deleteLocal';
 
 export function stateToAction(state: FileState): SyncAction {
   switch (state.kind) {

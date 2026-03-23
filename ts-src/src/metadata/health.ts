@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { type RelPath, asEpochSeconds } from '../types/common.js';
+import { type ContentHash, type RelPath, asEpochSeconds } from '../types/common.js';
 import type { MetadataStore } from './store.js';
 import { computeContentHashFromFile } from '../algo/hash.js';
 
@@ -192,12 +192,16 @@ function countZeroCloud(meta: MetadataStore): number {
   return count;
 }
 
-function healMtimeDrift(
-  meta: MetadataStore,
-  localDir: string,
-  stats: MutableHealStats,
-  autoFix: boolean,
-): void {
+interface HealPassOpts {
+  meta: MetadataStore;
+  localDir: string;
+  stats: MutableHealStats;
+  autoFix: boolean;
+  localHashes?: ReadonlyMap<RelPath, ContentHash | null> | undefined;
+}
+
+function healMtimeDrift(opts: HealPassOpts): void {
+  const { meta, localDir, stats, autoFix, localHashes } = opts;
   for (const [path, record] of meta.getAllFiles()) {
     const full = join(localDir, path);
     if (!existsSync(full)) continue;
@@ -206,7 +210,7 @@ function healMtimeDrift(
     const actualMtime = Math.floor(statSync(full).mtimeMs / 1000);
     if (actualMtime === record.localMtime) continue;
 
-    const actualHash = computeContentHashFromFile(full);
+    const actualHash = localHashes?.get(path) ?? computeContentHashFromFile(full);
     if (actualHash && actualHash === record.contentHash) {
       stats.mtimeDrift++;
       if (autoFix) meta.updateLocalMtime(path, asEpochSeconds(actualMtime));
@@ -214,12 +218,8 @@ function healMtimeDrift(
   }
 }
 
-function healHashBackfill(
-  meta: MetadataStore,
-  localDir: string,
-  stats: MutableHealStats,
-  autoFix: boolean,
-): void {
+function healHashBackfill(opts: HealPassOpts): void {
+  const { meta, localDir, stats, autoFix, localHashes } = opts;
   for (const [path, record] of meta.getAllFiles()) {
     const full = join(localDir, path);
     if (!existsSync(full)) continue;
@@ -228,7 +228,7 @@ function healHashBackfill(
     const actualMtime = Math.floor(statSync(full).mtimeMs / 1000);
     if (actualMtime !== record.localMtime) continue;
 
-    const actualHash = computeContentHashFromFile(full);
+    const actualHash = localHashes?.get(path) ?? computeContentHashFromFile(full);
     if (actualHash) {
       stats.hashBackfill++;
       if (autoFix) meta.updateContentHash(path, actualHash);
@@ -253,9 +253,48 @@ export function heal(meta: MetadataStore, localDir: string, autoFix = false): He
 
   healOrphanRecords(meta, localDir, stats, autoFix);
   stats.zeroCloud = countZeroCloud(meta);
-  healMtimeDrift(meta, localDir, stats, autoFix);
-  healHashBackfill(meta, localDir, stats, autoFix);
+  healMtimeDrift({ meta, localDir, stats, autoFix });
+  healHashBackfill({ meta, localDir, stats, autoFix });
 
+  if (autoFix) meta.save();
+  return stats;
+}
+
+/**
+ * Pre-scan heal: only orphan cleanup and zeroCloud count.
+ * Does not depend on file hashes — safe to run before hash computation.
+ */
+export function healPreScan(
+  meta: MetadataStore,
+  localDir: string,
+  autoFix = false,
+): Pick<HealStats, 'orphan' | 'zeroCloud'> {
+  if (!localDir || typeof localDir !== 'string') {
+    throw new Error('healPreScan: localDir must be a non-empty string');
+  }
+  const stats: MutableHealStats = { mtimeDrift: 0, orphan: 0, zeroCloud: 0, hashBackfill: 0 };
+  healOrphanRecords(meta, localDir, stats, autoFix);
+  stats.zeroCloud = countZeroCloud(meta);
+  if (autoFix) meta.save();
+  return stats;
+}
+
+/**
+ * Post-hash heal: mtime drift + hash backfill using pre-computed hashes.
+ * Must be called after localHashes are available.
+ */
+export function healPostHash(
+  meta: MetadataStore,
+  localDir: string,
+  localHashes: ReadonlyMap<RelPath, ContentHash | null>,
+  autoFix = false,
+): Pick<HealStats, 'mtimeDrift' | 'hashBackfill'> {
+  if (!localDir || typeof localDir !== 'string') {
+    throw new Error('healPostHash: localDir must be a non-empty string');
+  }
+  const stats: MutableHealStats = { mtimeDrift: 0, orphan: 0, zeroCloud: 0, hashBackfill: 0 };
+  healMtimeDrift({ meta, localDir, stats, autoFix, localHashes });
+  healHashBackfill({ meta, localDir, stats, autoFix, localHashes });
   if (autoFix) meta.save();
   return stats;
 }

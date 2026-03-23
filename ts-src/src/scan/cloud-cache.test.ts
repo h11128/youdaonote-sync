@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os';
 import { MetadataStore } from '../metadata/store.js';
 import { asEpochSeconds, asRelPath } from '../types/common.js';
 import type { DirId, FileId, RelPath } from '../types/common.js';
-import { tryCachedCloudScan, loadCloudFilesFromCache, saveScanVersion } from './cloud-cache.js';
+import {
+  tryCachedCloudScan,
+  loadCloudFilesFromCache,
+  saveScanVersion,
+  STATE_LAST_FULL_SCAN,
+} from './cloud-cache.js';
 import type { CloudFile } from '../types/scan.js';
 
 const TMP = join(tmpdir(), 'cloud-cache-test');
@@ -262,5 +267,56 @@ describe('loadCloudFilesFromCache', () => {
     expect(result).not.toBeNull();
     expect(result!.has(asRelPath('doc.md'))).toBe(true);
     expect(result!.has(asRelPath('doc.conflict.md'))).toBe(false);
+  });
+});
+
+describe('tryCachedCloudScan: 24h full scan interval', () => {
+  it('returns null when last full scan was >24h ago', async () => {
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
+    saveScanVersion(meta, snap, 10);
+
+    const oldTime = Math.floor(Date.now() / 1000) - 25 * 3600;
+    meta.setState(STATE_LAST_FULL_SCAN, String(oldTime));
+    meta.save();
+
+    const api = { listRecent: () => Promise.resolve([] as Record<string, unknown>[]) };
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns cached when last full scan was <24h ago', async () => {
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
+    saveScanVersion(meta, snap, 10);
+
+    const api = { listRecent: () => Promise.resolve([] as Record<string, unknown>[]) };
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.has(asRelPath('doc.md'))).toBe(true);
+  });
+
+  it('saveScanVersion records last_full_scan_time', () => {
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
+
+    saveScanVersion(meta, snap, 10);
+
+    const stored = meta.getStateInt(STATE_LAST_FULL_SCAN);
+    expect(stored).toBeGreaterThan(0);
+    const now = Math.floor(Date.now() / 1000);
+    expect(Math.abs(stored - now)).toBeLessThan(5);
   });
 });

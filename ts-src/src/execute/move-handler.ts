@@ -5,7 +5,6 @@ import { asEpochSeconds, type FileId, type NoteDomain, type RelPath } from '../t
 import type { MetadataStore } from '../metadata/store.js';
 import type { ExecuteContext, SyncStats } from './types.js';
 import { ensureParentDir } from './upload.js';
-import { retryWithBackoff } from '../api/retry.js';
 
 export interface HandleMoveOpts {
   relPath: RelPath;
@@ -32,11 +31,11 @@ async function moveCloudFile(opts: {
       rootDirId,
       inflight: ctx.dirCreateInflight,
     });
-    await retryWithBackoff(() => api.moveFile(oldFileId, newParentId, domain));
+    await api.moveFile(oldFileId, newParentId, domain);
     const oldName = basename(oldPath);
     const newName = basename(relPath);
     if (oldName !== newName) {
-      await retryWithBackoff(() => api.renameFile(oldFileId, newName, domain));
+      await api.renameFile(oldFileId, newName, domain);
     }
     return true;
   } catch {

@@ -25,6 +25,7 @@ export async function runExecuteSync(
     localSnap?: Map<RelPath, LocalFile>;
     rootDirId: DirId;
     direction: SyncDirection;
+    deleteOverrides?: ReadonlyMap<RelPath, 'deleteCloud' | 'deleteLocal'> | undefined;
   },
   config: SyncEngineConfig,
   api: YoudaoNoteApi,
@@ -39,7 +40,13 @@ export async function runExecuteSync(
     hashFn,
     localSnap: ctx.localSnap,
   };
-  const stats = await executeAll(ctx.classified, ctx.cloudSnap, executeCtx, ctx.direction);
+  const stats = await executeAll({
+    classified: ctx.classified,
+    cloud: ctx.cloudSnap,
+    ctx: executeCtx,
+    direction: ctx.direction,
+    deleteOverrides: ctx.deleteOverrides,
+  });
   if (stats.failedMoves.length > 0) {
     await fallbackDeleteOldFiles(stats, api, meta);
   }

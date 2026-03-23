@@ -1,5 +1,5 @@
-import { readFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, mkdirSync, renameSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import type { DirId, FileId, NoteDomain, RelPath, SyncDirection } from '../types/common.js';
@@ -9,7 +9,7 @@ import { handleDownload } from './download.js';
 import { uploadFile, ensureParentDir, type UploadFileOpts } from './upload.js';
 import { conflictFallback, type ConflictOpts } from './conflict.js';
 import { tryDiff3Merge } from './diff3-merge.js';
-import { retryWithBackoff } from '../api/retry.js';
+
 import { handleMove } from './move-handler.js';
 import { pLimit } from '../util/concurrency.js';
 import { readFileMtime } from '../util/utils.js';
@@ -27,19 +27,23 @@ export { emptyStats, type ExecuteContext, type SyncStats } from './types.js';
  * 4. Conflicts (try diff3 merge for .md/.txt, fallback to backup + download)
  * 5. Moves
  */
-function partitionEntries(
-  classified: ReadonlyMap<RelPath, FileState>,
-  cloud: ReadonlyMap<RelPath, CloudFile>,
-  local: ReadonlyMap<RelPath, { isDir: boolean }> | undefined,
-  stats: SyncStats,
-): {
+interface PartitionOpts {
+  classified: ReadonlyMap<RelPath, FileState>;
+  cloud: ReadonlyMap<RelPath, CloudFile>;
+  local: ReadonlyMap<RelPath, { isDir: boolean }> | undefined;
+  stats: SyncStats;
+  deleteOverrides?: ReadonlyMap<RelPath, 'deleteCloud' | 'deleteLocal'> | undefined;
+}
+
+function partitionEntries(opts: PartitionOpts): {
   dirEntries: [RelPath, FileState, SyncAction][];
   fileEntries: [RelPath, FileState, SyncAction][];
 } {
+  const { classified, cloud, local, stats, deleteOverrides } = opts;
   const dirEntries: [RelPath, FileState, SyncAction][] = [];
   const fileEntries: [RelPath, FileState, SyncAction][] = [];
   for (const [relPath, state] of classified) {
-    const action = stateToAction(state);
+    const action = deleteOverrides?.get(relPath) ?? stateToAction(state);
     if (action === 'skip') {
       stats.skipped++;
       continue;
@@ -65,31 +69,53 @@ function resolveUploadMeta(
 
 type Entry = [RelPath, FileState, SyncAction];
 
-export async function executeAll(
-  classified: ReadonlyMap<RelPath, FileState>,
-  cloud: ReadonlyMap<RelPath, CloudFile>,
-  ctx: ExecuteContext,
-  direction: SyncDirection = 'both',
-): Promise<SyncStats> {
+export interface ExecuteAllOpts {
+  classified: ReadonlyMap<RelPath, FileState>;
+  cloud: ReadonlyMap<RelPath, CloudFile>;
+  ctx: ExecuteContext;
+  direction?: SyncDirection | undefined;
+  deleteOverrides?: ReadonlyMap<RelPath, 'deleteCloud' | 'deleteLocal'> | undefined;
+}
+
+export async function executeAll(opts: ExecuteAllOpts): Promise<SyncStats> {
+  const { classified, cloud, ctx, deleteOverrides } = opts;
+  const direction = opts.direction ?? 'both';
   const stats = emptyStats();
   const ctxWithInflight = {
     ...ctx,
     dirCreateInflight: ctx.dirCreateInflight ?? new Map<string, Promise<DirId>>(),
   };
-  const { dirEntries, fileEntries } = partitionEntries(classified, cloud, ctx.localSnap, stats);
+  const { dirEntries, fileEntries } = partitionEntries({
+    classified,
+    cloud,
+    local: ctx.localSnap,
+    stats,
+    deleteOverrides,
+  });
 
   for (const [relPath, _state, action] of dirEntries) {
     try {
       await executeDir(relPath, action, ctxWithInflight, stats);
     } catch (e: unknown) {
       stats.errors++;
-      console.error(`Error processing dir ${relPath}: ${formatError(e)}`);
+      const detail = formatError(e);
+      stats.failedFiles.push({ path: relPath, action, error: detail });
+      console.error(`Error processing dir ${relPath}: ${detail}`);
     }
   }
 
   await runFileEntries(fileEntries, { cloud, ctx: ctxWithInflight, stats, direction });
   return Object.freeze(stats);
 }
+
+const ACTION_SYMBOLS: Partial<Record<SyncAction, string>> = {
+  download: '↓',
+  upload: '↑',
+  conflict: '⚡',
+  move: '→',
+  deleteCloud: '🗑c',
+  deleteLocal: '🗑l',
+};
 
 async function runFileEntries(
   fileEntries: Entry[],
@@ -111,13 +137,21 @@ async function runFileEntries(
     else others.push(entry);
   }
 
+  const total = fileEntries.length;
+  let done = 0;
   const limit = pLimit(5);
   const run = async ([relPath, state, action]: Entry): Promise<void> => {
     try {
       await executeSingle({ relPath, state, action, cloud, ctx, stats, direction });
+      done++;
+      const sym = ACTION_SYMBOLS[action] ?? '?';
+      console.log(`  [${done}/${total}] ${sym} ${relPath}`);
     } catch (e: unknown) {
+      done++;
       stats.errors++;
-      console.error(`Error processing ${relPath}: ${formatError(e)}`);
+      const detail = formatError(e);
+      stats.failedFiles.push({ path: relPath, action, error: detail });
+      console.error(`  [${done}/${total}] ✗ ${relPath}: ${detail}`);
     }
   };
 
@@ -194,7 +228,7 @@ async function handleUpload(o: {
   if (metaRecord?.fileId) ulOpts.existingFileId = metaRecord.fileId;
   if (metaRecord?.domain != null) ulOpts.existingDomain = metaRecord.domain;
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
-  const result = await retryWithBackoff(() => uploadFile(ulOpts));
+  const result = await uploadFile(ulOpts);
   meta.recordSync(relPath, {
     fileId: result.fileId,
     cloudMtime: result.cloudMtime,
@@ -222,6 +256,53 @@ async function handleConflict(o: ConflictOpts): Promise<void> {
   await conflictFallback({ relPath, localPath, cloudFile, ctx, stats, direction });
 }
 
+export function trashPath(localDir: string, relPath: RelPath): string {
+  const date = new Date().toISOString().slice(0, 10);
+  return join(localDir, '.trash', date, relPath);
+}
+
+function moveToTrash(filePath: string, dest: string): void {
+  mkdirSync(dirname(dest), { recursive: true });
+  renameSync(filePath, dest);
+}
+
+async function handleDeleteCloud(o: {
+  relPath: RelPath;
+  cloudFile: CloudFile | undefined;
+  ctx: ExecuteContext;
+  stats: SyncStats;
+}): Promise<void> {
+  const { relPath, cloudFile, ctx, stats } = o;
+  if (!cloudFile?.id) {
+    console.error(`Skip deleteCloud ${relPath}: missing cloud file id`);
+    stats.errors++;
+    return;
+  }
+  await ctx.api.deleteFile(cloudFile.id as FileId);
+  ctx.meta.removeFileInfo(relPath);
+  stats.deletedCloud++;
+  stats.changedPaths.push(join(ctx.localDir, relPath));
+}
+
+function handleDeleteLocal(o: {
+  relPath: RelPath;
+  localPath: string;
+  ctx: ExecuteContext;
+  stats: SyncStats;
+}): void {
+  const { relPath, localPath, ctx, stats } = o;
+  if (!existsSync(localPath)) {
+    ctx.meta.removeFileInfo(relPath);
+    stats.deletedLocal++;
+    return;
+  }
+  const dest = trashPath(ctx.localDir, relPath);
+  moveToTrash(localPath, dest);
+  ctx.meta.removeFileInfo(relPath);
+  stats.deletedLocal++;
+  stats.changedPaths.push(localPath);
+}
+
 async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
   const { relPath, state, action, cloud, ctx, stats, direction } = opts;
   const { localDir } = ctx;
@@ -244,6 +325,11 @@ async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
     },
     conflict: () => handleConflict({ relPath, localPath, cloudFile, ctx, stats, direction }),
     move: () => handleMove({ relPath, state, ctx, stats }),
+    deleteCloud: () => handleDeleteCloud({ relPath, cloudFile, ctx, stats }),
+    deleteLocal: () => {
+      handleDeleteLocal({ relPath, localPath, ctx, stats });
+      return Promise.resolve();
+    },
     skip: () => Promise.resolve(),
   };
   const handler = handlers[action];

@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { SyncEngine } from '../engine/engine.js';
 import { SyncWatcher } from '../engine/watcher.js';
 import { registerBrowseCommands } from './browse.js';
-import { getConfigDir, warnIfLegacyConfig } from '../util/config-dir.js';
+import { getConfigDir, warnIfLegacyConfig, migrateConfigFiles } from '../util/config-dir.js';
 
 interface Config {
   local_dir: string;
@@ -33,6 +33,7 @@ interface SyncActionOpts {
   push?: boolean;
   pull?: boolean;
   noDedup?: boolean;
+  propagateDeletes?: boolean;
 }
 
 function resolveDirection(opts: SyncActionOpts): 'both' | 'push' | 'pull' {
@@ -59,13 +60,24 @@ async function runSyncAction(opts: SyncActionOpts): Promise<void> {
     direction: resolveDirection(opts),
     autoDedup: opts.noDedup ? false : undefined,
     autoGit: opts.git ?? undefined,
+    propagateDeletes: opts.propagateDeletes ?? undefined,
   });
   try {
+    const t0 = Date.now();
     const result = await engine.sync();
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     const s = result.stats;
+    const delPart =
+      s.deletedCloud + s.deletedLocal > 0 ? ` 🗑${s.deletedCloud}c/${s.deletedLocal}l` : '';
     console.log(
-      `\nSync complete: ↓${s.downloaded} ↑${s.uploaded} ⚡${s.conflicts} →${s.moved} (${s.skipped} skipped, ${s.errors} errors)`,
+      `\nSync complete: ↓${s.downloaded} ↑${s.uploaded} ⚡${s.conflicts} →${s.moved}${delPart} (${s.skipped} skipped, ${s.errors} errors) [${elapsed}s]`,
     );
+    if (s.failedFiles.length > 0) {
+      console.log('\nFailed files:');
+      for (const f of s.failedFiles) {
+        console.log(`  ✗ [${f.action}] ${f.path}: ${f.error}`);
+      }
+    }
   } finally {
     engine.close();
   }
@@ -105,6 +117,7 @@ export function createCli(): Command {
     .version('0.1.0');
 
   registerSyncCommands(program);
+  registerUtilCommands(program);
   registerBrowseCommands(program, getConfigDir, loadConfig);
   registerDiagnoseCommands(program);
 
@@ -121,6 +134,7 @@ function registerSyncCommands(program: Command): void {
     .option('--push', 'Only push local changes to cloud')
     .option('--pull', 'Only pull cloud changes to local')
     .option('--no-dedup', 'Disable automatic deduplication')
+    .option('--propagate-deletes', 'Propagate delete operations (with local trash)')
     .action((opts: SyncActionOpts) => {
       void runSyncAction(opts);
     });
@@ -141,6 +155,21 @@ function registerSyncCommands(program: Command): void {
       void import('../api/auth.js').then(({ browserLogin }) =>
         browserLogin().then((code) => process.exit(code)),
       );
+    });
+}
+
+function registerUtilCommands(program: Command): void {
+  program
+    .command('migrate')
+    .description('Migrate config files from legacy cwd/config/ to platform config dir')
+    .action(() => {
+      const oldDir = join(process.cwd(), 'config');
+      const newDir = getConfigDir();
+      console.log(`Migrating: ${oldDir} → ${newDir}`);
+      const copied = migrateConfigFiles(oldDir, newDir);
+      if (copied.length === 0) {
+        console.log('Nothing to migrate (source missing or destination already has files).');
+      }
     });
 
   program
@@ -168,7 +197,9 @@ function registerDiagnoseCommands(program: Command): void {
     .description('Search for paths in cloud scan results')
     .requiredOption('--target <paths...>', 'File paths to look up')
     .action((opts: { target: string[] }) => {
-      void import('../tools/diagnose.js').then(({ cmdPath }) => cmdPath(diagnoseCfg(), opts.target));
+      void import('../tools/diagnose.js').then(({ cmdPath }) =>
+        cmdPath(diagnoseCfg(), opts.target),
+      );
     });
 
   diagnose

@@ -14,7 +14,7 @@ import { xmlBytesToMarkdown } from '../convert/xml-to-md.js';
 import { jsonBytesToMarkdown } from '../convert/json-to-md.js';
 import { htmlBytesToMarkdown } from '../convert/html-to-md.js';
 import { requireNonEmpty } from '../util/preconditions.js';
-import { retryWithBackoff } from '../api/retry.js';
+
 import { readFileMtime } from '../util/utils.js';
 import { migrateImages } from './images.js';
 import type { ExecuteContext, SyncStats } from './types.js';
@@ -149,9 +149,7 @@ export async function handleDownload(o: {
     hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
   } = { cloudMtime: cloudFile.mtime };
   if (ctx.hashFn) dlOpts.hashFn = ctx.hashFn;
-  const result = await retryWithBackoff(() =>
-    downloadFile(api, cloudFile.id as FileId, localPath, dlOpts),
-  );
+  const result = await downloadFile(api, cloudFile.id as FileId, localPath, dlOpts);
   meta.recordSync(relPath, {
     fileId: cloudFile.id as FileId,
     cloudMtime: cloudFile.mtime,

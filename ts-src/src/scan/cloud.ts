@@ -10,7 +10,6 @@ import {
 import type { DirInfoByIdResponse } from '../types/dir.js';
 import type { CloudFile } from '../types/scan.js';
 import { mapCloudName } from './name.js';
-import { retryWithBackoff } from '../api/retry.js';
 
 /**
  * Interface for the directory listing API.
@@ -71,7 +70,7 @@ async function bfsScan(
 
   async function processItem(item: QueueItem): Promise<void> {
     try {
-      const { entries, subdirs } = await fetchDir(api, item.dirId, item.basePath, opts.retryOpts);
+      const { entries, subdirs } = await fetchDir(api, item.dirId, item.basePath);
       for (const [rel, cloud] of entries) files.set(rel, cloud);
       for (const sub of subdirs) {
         if (!visited.has(sub.dirId)) {
@@ -145,14 +144,13 @@ async function fetchDir(
   api: DirBrowser,
   dirId: DirId,
   basePath: RelPath | '',
-  retryOpts?: { maxRetries?: number; baseDelay?: number },
 ): Promise<{
   entries: [RelPath, CloudFile][];
   subdirs: { dirId: DirId; basePath: RelPath }[];
 }> {
   let data: Awaited<ReturnType<DirBrowser['getDirInfoById']>>;
   try {
-    data = await retryWithBackoff(() => api.getDirInfoById(dirId), retryOpts);
+    data = await api.getDirInfoById(dirId);
   } catch (e: unknown) {
     console.warn(
       `Cloud scan: failed to list dir ${dirId} at "${basePath}": ${e instanceof Error ? e.message : String(e)}`,

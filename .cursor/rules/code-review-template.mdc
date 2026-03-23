@@ -1,5 +1,5 @@
 ---
-description: Code review prompt template — for independent review in a new conversation after large changes
+description: Structured multi-pass code review protocol — for independent review in a new conversation after large changes. Triggers: code review, review diff, audit changes, PR review, post-implementation review.
 alwaysApply: false
 ---
 
@@ -77,6 +77,93 @@ alwaysApply: false
 - **问题**: 一句话描述
 - **建议**: 具体的修复方向
 ```
+
+## Structured Multi-Pass Review Protocol
+
+The free-form review above is the fallback for manual use. When an agent
+performs the review, it MUST follow this structured protocol instead.
+
+### Core Principle: Review First, Fix Later
+
+NEVER fix code during review. Complete ALL review passes, output the full
+findings report, THEN fix in a separate step. Interleaving review and fixes
+causes fixes to introduce new defects (observed pattern: 3-4 rounds to
+converge when review and fix are mixed).
+
+### Step 0 — Determine Scope
+
+```bash
+git diff --name-only HEAD~1   # adjust range as needed
+```
+
+Every file in this list MUST be covered. No file may be skipped.
+
+### Step 1 — Scan by Dimension (not by file)
+
+Pick one dimension, scan ALL changed files for it, record findings, then
+move to the next dimension. This prevents the "fatigue drift" where later
+files in a per-file scan get less scrutiny.
+
+Dimensions (includes the 5 original dimensions above, plus additions):
+
+1. **Algorithm correctness** — boundary conditions, state machine transitions,
+   numeric precision, time-window expiry with no new input
+2. **Data flow integrity** — is any value reconstructed from a lossy
+   intermediate? (e.g., float percentage → integer count)
+3. **Runtime characteristics** — call frequency, thread safety, memory growth,
+   resource leaks
+4. **Architecture consistency** — dependency direction, single responsibility,
+   adherence to existing patterns
+5. **Backward compatibility** — signature changes with all callers updated,
+   data migration, config defaults
+6. **Functional equivalence** (rewrites only) — every old entry point has a
+   new counterpart or explicit drop annotation
+7. **DRY** — search for ≥3 lines duplicated within or across changed files
+8. **Magic numbers** — literals other than 0, 1, -1, 100 → named constants
+9. **Bare tuple returns** — >2 elements → struct
+10. **Caller completeness** — for every changed/deleted signature, grep all
+    callers to confirm none were missed
+
+### Step 2 — Classify Findings
+
+Each finding MUST include:
+
+| Field | Description |
+|-------|-------------|
+| Severity | 🔴 Must fix / 🟡 Should fix / 🟢 Optional |
+| Location | `file_path:line_number` |
+| Problem | One sentence describing the defect |
+| Suggestion | Concrete fix direction |
+
+### Step 3 — Output Full Report Before Any Fix
+
+```
+## Review Report
+
+### 🔴 Must Fix (N)
+1. `file.rs:42` — <problem> → <suggestion>
+...
+
+### 🟡 Should Fix (N)
+1. `file.rs:108` — <problem> → <suggestion>
+...
+
+### 🟢 Optional (N)
+1. `file.rs:200` — <problem> → <suggestion>
+...
+
+### Summary
+- Files reviewed: X
+- Findings: 🔴 A / 🟡 B / 🟢 C
+- Highest-risk area: <module or file>
+```
+
+### Step 4 — Fix Phase (separate from review)
+
+Only after the complete report is output:
+1. Fix all 🔴 items first, then 🟡, then 🟢 (if time permits).
+2. After ALL fixes are applied, run the verifier subagent or re-check each
+   finding to confirm resolution and catch regressions.
 
 ## 补充说明
 

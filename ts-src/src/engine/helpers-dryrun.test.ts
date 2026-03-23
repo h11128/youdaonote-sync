@@ -2,12 +2,19 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { printPreview, printDryrunSummary, diagnoseDryrun } from './helpers.js';
-import { groupByAction, writeDryrunReport } from './helpers-dryrun.js';
+import {
+  effectiveAction,
+  printPreview,
+  printDryrunSummary,
+  diagnoseDryrun,
+  dryRunStats,
+  groupByAction,
+  writeDryrunReport,
+} from './helpers-dryrun.js';
 import type { FileState } from '../types/state.js';
 import type { MetadataStore } from '../metadata/store.js';
-import { asRelPath } from '../types/common.js';
-import type { RelPath } from '../types/common.js';
+import { asContentHash, asEpochSeconds, asRelPath } from '../types/common.js';
+import type { ContentHash, FileId, RelPath } from '../types/common.js';
 
 const noop = vi.fn();
 
@@ -39,6 +46,25 @@ describe('printPreview', () => {
     expect(output).toContain('CONFLICT');
     expect(output).toContain('both.md');
     expect(output).not.toContain('synced.md');
+  });
+
+  it('prints DELETE CLOUD and DELETE LOCAL sections when deleteOverrides provided', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('local-gone.md'), { kind: 'localDeleted' }],
+      [asRelPath('cloud-gone.md'), { kind: 'cloudDeleted' }],
+    ]);
+    const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>([
+      [asRelPath('local-gone.md'), 'deleteCloud'],
+      [asRelPath('cloud-gone.md'), 'deleteLocal'],
+    ]);
+
+    printPreview(classified, overrides);
+
+    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('DELETE CLOUD');
+    expect(output).toContain('local-gone.md');
+    expect(output).toContain('DELETE LOCAL');
+    expect(output).toContain('cloud-gone.md');
   });
 
   it('prints nothing for all-skip entries', () => {
@@ -77,9 +103,30 @@ describe('printDryrunSummary', () => {
     const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(output).toContain('Total changes: 4');
     expect(output).toContain('1 unchanged');
-    expect(output).toContain('Downloads: 2');
-    expect(output).toContain('Uploads:   1');
-    expect(output).toContain('Conflicts: 1');
+    expect(output).toContain('Downloads:');
+    expect(output).toContain('2');
+    expect(output).toContain('Uploads:');
+    expect(output).toContain('Conflicts:');
+  });
+
+  it('prints Delete cloud and Delete local counts with deleteOverrides', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('local-gone.md'), { kind: 'localDeleted' }],
+      [asRelPath('cloud-gone.md'), { kind: 'cloudDeleted' }],
+      [asRelPath('ok.md'), { kind: 'synced' }],
+    ]);
+    const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>([
+      [asRelPath('local-gone.md'), 'deleteCloud'],
+      [asRelPath('cloud-gone.md'), 'deleteLocal'],
+    ]);
+
+    printDryrunSummary(classified, overrides);
+
+    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('Delete cloud:');
+    expect(output).toContain('Delete local:');
+    expect(output).toContain('Total changes: 2');
+    expect(output).toContain('1 unchanged');
   });
 
   it('omits zero-count categories', () => {
@@ -88,7 +135,7 @@ describe('printDryrunSummary', () => {
     printDryrunSummary(classified);
 
     const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(output).toContain('Uploads:   1');
+    expect(output).toContain('Uploads:');
     expect(output).not.toContain('Downloads');
     expect(output).not.toContain('Conflicts');
   });
@@ -118,6 +165,35 @@ describe('diagnoseDryrun', () => {
     expect(output).toContain('Dry-Run Preview');
     expect(output).toContain('Dry-Run Summary');
   });
+
+  it('shows hash change warning when localHashes differ from metadata', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('changed.md'), { kind: 'localModified' }],
+    ]);
+    const meta = {
+      getFileInfo: (path: RelPath) => {
+        if (path === asRelPath('changed.md')) {
+          return {
+            fileId: 'f-1' as FileId,
+            cloudMtime: asEpochSeconds(100),
+            localMtime: asEpochSeconds(100),
+            contentHash: asContentHash('old-hash'),
+            lastSyncAt: asEpochSeconds(50),
+          };
+        }
+        return null;
+      },
+    } as unknown as MetadataStore;
+    const localHashes = new Map<RelPath, ContentHash | null>([
+      [asRelPath('changed.md'), asContentHash('new-hash')],
+    ]);
+
+    diagnoseDryrun(classified, meta, { localHashes });
+
+    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('hash: old-hash → new-hash');
+    expect(output).toContain('可疑 UPLOAD');
+  });
 });
 
 describe('groupByAction', () => {
@@ -140,6 +216,24 @@ describe('groupByAction', () => {
   it('returns empty map for empty input', () => {
     const groups = groupByAction(new Map());
     expect(groups.size).toBe(0);
+  });
+
+  it('groups deleteCloud and deleteLocal via overrides', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('local-gone.md'), { kind: 'localDeleted' }],
+      [asRelPath('cloud-gone.md'), { kind: 'cloudDeleted' }],
+      [asRelPath('normal.md'), { kind: 'localNew' }],
+    ]);
+    const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>([
+      [asRelPath('local-gone.md'), 'deleteCloud'],
+      [asRelPath('cloud-gone.md'), 'deleteLocal'],
+    ]);
+
+    const groups = groupByAction(classified, overrides);
+
+    expect(groups.get('deleteCloud')).toEqual([asRelPath('local-gone.md')]);
+    expect(groups.get('deleteLocal')).toEqual([asRelPath('cloud-gone.md')]);
+    expect(groups.get('upload')).toEqual([asRelPath('normal.md')]);
   });
 });
 
@@ -194,5 +288,93 @@ describe('writeDryrunReport', () => {
     const content = readFileSync(reportPath, 'utf-8');
 
     expect(content).not.toContain('Suspicious');
+  });
+});
+
+describe('effectiveAction', () => {
+  it('returns stateToAction result when no overrides', () => {
+    expect(effectiveAction({ kind: 'localNew' }, asRelPath('a.md'))).toBe('upload');
+    expect(effectiveAction({ kind: 'cloudNew' }, asRelPath('b.md'))).toBe('download');
+    expect(effectiveAction({ kind: 'synced' }, asRelPath('c.md'))).toBe('skip');
+  });
+
+  it('returns stateToAction result when path not in overrides', () => {
+    const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>([
+      [asRelPath('other.md'), 'deleteCloud'],
+    ]);
+
+    expect(effectiveAction({ kind: 'localNew' }, asRelPath('a.md'), overrides)).toBe('upload');
+  });
+
+  it('returns deleteCloud override for localDeleted state', () => {
+    const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>([
+      [asRelPath('a.md'), 'deleteCloud'],
+    ]);
+
+    expect(effectiveAction({ kind: 'localDeleted' }, asRelPath('a.md'), overrides)).toBe(
+      'deleteCloud',
+    );
+  });
+
+  it('returns deleteLocal override for cloudDeleted state', () => {
+    const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>([
+      [asRelPath('a.md'), 'deleteLocal'],
+    ]);
+
+    expect(effectiveAction({ kind: 'cloudDeleted' }, asRelPath('a.md'), overrides)).toBe(
+      'deleteLocal',
+    );
+  });
+
+  it('override takes precedence over stateToAction', () => {
+    const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>([
+      [asRelPath('a.md'), 'deleteCloud'],
+    ]);
+
+    expect(effectiveAction({ kind: 'localNew' }, asRelPath('a.md'), overrides)).toBe('deleteCloud');
+  });
+});
+
+describe('dryRunStats', () => {
+  it('counts basic actions correctly', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('a.md'), { kind: 'cloudNew' }],
+      [asRelPath('b.md'), { kind: 'localNew' }],
+      [asRelPath('c.md'), { kind: 'conflict' }],
+      [asRelPath('d.md'), { kind: 'synced' }],
+    ]);
+
+    const stats = dryRunStats(classified);
+
+    expect(stats.downloaded).toBe(1);
+    expect(stats.uploaded).toBe(1);
+    expect(stats.conflicts).toBe(1);
+    expect(stats.skipped).toBe(1);
+    expect(stats.deletedCloud).toBe(0);
+    expect(stats.deletedLocal).toBe(0);
+  });
+
+  it('counts deleteCloud and deleteLocal with overrides', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('gone-local.md'), { kind: 'localDeleted' }],
+      [asRelPath('gone-cloud.md'), { kind: 'cloudDeleted' }],
+      [asRelPath('synced.md'), { kind: 'synced' }],
+    ]);
+    const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>([
+      [asRelPath('gone-local.md'), 'deleteCloud'],
+      [asRelPath('gone-cloud.md'), 'deleteLocal'],
+    ]);
+
+    const stats = dryRunStats(classified, overrides);
+
+    expect(stats.deletedCloud).toBe(1);
+    expect(stats.deletedLocal).toBe(1);
+    expect(stats.skipped).toBe(1);
+    expect(stats.downloaded).toBe(0);
+  });
+
+  it('returns frozen stats object', () => {
+    const stats = dryRunStats(new Map());
+    expect(Object.isFrozen(stats)).toBe(true);
   });
 });

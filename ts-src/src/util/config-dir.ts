@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 /**
@@ -10,9 +10,6 @@ import { homedir } from 'node:os';
  * 2. Platform default:
  *    - Windows: %APPDATA%/youdaonote-sync
  *    - Linux/Mac: ~/.config/youdaonote-sync
- *
- * On first run after migration, warns if the old `cwd/config/` layout is
- * detected but the new location is empty.
  */
 export function getConfigDir(): string {
   if (process.env.YOUDAONOTE_CONFIG_DIR) {
@@ -24,28 +21,64 @@ export function getConfigDir(): string {
 
 const APP_NAME = 'youdaonote-sync';
 
-let migrationWarned = false;
+const MIGRATE_FILES = ['config.json', 'cookies.json', 'sync_metadata.db'] as const;
+
+let migrationDone = false;
+
+function getLegacyDir(): string {
+  return join(process.cwd(), 'config');
+}
 
 /**
- * Check for leftover config in the old `process.cwd()/config/` location
- * and print a one-time migration hint if found.
+ * Auto-migrate config from old `cwd/config/` to the platform config dir.
+ * Only copies if the new dir has no config.json (avoids overwriting).
+ * Called once at CLI startup.
  */
 export function warnIfLegacyConfig(): void {
-  if (migrationWarned) return;
-  migrationWarned = true;
+  if (migrationDone) return;
+  migrationDone = true;
+
+  if (process.env.YOUDAONOTE_CONFIG_DIR) return;
 
   const newDir = getConfigDir();
-  const oldDir = join(process.cwd(), 'config');
+  const oldDir = getLegacyDir();
   if (oldDir === newDir) return;
 
-  const newHasConfig = existsSync(join(newDir, 'config.json'));
   const oldHasConfig = existsSync(join(oldDir, 'config.json'));
+  const newHasConfig = existsSync(join(newDir, 'config.json'));
 
   if (oldHasConfig && !newHasConfig) {
-    console.warn(
-      `\n[migrate] Config files found at old location: ${oldDir}` +
-        `\n          New location: ${newDir}` +
-        `\n          Please move config.json, cookies.json, and sync_metadata.db manually.\n`,
-    );
+    migrateConfigFiles(oldDir, newDir);
   }
+}
+
+/**
+ * Explicitly migrate config files from old to new location.
+ * Returns the list of files successfully copied.
+ */
+export function migrateConfigFiles(oldDir: string, newDir: string): string[] {
+  if (!oldDir || !newDir) throw new Error('migrateConfigFiles: oldDir and newDir are required');
+  mkdirSync(newDir, { recursive: true });
+  const copied: string[] = [];
+  for (const file of MIGRATE_FILES) {
+    const src = join(oldDir, file);
+    const dest = join(newDir, file);
+    if (!existsSync(src)) continue;
+    if (existsSync(dest)) {
+      console.warn(`  [migrate] Skipped ${file} (already exists at destination)`);
+      continue;
+    }
+    try {
+      copyFileSync(src, dest);
+      copied.push(file);
+    } catch (e: unknown) {
+      console.error(
+        `  [migrate] Failed to copy ${file}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+  if (copied.length > 0) {
+    console.log(`[migrate] Copied ${copied.join(', ')} from ${oldDir} → ${newDir}`);
+  }
+  return copied;
 }

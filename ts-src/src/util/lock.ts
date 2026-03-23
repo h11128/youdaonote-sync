@@ -53,11 +53,13 @@ export class SyncLock {
       // Corrupted lock file — take over
     }
 
-    // Take over: remove + re-create atomically
+    // Take over: remove + re-create atomically.
+    // Race window: another process may also detect stale and unlink between our
+    // unlinkSync and openSync. The O_CREAT|O_EXCL ensures only one wins (EEXIST).
     try {
       unlinkSync(this.lockPath);
     } catch {
-      /* ignore */
+      /* Lock may have already been removed by a concurrent takeover — continue. */
     }
     try {
       const fd = openSync(this.lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
@@ -66,6 +68,7 @@ export class SyncLock {
       closeSync(fd);
       return true;
     } catch {
+      // EEXIST: another process won the race — we lost, return false.
       return false;
     }
   }

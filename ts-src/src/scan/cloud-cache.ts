@@ -21,6 +21,9 @@ import { seedMetadataFromDesktop } from '../metadata/desktop-data.js';
 
 export const STATE_CLOUD_VERSION = 'last_cloud_version';
 export const STATE_SCAN_TIME = 'last_scan_time';
+export const STATE_LAST_FULL_SCAN = 'last_full_scan_time';
+
+const FULL_SCAN_INTERVAL_SECONDS = 24 * 3600;
 
 export interface CloudCacheDeps {
   api: {
@@ -97,7 +100,9 @@ export function saveScanVersion(
       }
     }
     meta.setState(STATE_CLOUD_VERSION, String(maxVersion));
-    meta.setState(STATE_SCAN_TIME, String(Math.floor(Date.now() / 1000)));
+    const now = String(Math.floor(Date.now() / 1000));
+    meta.setState(STATE_SCAN_TIME, now);
+    meta.setState(STATE_LAST_FULL_SCAN, now);
   });
   meta.save();
 }
@@ -180,6 +185,13 @@ export async function tryCachedCloudScan(
   deps: CloudCacheDeps,
 ): Promise<Map<RelPath, CloudFile> | null> {
   const { api, meta } = deps;
+
+  const lastFullScan = meta.getStateInt(STATE_LAST_FULL_SCAN);
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  if (lastFullScan > 0 && nowEpoch - lastFullScan >= FULL_SCAN_INTERVAL_SECONDS) {
+    return null;
+  }
+
   let cachedVersion = meta.getStateInt(STATE_CLOUD_VERSION);
   if (cachedVersion <= 0) {
     if (!deps.skipDesktopSeed && trySeedFromDesktop(meta)) {

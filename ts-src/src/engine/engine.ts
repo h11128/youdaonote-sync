@@ -1,10 +1,9 @@
-import { dirname } from 'node:path';
 import { asDirId, type ContentHash, type DirId, type RelPath } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { FileState } from '../types/state.js';
 import { YoudaoNoteApi } from '../api/client.js';
 import { MetadataStore } from '../metadata/store.js';
-import { heal } from '../metadata/health.js';
+import { healPreScan, healPostHash } from '../metadata/health.js';
 import { scanCloud } from '../scan/cloud.js';
 import { scanLocalParallel } from '../scan/local.js';
 import { classifyAll } from '../classify/classify.js';
@@ -12,13 +11,8 @@ import { detectMoves } from '../classify/moves.js';
 import { calibrateMetadata } from '../classify/calibrate.js';
 import { emptyStats } from '../execute/executor.js';
 import type { SyncStats } from '../execute/executor.js';
-import {
-  diagnoseDryrun,
-  dryRunStats,
-  filterCloudSnap,
-  filterByDirection,
-  warmupHashCache,
-} from './helpers.js';
+import { filterCloudSnap, filterByDirection } from './helpers.js';
+import { diagnoseDryrun, dryRunStats } from './helpers-dryrun.js';
 import { refineAllConflicts } from './refine.js';
 import { computeContentHashFromBytes, computeHashesConcurrent, initXxhash } from '../algo/hash.js';
 import type { HashFileEntry } from '../algo/hash.js';
@@ -96,22 +90,38 @@ export class SyncEngine {
 
   private async syncInner(): Promise<SyncResult> {
     const { localDir, dryRun } = this.config;
-    if (!dryRun) heal(this.meta, localDir, true);
+    if (!dryRun) {
+      this.p?.beginPhase('healPreScan');
+      healPreScan(this.meta, localDir, true);
+      this.p?.endPhase();
+    }
 
     const { cloudSnap, localSnap, localHashes, rootDirId, didFullScan } =
       await this.obtainSnapshots(localDir);
+
+    if (!dryRun) {
+      this.p?.beginPhase('healPostHash');
+      healPostHash(this.meta, localDir, localHashes, true);
+      this.p?.endPhase();
+    }
     const classified = await this.classifyAndRefine(cloudSnap, localSnap, localHashes);
     const direction = this.config.direction ?? 'both';
     if (direction !== 'both') filterByDirection(classified, direction);
+    const deleteOverrides = this.config.propagateDeletes
+      ? collectDeleteOverrides(classified)
+      : undefined;
 
     if (dryRun) {
-      const configDir = dirname(this.config.metadataPath);
-      diagnoseDryrun(classified, this.meta, configDir);
-      return { stats: dryRunStats(classified), classified };
+      diagnoseDryrun(classified, this.meta, {
+        reportBaseDir: localDir,
+        localHashes,
+        deleteOverrides,
+      });
+      return { stats: dryRunStats(classified, deleteOverrides), classified };
     }
 
     const stats = await runExecuteSync(
-      { classified, cloudSnap, localSnap, rootDirId, direction },
+      { classified, cloudSnap, localSnap, rootDirId, direction, deleteOverrides },
       this.config,
       this.api,
       this.meta,
@@ -157,6 +167,7 @@ export class SyncEngine {
       api: this.api,
       meta: this.meta,
       skipDesktopSeed: !!this.config.api,
+      cacheTtlSeconds: this.config.dryRun ? 0 : undefined,
     });
     let cloudSnap: Map<RelPath, CloudFile>;
     let didFullScan = false;
@@ -216,10 +227,6 @@ export class SyncEngine {
     }
     const hashResult = await computeHashesConcurrent(toHash, localHashes, { cache: this.meta });
     this.p?.endPhase(`${hashResult.cacheHits} cached, ${hashResult.computed} computed`);
-
-    this.p?.beginPhase('warmupHashCache');
-    await warmupHashCache(cloudSnap, localSnap, localHashes);
-    this.p?.endPhase(`${localHashes.size} total hashes`);
 
     return { localSnap, localHashes };
   }
@@ -307,4 +314,19 @@ export class SyncEngine {
   close(): void {
     this.meta.close();
   }
+}
+
+/**
+ * Build a set of paths that should be treated as delete actions.
+ * Used when propagateDeletes is enabled.
+ */
+export function collectDeleteOverrides(
+  classified: ReadonlyMap<RelPath, FileState>,
+): Map<RelPath, 'deleteCloud' | 'deleteLocal'> {
+  const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>();
+  for (const [path, state] of classified) {
+    if (state.kind === 'localDeleted') overrides.set(path, 'deleteCloud');
+    else if (state.kind === 'cloudDeleted') overrides.set(path, 'deleteLocal');
+  }
+  return overrides;
 }

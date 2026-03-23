@@ -58,4 +58,17 @@ describe('createCli', () => {
     const opts = watch?.options.map((o) => o.long);
     expect(opts).toContain('--interval');
   });
+
+  it('sync command has --propagate-deletes option', () => {
+    const program = createCli();
+    const sync = program.commands.find((c) => c.name() === 'sync');
+    const opts = sync?.options.map((o) => o.long);
+    expect(opts).toContain('--propagate-deletes');
+  });
+
+  it('registers migrate command', () => {
+    const program = createCli();
+    const names = program.commands.map((c) => c.name());
+    expect(names).toContain('migrate');
+  });
 });
