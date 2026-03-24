@@ -10,14 +10,97 @@ function generateId(): string {
   return prefix + '-' + ts;
 }
 
-function createTextNode(text: string, attrs?: JsonNode[]): JsonNode {
+// Inline Markdown tokens in priority order:
+// 1. bold+italic (***text***), 2. bold (**text**), 3. italic (*text*),
+// 4. links [text](url)
+// Inline code is intentionally NOT matched — Youdao Note JSON has no inline code
+// attribute, so backticks are preserved as literal text for roundtrip fidelity.
+const INLINE_RE = /(\*{3})(.+?)\1|(\*{2})(.+?)\3|(\*)(.+?)\5|\[([^\]]+)\]\(([^)]+)\)/g;
+
+interface InlineToken {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  href?: string;
+}
+
+function tokenizeInline(text: string): InlineToken[] {
+  const tokens: InlineToken[] = [];
+  let lastIndex = 0;
+
+  for (const m of text.matchAll(INLINE_RE)) {
+    const start = m.index;
+    if (start > lastIndex) {
+      tokens.push({ text: text.slice(lastIndex, start) });
+    }
+
+    if (m[1] === '***' && m[2]) {
+      tokens.push({ text: m[2], bold: true, italic: true });
+    } else if (m[3] === '**' && m[4]) {
+      tokens.push({ text: m[4], bold: true });
+    } else if (m[5] === '*' && m[6]) {
+      tokens.push({ text: m[6], italic: true });
+    } else if (m[7] && m[8]) {
+      tokens.push({ text: m[7], href: m[8] });
+    }
+
+    lastIndex = start + m[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    tokens.push({ text: text.slice(lastIndex) });
+  }
+
+  return tokens;
+}
+
+function createSpanNode(text: string, attrs?: JsonNode[]): JsonNode {
   const node: JsonNode = { '8': text };
-  if (attrs) node['9'] = attrs;
+  if (attrs?.length) node['9'] = attrs;
   return node;
 }
 
-function makeTextLine(text: string): JsonNode {
-  return { '2': '2', '3': generateId(), '7': [{ '8': text }] };
+function buildSpanAttrs(token: InlineToken): JsonNode[] | undefined {
+  const attrs: JsonNode[] = [];
+  if (token.bold) attrs.push({ '2': 'b' });
+  if (token.italic) attrs.push({ '2': 'i' });
+  return attrs.length ? attrs : undefined;
+}
+
+/**
+ * Parse inline Markdown in text and return an array of children for a text line.
+ * Links become `"6":"li"` child nodes; bold/italic become span attributes.
+ * Plain text and inline code become simple spans.
+ */
+function parseInlineToChildren(text: string): JsonNode[] {
+  const tokens = tokenizeInline(text);
+  if (!tokens.length) return [makeSpanLine([createSpanNode(text)])];
+
+  const children: JsonNode[] = [];
+  let pendingSpans: JsonNode[] = [];
+
+  const flushSpans = (): void => {
+    if (pendingSpans.length) {
+      children.push(makeSpanLine(pendingSpans));
+      pendingSpans = [];
+    }
+  };
+
+  for (const token of tokens) {
+    if (token.href) {
+      flushSpans();
+      children.push(createLinkChild(token.text, token.href));
+    } else {
+      pendingSpans.push(createSpanNode(token.text, buildSpanAttrs(token)));
+    }
+  }
+
+  flushSpans();
+  return children;
+}
+
+function makeSpanLine(spans: JsonNode[]): JsonNode {
+  return { '2': '2', '3': generateId(), '7': spans };
 }
 
 function createElement(typeCode?: string, attrs?: JsonNode, children?: JsonNode[]): JsonNode {
@@ -28,31 +111,36 @@ function createElement(typeCode?: string, attrs?: JsonNode, children?: JsonNode[
   return elem;
 }
 
+function createLinkChild(text: string, url: string): JsonNode {
+  const spanLine = makeSpanLine([createSpanNode(text)]);
+  return { '3': generateId(), '4': { hf: url }, '5': [spanLine], '6': 'li' };
+}
+
 function createParagraph(text: string): JsonNode {
-  const node = createTextNode(text);
-  return createElement(undefined, undefined, [{ '2': '2', '3': generateId(), '7': [node] }]);
+  return createElement(undefined, undefined, parseInlineToChildren(text));
 }
 
 function createHeading(text: string, level: number): JsonNode {
-  return createElement('h', { l: `h${level}` }, [makeTextLine(text)]);
+  return createElement('h', { l: `h${level}` }, parseInlineToChildren(text));
 }
 
 function createListItem(text: string, ordered = false, level = 1): JsonNode {
   const lt = ordered ? 'ordered' : 'unordered';
-  return createElement('l', { lt, ll: level }, [makeTextLine(text)]);
+  return createElement('l', { lt, ll: level }, parseInlineToChildren(text));
 }
 
 function createCodeBlock(code: string, language = ''): JsonNode {
-  const lines = code
-    .split('\n')
-    .map((ln) => createElement(undefined, undefined, [makeTextLine(ln)]));
+  const lines = code.split('\n').map((ln) => {
+    const spans = [createSpanNode(ln)];
+    return createElement(undefined, undefined, [makeSpanLine(spans)]);
+  });
   return createElement('cd', { la: language }, lines);
 }
 
 function createQuote(text: string): JsonNode {
-  const lines = text
-    .split('\n')
-    .map((ln) => createElement(undefined, undefined, [makeTextLine(ln)]));
+  const lines = text.split('\n').map((ln) => {
+    return createElement(undefined, undefined, parseInlineToChildren(ln));
+  });
   return createElement('q', undefined, lines);
 }
 
@@ -86,11 +174,6 @@ function tryOrderedList(line: string): JsonNode | null {
   return createListItem(text, true, level);
 }
 
-function tryQuote(line: string): JsonNode | null {
-  const m = /^>\s*(.*)$/.exec(line);
-  return m?.[1] != null ? createQuote(m[1]) : null;
-}
-
 function tryImage(line: string): JsonNode | null {
   const m = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(line);
   return m?.[2] != null ? createImage(m[2]) : null;
@@ -104,7 +187,6 @@ function parseMarkdownLine(line: string): JsonNode {
     tryHeading(trimmed) ??
     tryUnorderedList(trimmed) ??
     tryOrderedList(trimmed) ??
-    tryQuote(trimmed) ??
     tryImage(trimmed) ??
     (/^[-*_]{3,}$/.test(trimmed) ? createParagraph('---') : createParagraph(trimmed))
   );
