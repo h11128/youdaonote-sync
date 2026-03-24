@@ -10,6 +10,7 @@
  *   rebuild     - Rebuild metadata from cloud + local scan
  *   duplicates  - Scan for duplicate files by content hash
  *   check-content - Verify .md files contain Markdown (not raw JSON/XML)
+ *   fix-hashes    - Recompute content hashes and fix stale metadata
  */
 
 import { basename, extname, dirname, join } from 'node:path';
@@ -22,6 +23,7 @@ import { YoudaoNoteApi } from '../api/client.js';
 
 export { cmdCache, cmdRebuild, cmdDuplicates } from './diagnose-commands.js';
 export { cmdCheckContent } from './diagnose-check-content.js';
+export { cmdFixHashes } from './diagnose-fix-hashes.js';
 
 export interface DiagnoseConfig {
   cookiesPath: string;

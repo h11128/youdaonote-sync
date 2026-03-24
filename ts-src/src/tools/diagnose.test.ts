@@ -11,6 +11,7 @@ import {
   cmdDecision,
   cmdSummary,
   cmdCheckContent,
+  cmdFixHashes,
 } from './diagnose.js';
 import { MetadataStore } from '../metadata/store.js';
 import { asFileId, asEpochSeconds, asRelPath, type RelPath } from '../types/common.js';
@@ -393,5 +394,113 @@ describe('cmdCheckContent', () => {
     const logSpy = vi.spyOn(console, 'log');
     cmdCheckContent(tmpDir);
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('All .md files contain valid'));
+  });
+});
+
+function setupFixHashesCtx() {
+  const ld = mkdtempSync(join(tmpdir(), 'fix-hashes-local-'));
+  const md = mkdtempSync(join(tmpdir(), 'fix-hashes-meta-'));
+  return { localDir: ld, metaPath: join(md, 'sync_metadata.db') };
+}
+
+function seedMeta(
+  metaPath: string,
+  relPath: string,
+  overrides: { fileId?: string; contentHash?: string; lastSyncAt?: number } = {},
+) {
+  const meta = new MetadataStore(metaPath);
+  meta.setFileInfo(asRelPath(relPath), {
+    fileId: asFileId(overrides.fileId ?? 'fid'),
+    cloudMtime: asEpochSeconds(100),
+    localMtime: asEpochSeconds(200),
+    contentHash: (overrides.contentHash ?? 'stale') as never,
+    lastSyncAt: asEpochSeconds(overrides.lastSyncAt ?? 300),
+  });
+  meta.close();
+}
+
+describe('cmdFixHashes', () => {
+  let localDir: string;
+  let metaPath: string;
+
+  beforeEach(() => {
+    ({ localDir, metaPath } = setupFixHashesCtx());
+  });
+
+  afterEach(() => {
+    rmSync(localDir, { recursive: true, force: true });
+    rmSync(metaPath, { force: true });
+  });
+
+  it('fixes stale content hash without touching lastSyncAt', async () => {
+    writeFileSync(join(localDir, 'doc.md'), 'updated content');
+    seedMeta(metaPath, 'doc.md', { fileId: 'f1', contentHash: 'stale-hash-value' });
+
+    const result = await cmdFixHashes(metaPath, localDir);
+    expect(result.mismatched).toBe(1);
+    expect(result.fixed).toBe(1);
+
+    const meta = new MetadataStore(metaPath);
+    const record = meta.getFileInfo(asRelPath('doc.md'));
+    expect(record?.contentHash).not.toBe('stale-hash-value');
+    expect(record?.lastSyncAt).toBe(300);
+    expect(record?.localMtime).toBe(200);
+    meta.close();
+  });
+
+  it('skips files with correct hash', async () => {
+    writeFileSync(join(localDir, 'ok.md'), 'same content');
+
+    const { initXxhash, computeContentHashFromBytes } = await import('../algo/hash.js');
+    await initXxhash();
+    const correctHash = computeContentHashFromBytes(
+      new Uint8Array(Buffer.from('same content')),
+      join(localDir, 'ok.md'),
+    );
+
+    seedMeta(metaPath, 'ok.md', { fileId: 'f2', contentHash: correctHash ?? 'fallback' });
+
+    const result = await cmdFixHashes(metaPath, localDir);
+    expect(result.mismatched).toBe(0);
+    expect(result.fixed).toBe(0);
+  });
+
+  it('dry-run reports but does not write', async () => {
+    writeFileSync(join(localDir, 'doc.md'), 'new content');
+    seedMeta(metaPath, 'doc.md', { fileId: 'f3', contentHash: 'old-hash' });
+
+    const result = await cmdFixHashes(metaPath, localDir, { dryRun: true });
+    expect(result.mismatched).toBe(1);
+    expect(result.fixed).toBe(0);
+
+    const meta = new MetadataStore(metaPath);
+    expect(meta.getFileInfo(asRelPath('doc.md'))?.contentHash).toBe('old-hash');
+    meta.close();
+  });
+
+  it('respects --filter prefix', async () => {
+    mkdirSync(join(localDir, 'a'), { recursive: true });
+    mkdirSync(join(localDir, 'b'), { recursive: true });
+    writeFileSync(join(localDir, 'a', 'f1.md'), 'aaa');
+    writeFileSync(join(localDir, 'b', 'f2.md'), 'bbb');
+
+    const meta = new MetadataStore(metaPath);
+    meta.setFileInfo(asRelPath('a/f1.md'), {
+      fileId: asFileId('fa'),
+      cloudMtime: asEpochSeconds(100),
+      localMtime: asEpochSeconds(200),
+      contentHash: 'wrong' as never,
+    });
+    meta.setFileInfo(asRelPath('b/f2.md'), {
+      fileId: asFileId('fb'),
+      cloudMtime: asEpochSeconds(100),
+      localMtime: asEpochSeconds(200),
+      contentHash: 'wrong' as never,
+    });
+    meta.close();
+
+    const result = await cmdFixHashes(metaPath, localDir, { filter: 'a/' });
+    expect(result.scanned).toBe(1);
+    expect(result.fixed).toBe(1);
   });
 });

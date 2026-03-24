@@ -302,6 +302,18 @@ function registerDiagnoseCacheCommands(diagnose: Command): void {
         cmdCheckContent(opts.dir ?? cfg.localDir);
       });
     });
+
+  diagnose
+    .command('fix-hashes')
+    .description('Recompute content hashes from local files and fix stale metadata')
+    .option('--dry-run', 'Preview changes without writing')
+    .option('--filter <prefix>', 'Only process paths starting with this prefix')
+    .action((opts: { dryRun?: boolean; filter?: string }) => {
+      void import('../tools/diagnose.js').then(({ cmdFixHashes }) => {
+        const cfg = diagnoseCfg();
+        void cmdFixHashes(cfg.metadataPath, cfg.localDir, opts);
+      });
+    });
 }
 
 function diagnoseCfg(): { cookiesPath: string; metadataPath: string; localDir: string } {
