@@ -10,6 +10,7 @@ import {
   cmdPath,
   cmdDecision,
   cmdSummary,
+  cmdCheckContent,
 } from './diagnose.js';
 import { MetadataStore } from '../metadata/store.js';
 import { asFileId, asEpochSeconds, asRelPath, type RelPath } from '../types/common.js';
@@ -342,5 +343,55 @@ describe('cmdSummary', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Dry-run Summary'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('TOTAL'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Non-skip items (1)'));
+  });
+});
+
+describe('cmdCheckContent', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'check-content-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reports no anomalies when all .md files are valid markdown', () => {
+    writeFileSync(join(tmpDir, 'good.md'), '# Hello\n\nworld');
+    mkdirSync(join(tmpDir, 'sub'));
+    writeFileSync(join(tmpDir, 'sub', 'also-good.md'), '## Sub heading');
+
+    const logSpy = vi.spyOn(console, 'log');
+    cmdCheckContent(tmpDir);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('All .md files contain valid'));
+  });
+
+  it('detects .md files containing raw JSON', () => {
+    writeFileSync(join(tmpDir, 'good.md'), '# Normal');
+    writeFileSync(join(tmpDir, 'bad.md'), '{"2":"1","5":[]}');
+
+    const logSpy = vi.spyOn(console, 'log');
+    cmdCheckContent(tmpDir);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('1 file(s)'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('JSON'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('bad.md'));
+  });
+
+  it('detects .md files containing raw XML', () => {
+    writeFileSync(join(tmpDir, 'note.md'), '<?xml version="1.0"?><note/>');
+
+    const logSpy = vi.spyOn(console, 'log');
+    cmdCheckContent(tmpDir);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('XML'));
+  });
+
+  it('ignores non-.md files', () => {
+    writeFileSync(join(tmpDir, 'data.json'), '{"key":"value"}');
+    writeFileSync(join(tmpDir, 'good.md'), '# Title');
+
+    const logSpy = vi.spyOn(console, 'log');
+    cmdCheckContent(tmpDir);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('All .md files contain valid'));
   });
 });

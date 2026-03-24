@@ -1,5 +1,5 @@
 /**
- * Additional diagnose subcommands: cache, rebuild, duplicates.
+ * Additional diagnose subcommands: cache, rebuild, duplicates, check-content.
  * Extracted to satisfy max-lines and complexity limits.
  */
 

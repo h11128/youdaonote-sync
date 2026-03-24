@@ -408,3 +408,76 @@ syncInner:
 - [x] engine.ts: diagnoseDryrun 传 localDir
 - [x] cli.ts: sync 输出耗时
 - [x] 验证：dry-run 报告保存到 localDir/.local-reports/，sync 输出耗时 ✓
+
+## Appendix A: detectFileType Bug — Post-mortem (2026-03-23)
+
+### 现象
+
+3 月 8 日至 22 日的 15 篇日记下载到本地后是 raw JSON 文本（有道笔记内部格式），而非可读 Markdown。文件以 `.md` 扩展名保存，在编辑器中打开是一堆 `{"2":"1","3":"Ju9C-...` 的 JSON 结构。
+
+### 根因
+
+`detectFileType(data, ext)` 的判断顺序错误：
+
+```typescript
+// BUG: 扩展名优先于内容检测
+if (ext === '.md') return 'markdown';  // ← 直接返回，跳过内容检测
+const prefix = ...;
+if (prefix.startsWith('{"')) return 'json';  // ← 永远到不了
+```
+
+有道笔记 API 对 `domain=0`（NOTE 类型）的笔记返回 JSON 格式数据，即使文件名以 `.md` 结尾。`detectFileType` 看到 `.md` 就短路返回 `'markdown'`，后续 `convertToMarkdown` 对 `'markdown'` 类型只做 `Buffer.toString('utf-8')`——原封不动写入磁盘。
+
+### 修复
+
+内容检测提升到扩展名之前：先看字节前缀（`{"` → json, `<?xml` → xml, `<!DOCTYPE html` → html），都不匹配再按扩展名回退。
+
+### 为什么会写出这个 bug
+
+**1. 对有道笔记 API 的隐含假设没有验证**
+
+写 `detectFileType` 时，隐含假设是：`.md` 文件 = API 返回纯文本 Markdown。这个假设来自对"文件扩展名反映内容格式"的日常直觉，没有用实际 API 响应验证过。有道笔记的 NOTE domain 笔记不管文件名叫什么，API 返回的是内部存储格式（XML 或 JSON），需要转换后才是 Markdown。
+
+根本问题：**把外部系统的行为当作了常识，而不是需要验证的假设**。
+
+**2. Python 版本的同一个 bug 被继承了**
+
+Python 版 `_download_and_detect` 也有完全相同的逻辑：
+
+```python
+if youdao_file_suffix == MARKDOWN_SUFFIX:
+    return FileType.MARKDOWN, None  # 同样的短路
+```
+
+TS 重写时"忠实移植"了这个行为。移植本身没有错误——问题是移植时没有带着怀疑的眼光审视被移植的逻辑。当源代码本身就有 bug 时，"精确移植"等于"精确复制 bug"。
+
+**3. 测试只覆盖了已知路径**
+
+`detectFileType` 的测试用例：
+- `.md` 扩展名 + 空数据 → `'markdown'` ✓
+- `.note` 扩展名 + JSON 数据 → `'json'` ✓
+
+缺失的测试：`.md` 扩展名 + JSON 数据 → 应该是 `'json'`。测试设计时的思维模型和代码实现的思维模型完全一致——都假设 `.md` 扩展名等于 Markdown 内容。**当测试的假设和代码的假设相同时，测试无法发现 bug**。
+
+**4. 3 月 7 日之前侥幸没有触发**
+
+3 月 7 日的日记也是 `domain=0`，但 API 返回的恰好是 Markdown 格式（或者说该笔记本身就是纯 Markdown 存储的）。从 3 月 8 日开始，有道笔记后端对新创建的 NOTE 笔记切换到了 JSON 存储格式。这意味着这个 bug 从代码写出来那天就存在，只是直到外部条件变化（后端格式切换）才触发。
+
+这是一类典型的潜伏 bug：**代码逻辑有缺陷，但恰好被外部环境掩盖，直到环境变化时才暴露**。
+
+**5. 六轮 code audit 都没发现**
+
+项目经历了六轮正式 audit（详见 git log），`detectFileType` 从未被标记为问题。原因：
+- 函数只有 6 行，看起来"显然正确"
+- 审查者也共享同一个隐含假设
+- 没有用真实 API 数据做端到端验证（所有审查都是静态分析 + 单元测试）
+
+### 教训
+
+| # | 教训 | 可操作化 |
+|---|------|----------|
+| 1 | 外部 API 的行为是需要验证的假设，不是常识 | 对每个 API 调用，记录"预期响应格式"并用至少一个真实样本验证 |
+| 2 | 移植时要审视源代码的假设，不仅仅是行为 | 移植 checklist 应包含"列出被移植函数的隐含假设" |
+| 3 | 测试要包含"跨域"组合（扩展名 × 内容类型） | 对有多个输入维度的函数，写 cross-product 测试 |
+| 4 | 端到端验证不可替代 | 每次同步功能变更后，对至少 3 个真实文件做 download → verify content 的 e2e check |
+| 5 | "从没出过问题"不等于"没有 bug" | 对依赖外部系统行为的代码，定期用真实数据回归 |

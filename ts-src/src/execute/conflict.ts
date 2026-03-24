@@ -114,6 +114,7 @@ async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
     parentId: cloudFile.parentId,
     domain: cloudFile.domain,
     contentHash: result.contentHash,
+    cloudContentHash: result.rawContentHash,
     action: 'conflict-download',
     direction: 'pull',
   });

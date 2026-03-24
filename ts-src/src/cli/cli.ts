@@ -291,6 +291,17 @@ function registerDiagnoseCacheCommands(diagnose: Command): void {
         cmdDuplicates(opts.dir ?? cfg.localDir);
       });
     });
+
+  diagnose
+    .command('check-content')
+    .description('Verify .md files contain Markdown, not raw JSON/XML/HTML')
+    .option('--dir <path>', 'Directory to scan (default: config local_dir)')
+    .action((opts: { dir?: string }) => {
+      void import('../tools/diagnose.js').then(({ cmdCheckContent }) => {
+        const cfg = diagnoseCfg();
+        cmdCheckContent(opts.dir ?? cfg.localDir);
+      });
+    });
 }
 
 function diagnoseCfg(): { cookiesPath: string; metadataPath: string; localDir: string } {
