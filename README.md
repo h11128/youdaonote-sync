@@ -139,6 +139,35 @@ npx youdaonote-sync diagnose decision --target "目录/文件名.md"
 
 # 重置扫描缓存（强制下次全量扫描）
 npx youdaonote-sync diagnose reset-cache
+
+# 强制指定文件在下次 sync 时重传（只改 metadata，不直接上传）
+npx youdaonote-sync diagnose force-reupload --target "目录/文件名.md"
+
+# 检查云端 NOTE 表格结构（native-table / pipe-text）
+npx youdaonote-sync diagnose check-note-tables --target "目录/文件名.md"
+
+# 一键验收门禁：目标文件必须是 native-table，且 push dry-run 无待上传
+npx youdaonote-sync diagnose verify-note --target "目录/文件名.md"
+
+# 批量扫描并标记仍是 pipe-text 的 NOTE 表格文件（支持 dry-run）
+npx youdaonote-sync diagnose migrate-note-tables --dry-run --filter "内在世界/日记/2026/"
+npx youdaonote-sync diagnose migrate-note-tables --filter "内在世界/日记/2026/" --limit 20
+```
+
+### 7. 表格修复发布门禁（必跑）
+
+当改动 `md-to-note` / `json-to-md` 表格逻辑后，发布前至少跑：
+
+```bash
+# 1) 转换器测试
+cd ts-src
+npm test -- src/convert/md-to-note.test.ts src/convert/json-to-md.test.ts
+
+# 2) 构建
+npm run build
+
+# 3) 目标文件结构验收（native-table + push dry-run clean）
+npx youdaonote-sync diagnose verify-note --target "目录/文件名.md"
 ```
 
 ## 项目结构

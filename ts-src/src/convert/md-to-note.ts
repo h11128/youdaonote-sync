@@ -144,6 +144,34 @@ function createQuote(text: string): JsonNode {
   return createElement('q', undefined, lines);
 }
 
+function createTableCell(text: string): JsonNode {
+  const spanLine = makeSpanLine([createSpanNode(text.trim())]);
+  const paragraph = createElement(undefined, undefined, [spanLine]);
+  return createElement('tc', undefined, [paragraph]);
+}
+
+function createTableRow(cells: string[]): JsonNode {
+  const cellNodes = cells.map((c) => createTableCell(c));
+  return createElement('tr', undefined, cellNodes);
+}
+
+function createTable(rows: string[][]): JsonNode {
+  const colCount = Math.max(1, rows[0]?.length ?? 1);
+  const normalizedRows = rows.map((r) => {
+    const fixed = r.slice(0, colCount);
+    while (fixed.length < colCount) fixed.push('');
+    return fixed;
+  });
+  const rowNodes = normalizedRows.map((r) => createTableRow(r));
+  const attrs = {
+    version: 1,
+    // Native notes include these geometry arrays; desktop rendering expects them.
+    cw: Array.from({ length: colCount }, () => 120),
+    rh: Array.from({ length: rowNodes.length }, () => 40),
+  };
+  return createElement('t', attrs, rowNodes);
+}
+
 function createImage(url: string): JsonNode {
   return createElement('im', { u: url });
 }
@@ -156,13 +184,19 @@ function tryHeading(line: string): JsonNode | null {
   return createHeading(text, hashes.length);
 }
 
+function indentLevel(indent: string): number {
+  if (!indent) return 1;
+  const tabCount = (indent.match(/\t/g) ?? []).length;
+  const spaceCount = indent.length - tabCount;
+  return Math.floor(spaceCount / 2) + tabCount + 1;
+}
+
 function tryUnorderedList(line: string): JsonNode | null {
   const m = /^(\s*)[-*+]\s+(.+)$/.exec(line);
   const indent = m?.[1];
   const text = m?.[2];
   if (indent === undefined || !text) return null;
-  const level = indent.length ? Math.floor(indent.length / 2) + 1 : 1;
-  return createListItem(text, false, level);
+  return createListItem(text, false, indentLevel(indent));
 }
 
 function tryOrderedList(line: string): JsonNode | null {
@@ -170,8 +204,7 @@ function tryOrderedList(line: string): JsonNode | null {
   const indent = m?.[1];
   const text = m?.[2];
   if (indent === undefined || !text) return null;
-  const level = indent.length ? Math.floor(indent.length / 2) + 1 : 1;
-  return createListItem(text, true, level);
+  return createListItem(text, true, indentLevel(indent));
 }
 
 function tryImage(line: string): JsonNode | null {
@@ -221,6 +254,49 @@ function collectQuoteLines(
   return { quoteLines, nextI: i };
 }
 
+function parseTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((c) => c.trim());
+}
+
+function isTableSeparator(line: string): boolean {
+  return /^\|[\s\-:|]+\|$/.test(line);
+}
+
+function collectTableRows(
+  lines: string[],
+  start: number,
+): { tableRows: string[][]; nextI: number } {
+  const tableRows: string[][] = [];
+  const header = lines[start]?.trim();
+  const separator = lines[start + 1]?.trim();
+  if (
+    !header ||
+    !separator ||
+    !header.startsWith('|') ||
+    !header.endsWith('|') ||
+    !isTableSeparator(separator)
+  ) {
+    return { tableRows, nextI: start };
+  }
+
+  tableRows.push(parseTableRow(header));
+  let i = start + 2;
+  while (i < lines.length) {
+    const cur = lines[i]?.trim();
+    if (!cur?.startsWith('|') || !cur.endsWith('|')) break;
+    if (!isTableSeparator(cur)) {
+      tableRows.push(parseTableRow(cur));
+    }
+    i++;
+  }
+  return { tableRows, nextI: i };
+}
+
 export function markdownToNoteJson(mdContent: string): string {
   const lines = mdContent.split('\n');
   const contentList: JsonNode[] = [];
@@ -248,6 +324,16 @@ export function markdownToNoteJson(mdContent: string): string {
       contentList.push(createQuote(quoteLines.join('\n')));
       i = nextI;
       continue;
+    }
+
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith('|') && trimmedLine.endsWith('|')) {
+      const { tableRows, nextI } = collectTableRows(lines, i);
+      if (tableRows.length) {
+        contentList.push(createTable(tableRows));
+        i = nextI;
+        continue;
+      }
     }
 
     contentList.push(parseMarkdownLine(line));

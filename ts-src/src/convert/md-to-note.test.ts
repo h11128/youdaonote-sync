@@ -72,6 +72,19 @@ describe('markdownToNoteJson — structure', () => {
     expect(img).toBeDefined();
     expect((img!['4'] as N).u).toBe('https://img.com/pic.png');
   });
+
+  it('handles tables', () => {
+    const all = blocks('| A | B |\n| -- | -- |\n| 1 | 2 |');
+    const table = all.find((e) => e['6'] === 't');
+    expect(table).toBeDefined();
+    const rows = (table!['5'] as N[] | undefined) ?? [];
+    expect(rows).toHaveLength(2);
+  });
+
+  it('skips blank lines (no empty paragraphs)', () => {
+    const all = blocks('Line one\n\nLine two');
+    expect(all).toHaveLength(2);
+  });
 });
 
 describe('markdownToNoteJson — inline formatting', () => {
@@ -189,6 +202,45 @@ describe('roundtrip: md -> note JSON -> md', () => {
     { name: 'ordered list', md: '1. item', expected: '1. item' },
     { name: 'image', md: '![](https://img.com/a.png)', expected: '![](https://img.com/a.png)' },
     { name: 'inline code', md: 'use `foo()` here', expected: 'use `foo()` here' },
+    {
+      name: 'heading with link',
+      md: '## [Title](https://example.com)',
+      expected: '## [Title](https://example.com)',
+    },
+    {
+      name: 'heading bold+link',
+      md: '## **See** [here](https://x.com)',
+      expected: '## **See** [here](https://x.com)',
+    },
+    { name: 'list with bold', md: '- **important** item', expected: '- **important** item' },
+    {
+      name: 'list with link',
+      md: '- see [docs](https://d.com) here',
+      expected: '- see [docs](https://d.com) here',
+    },
+    { name: 'quote with bold', md: '> **quoted bold**', expected: '> **quoted bold**' },
+    {
+      name: 'paragraph with link',
+      md: 'See [docs](https://d.com) for details',
+      expected: 'See [docs](https://d.com) for details',
+    },
+    {
+      name: 'multi-item list',
+      md: '- item 1\n- item 2\n- item 3',
+      expected: '- item 1\n- item 2\n- item 3',
+    },
+    { name: 'nested list', md: '- level 1\n  - level 2', expected: '- level 1\n  - level 2' },
+    {
+      name: 'table',
+      md: '| A | B |\n| -- | -- |\n| 1 | 2 |',
+      expected: '| A | B |\n| -- | -- |\n| 1 | 2 |',
+    },
+    {
+      name: '3-row table',
+      md: '| H1 | H2 |\n| -- | -- |\n| A | B |\n| C | D |',
+      expected: '| H1 | H2 |\n| -- | -- |\n| A | B |\n| C | D |',
+    },
+    { name: 'HR', md: '---', expected: '---' },
   ];
 
   for (const { name, md, expected } of cases) {
