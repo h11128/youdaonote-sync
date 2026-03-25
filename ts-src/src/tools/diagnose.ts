@@ -24,6 +24,7 @@ import { YoudaoNoteApi } from '../api/client.js';
 export { cmdCache, cmdRebuild, cmdDuplicates } from './diagnose-commands.js';
 export { cmdForceReupload, cmdCheckNoteTables, cmdVerifyNote } from './diagnose-note-tables.js';
 export { cmdMigrateNoteTables } from './diagnose-note-table-migrate.js';
+export { cmdFetchNote, cmdCompareNote, cmdCompareCloudLocal } from './diagnose-note-inspect.js';
 export { cmdCheckContent } from './diagnose-check-content.js';
 export { cmdFixHashes } from './diagnose-fix-hashes.js';
 export { cmdRoundtripCheck } from './diagnose-roundtrip.js';

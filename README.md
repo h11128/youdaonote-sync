@@ -152,6 +152,16 @@ npx youdaonote-sync diagnose verify-note --target "目录/文件名.md"
 # 批量扫描并标记仍是 pipe-text 的 NOTE 表格文件（支持 dry-run）
 npx youdaonote-sync diagnose migrate-note-tables --dry-run --filter "内在世界/日记/2026/"
 npx youdaonote-sync diagnose migrate-note-tables --filter "内在世界/日记/2026/" --limit 20
+
+# 拉取指定 NOTE 云端内容（可输出 raw 或 pretty JSON）
+npx youdaonote-sync diagnose fetch-note --target "目录/文件名.md"
+npx youdaonote-sync diagnose fetch-note --target "目录/文件名.md" --output "tmp/note.json"
+
+# 对比两个云端 NOTE（table/attrs/raw 三种模式）
+npx youdaonote-sync diagnose compare-note --a "目录/A.md" --b "目录/B.md" --focus table
+
+# 对比本地 markdown 与云端下载后的 markdown（冲突定位）
+npx youdaonote-sync diagnose compare-cloud-local --target "目录/文件名.md" --max-diffs 10
 ```
 
 ### 7. 表格修复发布门禁（必跑）
@@ -181,6 +191,7 @@ npx youdaonote-sync diagnose verify-note --target "目录/文件名.md"
   - `.cursor/rules/work-context.mdc`（当前默认验收入口与反模式提醒）
 - PR 模板：`.github/PULL_REQUEST_TEMPLATE.md`
   - 强制记录 `Shape Evidence` / `Dry-run Evidence` / `Desktop Spot Check`
+- 临时脚本迁移记录：`docs/archive/temporary-scripts-migration-2026-03.md`
 
 ## 项目结构
 

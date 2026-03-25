@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { join } from 'node:path';
+import { addInspectDiagnoseCommands } from './diagnose-inspect-cli.js';
 
 interface DiagnoseConfig {
   cookiesPath: string;
@@ -278,4 +279,5 @@ export function registerDiagnoseCommands(
   addHashDiagnoseCommands(diagnose, getConfigDir, loadConfig);
   addForceAndCheckCommands(diagnose, getConfigDir, loadConfig);
   addVerifyAndMigrateCommands(diagnose, getConfigDir, loadConfig);
+  addInspectDiagnoseCommands(diagnose, () => diagnoseCfg(getConfigDir, loadConfig));
 }
