@@ -69,6 +69,11 @@ alwaysApply: false
 - 哈希 / 加密算法与旧系统一致，或有文档说明为什么不同？
 - 临时方案（"先用 X 后换 Y"）是否都有 TODO 标记？
 
+### 6. 渲染契约（仅限格式转换 / 客户端渲染问题）
+- 是否先确认了 `known_good` / `known_bad` 样本并在同一观察面比较？
+- 输出格式是否满足目标客户端最小契约（节点类型 + 必需属性）？
+- 验收是否包含三层证据：结构（shape）/ 同步（dry-run）/ 渲染（客户端 spot check）？
+
 ## 输出格式
 
 对每个发现，给出：
@@ -104,7 +109,7 @@ Pick one dimension, scan ALL changed files for it, record findings, then
 move to the next dimension. This prevents the "fatigue drift" where later
 files in a per-file scan get less scrutiny.
 
-Dimensions (includes the 5 original dimensions above, plus additions):
+Dimensions (includes the original dimensions above, plus additions):
 
 1. **Algorithm correctness** — boundary conditions, state machine transitions,
    numeric precision, time-window expiry with no new input
@@ -123,6 +128,8 @@ Dimensions (includes the 5 original dimensions above, plus additions):
 9. **Bare tuple returns** — >2 elements → struct
 10. **Caller completeness** — for every changed/deleted signature, grep all
     callers to confirm none were missed
+11. **Render contract** (converter/render bugs) — validate target client
+    minimal contract fields and confirm three-gate acceptance evidence
 
 ### Step 2 — Classify Findings
 

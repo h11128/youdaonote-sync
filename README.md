@@ -170,6 +170,18 @@ npm run build
 npx youdaonote-sync diagnose verify-note --target "目录/文件名.md"
 ```
 
+### 8. 调试规范资产（Skill / Rules / PR 模板）
+
+为避免再次出现“结构正确但客户端渲染失败”的慢定位问题，仓库已提供三类资产：
+
+- Debug skill：`.cursor/skills/debug-note-table-render/SKILL.md`
+  - 规范了样本先行、契约优先、三层门禁的排障流程
+- Rules：
+  - `.cursor/rules/coding-patterns.mdc`（渲染契约 debug 规则）
+  - `.cursor/rules/work-context.mdc`（当前默认验收入口与反模式提醒）
+- PR 模板：`.github/PULL_REQUEST_TEMPLATE.md`
+  - 强制记录 `Shape Evidence` / `Dry-run Evidence` / `Desktop Spot Check`
+
 ## 项目结构
 
 ```
