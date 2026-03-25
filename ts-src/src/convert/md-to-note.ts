@@ -181,7 +181,6 @@ function tryImage(line: string): JsonNode | null {
 
 function parseMarkdownLine(line: string): JsonNode {
   const trimmed = line.trimEnd();
-  if (!trimmed) return createParagraph('');
 
   return (
     tryHeading(trimmed) ??
@@ -236,6 +235,11 @@ export function markdownToNoteJson(mdContent: string): string {
       const { codeLines, nextI } = collectCodeLines(lines, i + 1);
       contentList.push(createCodeBlock(codeLines.join('\n'), codeMatch[1] ?? ''));
       i = nextI + 1;
+      continue;
+    }
+
+    if (!line.trim()) {
+      i++;
       continue;
     }
 
