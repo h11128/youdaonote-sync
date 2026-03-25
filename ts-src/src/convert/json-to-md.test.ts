@@ -185,3 +185,103 @@ describe('jsonBytesToMarkdown — links, images, code', () => {
     expect(jsonBytesToMarkdown(encode({ '2': '1' }))).toBe('');
   });
 });
+
+describe('jsonBytesToMarkdown — multi-children blocks', () => {
+  it('heading with link child reads all children', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { l: 'h2' },
+          '5': [
+            {
+              '4': { hf: 'https://example.com' },
+              '5': [{ '7': [{ '8': 'Title' }] }],
+              '6': 'li',
+            },
+          ],
+          '6': 'h',
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('## [Title](https://example.com)');
+  });
+
+  it('heading with bold span and link child', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { l: 'h2' },
+          '5': [
+            { '7': [{ '8': 'See ', '9': [{ '2': 'b' }] }] },
+            {
+              '4': { hf: 'https://x.com' },
+              '5': [{ '7': [{ '8': 'here' }] }],
+              '6': 'li',
+            },
+          ],
+          '6': 'h',
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('## **See **[here](https://x.com)');
+  });
+
+  it('list with link child reads all children', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { lt: 'unordered', ll: 1 },
+          '5': [
+            { '7': [{ '8': 'see ' }] },
+            {
+              '4': { hf: 'https://d.com' },
+              '5': [{ '7': [{ '8': 'docs' }] }],
+              '6': 'li',
+            },
+            { '7': [{ '8': ' here' }] },
+          ],
+          '6': 'l',
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('- see [docs](https://d.com) here');
+  });
+});
+
+describe('jsonBytesToMarkdown — list separators and indent', () => {
+  it('consecutive list items use single newline separator', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { lt: 'unordered', ll: 1 },
+          '5': [{ '7': [{ '8': 'a' }] }],
+          '6': 'l',
+        },
+        {
+          '4': { lt: 'unordered', ll: 1 },
+          '5': [{ '7': [{ '8': 'b' }] }],
+          '6': 'l',
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('- a\n- b');
+  });
+
+  it('nested list uses 2-space indent', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { lt: 'unordered', ll: 1 },
+          '5': [{ '7': [{ '8': 'top' }] }],
+          '6': 'l',
+        },
+        {
+          '4': { lt: 'unordered', ll: 2 },
+          '5': [{ '7': [{ '8': 'nested' }] }],
+          '6': 'l',
+        },
+      ],
+    });
+    expect(jsonBytesToMarkdown(data)).toBe('- top\n  - nested');
+  });
+});

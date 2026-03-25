@@ -89,7 +89,7 @@ function safeStr(val: unknown): string {
 function convertHeading(content: JsonNode): string {
   const attrs = (content[F_ATTRS] as JsonNode | undefined) ?? {};
   const typeName = attrs.l as string | undefined;
-  let text = getCommonText(content);
+  let text = convertText(content);
   if (text && typeName) {
     const levelStr = typeName.replace('h', '');
     const level = parseInt(levelStr, 10) || 1;
@@ -132,20 +132,20 @@ function convertQuote(content: JsonNode): string {
   const qList = (content[F_CHILDREN] as JsonNode[] | undefined) ?? [];
   let text = '';
   for (const q of qList) {
-    const qt = getCommonText(q).replace(/\n/g, '');
+    const qt = convertText(q).replace(/\n/g, '');
     text += `> ${qt}\n`;
   }
   return text;
 }
 
 function convertList(content: JsonNode): string {
-  const text = getCommonText(content);
+  const text = convertText(content);
   const attrs = (content[F_ATTRS] as JsonNode | undefined) ?? {};
   const isOrdered = safeStr(attrs.lt) || 'unordered';
   if (isOrdered === 'ordered') return `1. ${text}`;
   const levelVal = attrs.ll;
   const level = Math.max(1, Number(levelVal) || 1);
-  return '\t'.repeat(level - 1) + `- ${text}`;
+  return '  '.repeat(level - 1) + `- ${text}`;
 }
 
 function getTableCellText(cell: JsonNode): string {
@@ -182,7 +182,7 @@ function convertTable(content: JsonNode): string {
     for (const cell of cells) {
       tableLine += getTableCellText(cell) + ' | ';
     }
-    tableLines += tableLine + '\n';
+    tableLines += tableLine.trimEnd() + '\n';
   }
   return tableLines;
 }
@@ -202,18 +202,16 @@ const TYPE_CONVERTERS: Record<string, (content: JsonNode) => string> = {
  * Convert Youdao JSON note bytes to Markdown.
  */
 export function jsonBytesToMarkdown(data: Buffer | Uint8Array): string {
-  let jsonData: JsonNode;
-  try {
-    const str = typeof data === 'string' ? data : Buffer.from(data).toString('utf-8');
-    jsonData = JSON.parse(str) as JsonNode;
-  } catch {
-    return '';
-  }
+  const jsonData = parseNoteJson(data);
+  if (!jsonData) return '';
 
   const contents = jsonData[F_CHILDREN] as JsonNode[] | undefined;
   if (!contents) return '';
+  return joinParts(convertContents(contents));
+}
 
-  const result: string[] = [];
+function convertContents(contents: JsonNode[]): { text: string; type: string | undefined }[] {
+  const parts: { text: string; type: string | undefined }[] = [];
   for (const content of contents) {
     const ctype = content[F_TYPE] as string | undefined;
     let lineContent: string;
@@ -222,7 +220,29 @@ export function jsonBytesToMarkdown(data: Buffer | Uint8Array): string {
     } else {
       lineContent = convertText(content);
     }
-    if (lineContent) result.push(lineContent);
+    if (lineContent) parts.push({ text: lineContent, type: ctype });
   }
-  return result.join('\n\n');
+  return parts;
+}
+
+function joinParts(parts: { text: string; type: string | undefined }[]): string {
+  let out = '';
+  let prevType: string | undefined;
+  for (let idx = 0; idx < parts.length; idx++) {
+    const part = parts[idx];
+    if (!part) continue;
+    if (idx > 0) out += prevType === 'l' && part.type === 'l' ? '\n' : '\n\n';
+    out += part.text;
+    prevType = part.type;
+  }
+  return out;
+}
+
+function parseNoteJson(data: Buffer | Uint8Array): JsonNode | null {
+  try {
+    const str = typeof data === 'string' ? data : Buffer.from(data).toString('utf-8');
+    return JSON.parse(str) as JsonNode;
+  } catch {
+    return null;
+  }
 }
