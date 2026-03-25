@@ -1,5 +1,5 @@
 ---
-description: "开发工具技巧和环境配置 — WSL、CRLF、换行符、Vitest、Mermaid、StrReplace、Cursor hooks、preToolUse、markdownlint、cargo clippy --fix。Development tool tips, WSL line endings, Mermaid validation, StrReplace strategies, Cursor hook format, markdownlint auto-fix, cargo clippy fix."
+description: "开发工具技巧和环境配置 — WSL、CRLF、换行符、Vitest、Mermaid、StrReplace、Cursor hooks、preToolUse、markdownlint、cargo clippy --fix、block_until_ms、后台命令、exit_code unknown、进程诊断。Development tool tips, WSL line endings, Mermaid validation, StrReplace strategies, Cursor hook format, markdownlint auto-fix, cargo clippy fix, background command diagnostics."
 alwaysApply: false
 ---
 
@@ -79,3 +79,17 @@ cargo clippy --fix --all-targets --allow-dirty --allow-staged --broken-code
 ```
 
 **注意**: `--broken-code` 会留下无法编译的代码。先 `git stash` 或确保能恢复。
+
+## Cursor Shell `block_until_ms=0` 后台命令诊断
+
+用 `block_until_ms=0` 启动的后台命令，终端文件可能在几秒内就出现 `exit_code: unknown` + `ended_at` footer。**这不代表进程失败**——它只意味着 shell session 被回收了，进程作为孤儿继续运行。
+
+**正确诊断流程**：
+1. 看到 `exit_code: unknown` → **不假设进程死了**
+2. `tasklist | grep <process>` 验证进程是否还活着
+3. 检查应用自身的日志文件（不依赖终端输出）
+4. 只有当进程确认不存在 + 日志无新输出时才判定为失败
+
+**常见误判**：ensemble 等长时间 LLM 任务（11 provider 并行，可能跑 5+ 分钟），终端文件 5 秒就关了，但进程正常跑完。
+
+**替代方案**：对于预期运行超过 30 秒的命令，优先用 `block_until_ms` 设置为足够大的值（如 600000），而非 `block_until_ms=0`。这样能直接在前台等结果。
