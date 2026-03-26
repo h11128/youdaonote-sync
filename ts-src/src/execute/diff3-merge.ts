@@ -40,11 +40,11 @@ export async function tryDiff3Merge(
   if (!MERGEABLE_EXTS.has(ext) || !existsSync(localPath)) return false;
   const { api, meta, localDir } = ctx;
 
-  let baseBytes: Buffer | null = getFileContentFromGit(localDir, relPath);
+  const baseRecord = meta.getBaseContent(relPath);
+  let baseBytes: Buffer | null = baseRecord?.content ?? null;
   if (!baseBytes) {
-    const baseRecord = meta.getBaseContent(relPath);
-    if (!baseRecord) return false;
-    baseBytes = baseRecord.content;
+    baseBytes = getFileContentFromGit(localDir, relPath);
+    if (!baseBytes) return false;
   }
   let theirs: string;
   try {
