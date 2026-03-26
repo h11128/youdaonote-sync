@@ -139,7 +139,8 @@ async function runFileEntries(
 
   const total = fileEntries.length;
   let done = 0;
-  const limit = pLimit(5);
+  const concurrency = ctx.concurrency ?? 3;
+  const limit = pLimit(concurrency);
   const run = async ([relPath, state, action]: Entry): Promise<void> => {
     try {
       await executeSingle({ relPath, state, action, cloud, ctx, stats, direction });
@@ -306,7 +307,8 @@ function handleDeleteLocal(o: {
 async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
   const { relPath, state, action, cloud, ctx, stats, direction } = opts;
   const { localDir } = ctx;
-  const localPath = join(localDir, relPath);
+  const canonicalPath = join(localDir, relPath);
+  const localPath = ctx.localSnap?.get(relPath)?.path ?? canonicalPath;
   const cloudFile = cloud.get(relPath);
   const metaRecord = ctx.meta.getFileInfo(relPath);
 
@@ -317,7 +319,7 @@ async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
         stats.errors++;
         return Promise.resolve();
       }
-      return handleDownload({ relPath, localPath, cloudFile, ctx, stats });
+      return handleDownload({ relPath, localPath: canonicalPath, cloudFile, ctx, stats });
     },
     upload: () => {
       const uploadMeta = resolveUploadMeta(metaRecord ?? undefined, cloudFile);

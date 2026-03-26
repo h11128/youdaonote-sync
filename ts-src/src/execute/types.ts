@@ -55,6 +55,8 @@ export interface ExecuteContext {
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
   /** Per-session dedup map for concurrent directory creation. */
   dirCreateInflight?: Map<string, Promise<DirId>> | undefined;
-  /** Local snapshot — used to detect directories when cloud entry is missing. */
-  localSnap?: ReadonlyMap<RelPath, { isDir: boolean }> | undefined;
+  /** Local snapshot — used to detect directories and resolve real disk paths. */
+  localSnap?: ReadonlyMap<RelPath, { isDir: boolean; path?: string }> | undefined;
+  /** Max concurrent file operations (downloads or uploads). Defaults to 3. */
+  concurrency?: number | undefined;
 }

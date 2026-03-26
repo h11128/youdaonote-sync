@@ -1,5 +1,5 @@
 ---
-description: "开发工具技巧和环境配置 — WSL、CRLF、换行符、Vitest、Mermaid、StrReplace、Cursor hooks、preToolUse、markdownlint、cargo clippy --fix、block_until_ms、后台命令、exit_code unknown、进程诊断。Development tool tips, WSL line endings, Mermaid validation, StrReplace strategies, Cursor hook format, markdownlint auto-fix, cargo clippy fix, background command diagnostics."
+description: "开发工具技巧和环境配置 — WSL、CRLF、换行符、Vitest、Mermaid、StrReplace、Cursor hooks、preToolUse、markdownlint、cargo clippy --fix、block_until_ms、后台命令、exit_code unknown、进程诊断、命令复用。Development tool tips, WSL line endings, Mermaid validation, StrReplace strategies, Cursor hook format, markdownlint auto-fix, cargo clippy fix, background command diagnostics, command reuse."
 alwaysApply: false
 ---
 
@@ -93,3 +93,19 @@ cargo clippy --fix --all-targets --allow-dirty --allow-staged --broken-code
 **常见误判**：ensemble 等长时间 LLM 任务（11 provider 并行，可能跑 5+ 分钟），终端文件 5 秒就关了，但进程正常跑完。
 
 **替代方案**：对于预期运行超过 30 秒的命令，优先用 `block_until_ms` 设置为足够大的值（如 600000），而非 `block_until_ms=0`。这样能直接在前台等结果。
+
+## 命令复用：不要凭记忆猜
+
+运行项目命令（cargo run、npm scripts 等）前，**必须**按以下顺序查找正确命令：
+
+1. `work-context.mdc` 速查表（已有精确命令）
+2. 项目 `README.md` 或 `docs/` 中的运行说明
+3. `--help` 输出
+
+**禁止**：凭上次对话的记忆拼命令。跨对话记忆不可靠——CWD、参数顺序、子命令结构都可能记错。
+
+**典型错误**：
+- `.env` 只在特定 CWD 下加载 → 从错误目录运行导致 "no providers configured"
+- 子命令的 option 放在子命令前面 → `--mode ensemble` 写在 `report` 前面导致 "unexpected argument"
+
+两次试错 = 1 分钟浪费 + 用户信任下降。查文档只需 5 秒。

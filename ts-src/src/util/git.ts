@@ -85,8 +85,11 @@ export function gitAutoCommit(localDir: string, opts?: GitCommitOpts): boolean {
   }
 }
 
+const GITCRYPT_HEADER = Buffer.from('\x00GITCRYPT');
+
 /**
  * Retrieve file content from git history (for diff3 base fallback).
+ * Handles git-crypt encrypted files by running them through `git-crypt smudge`.
  * Returns null if not a git repo or file not found in history.
  */
 export function getFileContentFromGit(
@@ -103,8 +106,31 @@ export function getFileContentFromGit(
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: 10 * 1024 * 1024,
     });
-    return Buffer.from(result);
+    const buf = Buffer.from(result);
+    if (
+      buf.length >= GITCRYPT_HEADER.length &&
+      buf.subarray(0, GITCRYPT_HEADER.length).equals(GITCRYPT_HEADER)
+    ) {
+      return decryptGitCrypt(buf, localDir);
+    }
+    return buf;
   } catch {
+    return null;
+  }
+}
+
+function decryptGitCrypt(encrypted: Buffer, cwd: string): Buffer | null {
+  try {
+    return Buffer.from(
+      execFileSync('git-crypt', ['smudge'], {
+        cwd,
+        input: encrypted,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        maxBuffer: 10 * 1024 * 1024,
+      }),
+    );
+  } catch (e: unknown) {
+    console.warn(`[git] git-crypt smudge failed: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 }
