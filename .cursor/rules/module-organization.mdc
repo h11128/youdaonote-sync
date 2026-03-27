@@ -1,0 +1,37 @@
+---
+description: "Module organization guardrail — triggers when creating or moving source files"
+globs:
+  - "src/**/*.rs"
+  - "crates/**/*.rs"
+alwaysApply: false
+---
+
+# Module Organization
+
+## Hard Limits
+
+| Scope | Limit |
+|-------|-------|
+| Single source file | 300 lines (audit responsibilities) / 600 lines (must propose split) |
+| Directory (flat) | Max 12 direct source files |
+| **No-mixing rule** | A directory with subdirectories may ONLY contain `mod.rs` as its source file |
+
+**Exceptions to no-mixing:**
+- `src/` root: `lib.rs` and `main.rs` are crate entry points (language requirement)
+- `mod.rs` in any directory: Rust language requirement for directory modules
+
+## Before Creating a New Source File
+
+1. Check if the target directory has subdirectories — if yes, the file MUST go into one of them
+2. Count existing source files in the target directory
+3. If count >= 10: **stop and propose a subdirectory split** before creating the file
+4. Check whether the new file's responsibility overlaps with an existing file — prefer extending over creating
+
+## When a Directory Approaches the Limit
+
+If a directory has 10+ files, apply these grouping heuristics:
+
+1. **Trait + implementations** — trait in parent `mod.rs`, implementations in subdirectory
+2. **One-per-variant** (adapters, predictors) — acceptable as flat if each file is small (<200 lines)
+3. **Core vs auxiliary** — core types/engine stay close to `mod.rs`, auxiliary analyses/reports go to a subdirectory
+4. **Input vs output** — separate data ingestion from result generation

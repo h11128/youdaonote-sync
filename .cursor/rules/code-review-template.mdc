@@ -103,13 +103,25 @@ git diff --name-only HEAD~1   # adjust range as needed
 
 Every file in this list MUST be covered. No file may be skipped.
 
+Then run a line-count check on all changed source files:
+
+```bash
+wc -l $(git diff --name-only HEAD~1 | grep '\.rs$')
+```
+
+Apply line-count thresholds from `module-organization.mdc` (currently
+300 / 600 lines) and flag violations for dimension 4 review.
+
 ### Step 1 — Scan by Dimension (not by file)
 
 Pick one dimension, scan ALL changed files for it, record findings, then
 move to the next dimension. This prevents the "fatigue drift" where later
 files in a per-file scan get less scrutiny.
 
-Dimensions (includes the original dimensions above, plus additions):
+Dimensions (includes the original dimensions above, plus additions).
+For `.rs` files, also apply `rust-idioms.mdc` (type safety, clippy discipline,
+error handling) — the dimensions below overlap with it intentionally so
+non-Rust reviews also benefit:
 
 1. **Algorithm correctness** — boundary conditions, state machine transitions,
    numeric precision, time-window expiry with no new input
@@ -118,7 +130,9 @@ Dimensions (includes the original dimensions above, plus additions):
 3. **Runtime characteristics** — call frequency, thread safety, memory growth,
    resource leaks
 4. **Architecture consistency** — dependency direction, single responsibility,
-   adherence to existing patterns
+   adherence to existing patterns. **Mandatory line-count gate**: run
+   `wc -l` on every changed `.rs` file and apply thresholds from
+   `module-organization.mdc` (300 / 600 lines)
 5. **Backward compatibility** — signature changes with all callers updated,
    data migration, config defaults
 6. **Functional equivalence** (rewrites only) — every old entry point has a
