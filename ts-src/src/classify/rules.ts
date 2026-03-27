@@ -150,6 +150,13 @@ export const REFINE_RULES: readonly {
 }[] = [
   { when: { cloudHashEqualLocal: true, localHashChanged: false }, then: 'cloudModifiedMtimeOnly' },
   { when: { cloudHashEqualLocal: true, localHashChanged: true }, then: 'bothModifiedConverged' },
-  { when: { cloudHashEqualLocal: false, cloudHashEqualMeta: true }, then: 'localModified' },
-  { when: { cloudHashEqualLocal: false, cloudHashEqualMeta: false }, then: 'conflict' },
+  { when: { cloudHashEqualLocal: false, localHashChanged: false }, then: 'cloudModifiedContent' },
+  {
+    when: { cloudHashEqualLocal: false, localHashChanged: true, cloudHashEqualMeta: true },
+    then: 'localModified',
+  },
+  {
+    when: { cloudHashEqualLocal: false, localHashChanged: true, cloudHashEqualMeta: false },
+    then: 'conflict',
+  },
 ];

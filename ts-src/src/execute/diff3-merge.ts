@@ -11,7 +11,7 @@ import {
 } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
-import { backupFile } from './conflict.js';
+import { detectFileType, convertToMarkdown } from './download.js';
 import { threeWayMerge } from '../algo/merge.js';
 import { getFileContentFromGit } from '../util/git.js';
 import { readFileMtime } from '../util/utils.js';
@@ -49,16 +49,26 @@ export async function tryDiff3Merge(
   let theirs: string;
   try {
     const rawData = await api.getFileById(cloudFile.id as FileId);
-    theirs = Buffer.from(rawData).toString('utf-8');
+    const data = new Uint8Array(rawData);
+    const fileType = detectFileType(data, ext);
+    const markdown = convertToMarkdown(data, fileType);
+    if (markdown === null) return false;
+    theirs = markdown;
   } catch {
     return false;
   }
-  const base = baseBytes.toString('utf-8');
+  let base = baseBytes.toString('utf-8');
+  // Handle legacy base content that might have been saved as raw JSON/XML
+  const baseFileType = detectFileType(new Uint8Array(baseBytes), ext);
+  if (baseFileType !== 'markdown' && baseFileType !== 'binary') {
+    const converted = convertToMarkdown(new Uint8Array(baseBytes), baseFileType);
+    if (converted !== null) base = converted;
+  }
+
   const ours = readFileSync(localPath, 'utf-8');
   const result = threeWayMerge(base, ours, theirs);
   if (result.hasConflicts) return false;
 
-  backupFile(localPath);
   writeFileSync(localPath, result.mergedText, 'utf-8');
   const contentHash = ctx.hashFn
     ? ctx.hashFn(new TextEncoder().encode(result.mergedText), localPath)

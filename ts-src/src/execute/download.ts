@@ -1,4 +1,11 @@
-import { writeFileSync, mkdirSync, utimesSync, renameSync, unlinkSync } from 'node:fs';
+import {
+  writeFileSync,
+  mkdirSync,
+  utimesSync,
+  renameSync,
+  unlinkSync,
+  readFileSync,
+} from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import type { YoudaoNoteApi } from '../api/client.js';
 import { NoteDomain } from '../types/common.js';
@@ -188,7 +195,8 @@ export async function handleDownload(o: {
     direction: 'pull',
   });
   if (cloudFile.domain === NoteDomain.NOTE && result.contentHash) {
-    meta.saveBaseContent(relPath, Buffer.from(result.rawData), result.contentHash);
+    const mdContent = readFileSync(localPath);
+    meta.saveBaseContent(relPath, mdContent, result.contentHash);
   }
   await tryMigrateImages(localPath, api);
   stats.downloaded++;
