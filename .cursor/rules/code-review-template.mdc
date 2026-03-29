@@ -1,9 +1,12 @@
 ---
-description: Structured multi-pass code review protocol — for independent review in a new conversation after large changes. Triggers: code review, review diff, audit changes, PR review, post-implementation review.
+description: Structured multi-pass code review protocol — fallback for manual review when code-reviewer subagent is unavailable. Triggers: code review, review diff, audit changes, PR review, post-implementation review.
 alwaysApply: false
 ---
 
 # 代码审查提示词模板
+
+> **首选方案**：使用 `code-reviewer` subagent（`.cursor/agents/code-reviewer.md`）自动审查。
+> 本模板作为 **fallback**——当 subagent 不可用（离线环境）或需要更深度的手动审查时使用。
 
 > 大改动完成后，在**新对话**中使用此模板做独立审查。
 > 新对话的上下文与开发对话完全隔离，能避免"自审退化为确认自己的理解"。

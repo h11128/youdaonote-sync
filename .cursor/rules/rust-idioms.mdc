@@ -13,6 +13,7 @@ alwaysApply: false
 - 结构已知时用强类型 struct + `serde::Deserialize`，不要全程 `serde_json::Value`
 - `serde_json::Value` 仅用于结构真正未知的场景（schema validation 等）
 - 项目已有类型（如 `AnalysisEnvelope`）→ 直接 deserialize，不要手写 `.get("field")`
+- **封闭枚举用 tagged enum**：当 YAML/JSON 的 `type` 字段只有有限几种值（如 condition 10 种、indicator 5 种），用 `#[serde(tag = "type")]` enum 反序列化。serde 自动拒绝未知 type、缺字段、类型错误——不要手写 `.get("type").and_then(|v| v.as_str())` match chain
 
 ## Make Illegal States Unrepresentable
 
@@ -54,6 +55,21 @@ alwaysApply: false
 - 新增功能时，如果目标文件已接近 300 行，必须先评估是否需要拆分，再写新代码
 - `items_after_statements`：函数内的 struct/fn 定义放在 let 语句之前
 - `format_push_string`：用 `write!` 代替 `push_str(&format!(...))`
+
+## `serde_json::Value` 边界规则
+
+`serde_json::Value` / `serde_yaml::Value` 只允许在以下入口使用：
+- LLM 返回的 JSON 解析（`annotation/engine/response.rs`）
+- DB 读取（`rusqlite::Row::get`）
+- 外部 chart JSON 解析入口
+
+内部代码 MUST 使用强类型 struct。从 `Value` 到 struct 的转换在解析边界做一次。禁止 `Value` 在函数间传递后再 `.get("string")` 做运行时查找。
+
+## `Option` 语义清晰化
+
+`Option<f64>` 在 Indicator 返回中：`None` = 该天数据缺失（排除该天），`Some(0.0)` = 事件未发生。
+
+新增返回 `Option` 的公共函数 MUST 在 doc comment 中说明 `None` 的含义。禁止 `None` 同时表示"缺失"和"默认值"。
 
 ## 参考资源
 
