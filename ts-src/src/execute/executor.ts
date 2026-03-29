@@ -8,7 +8,7 @@ import type { CloudFile } from '../types/scan.js';
 import { handleDownload } from './download.js';
 import { uploadFile, ensureParentDir, type UploadFileOpts } from './upload.js';
 import { conflictFallback, type ConflictOpts } from './conflict.js';
-import { tryDiff3Merge } from './diff3-merge.js';
+import { tryDiff3Merge, type MergeResult } from './diff3-merge.js';
 
 import { handleMove } from './move-handler.js';
 import { pLimit } from '../util/concurrency.js';
@@ -246,11 +246,11 @@ async function handleUpload(o: {
 async function handleConflict(o: ConflictOpts): Promise<void> {
   const { relPath, localPath, cloudFile, ctx, stats, direction } = o;
   if (direction === 'both' && cloudFile) {
-    const merged = await tryDiff3Merge(relPath, localPath, cloudFile, ctx);
-    if (merged) {
+    const mergeResult: MergeResult = await tryDiff3Merge(relPath, localPath, cloudFile, ctx);
+    if (mergeResult) {
       stats.merged++;
       stats.changedPaths.push(localPath);
-      stats.uploadedPaths.add(relPath);
+      if (mergeResult === 'merged') stats.uploadedPaths.add(relPath);
       return;
     }
   }

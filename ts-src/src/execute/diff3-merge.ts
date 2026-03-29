@@ -3,6 +3,7 @@ import { extname } from 'node:path';
 import type { YoudaoNoteApi } from '../api/client.js';
 import type { MetadataStore } from '../metadata/store.js';
 import {
+  asContentHash,
   asEpochSeconds,
   type ContentHash,
   type DirId,
@@ -18,6 +19,8 @@ import { readFileMtime } from '../util/utils.js';
 
 const MERGEABLE_EXTS = new Set(['.md', '.txt']);
 
+export type MergeResult = 'merged' | 'deferred' | false;
+
 export interface Diff3Context {
   api: YoudaoNoteApi;
   meta: MetadataStore;
@@ -26,45 +29,55 @@ export interface Diff3Context {
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
 }
 
+async function fetchCloudMarkdown(
+  api: YoudaoNoteApi,
+  fileId: FileId,
+  ext: string,
+): Promise<string | null> {
+  try {
+    const rawData = await api.getFileById(fileId);
+    const data = new Uint8Array(rawData);
+    const fileType = detectFileType(data, ext);
+    return convertToMarkdown(data, fileType);
+  } catch {
+    return null;
+  }
+}
+
+function decodeBase(baseBytes: Buffer, ext: string): string {
+  let base = baseBytes.toString('utf-8');
+  const baseFileType = detectFileType(new Uint8Array(baseBytes), ext);
+  if (baseFileType !== 'markdown' && baseFileType !== 'binary') {
+    const converted = convertToMarkdown(new Uint8Array(baseBytes), baseFileType);
+    if (converted !== null) base = converted;
+  }
+  return base;
+}
+
 /**
  * Attempt a diff3 three-way merge for .md/.txt conflict files.
- * Returns true if merge was performed, false to fall back to backup+download.
+ * Returns 'merged' if merge+upload succeeded, 'deferred' if merge succeeded
+ * but upload failed (local file updated, will retry next cycle), or false
+ * to fall back to backup+download.
  */
 export async function tryDiff3Merge(
   relPath: RelPath,
   localPath: string,
   cloudFile: CloudFile,
   ctx: Diff3Context,
-): Promise<boolean> {
+): Promise<MergeResult> {
   const ext = extname(relPath).toLowerCase();
   if (!MERGEABLE_EXTS.has(ext) || !existsSync(localPath)) return false;
-  const { api, meta, localDir } = ctx;
+  const { meta, localDir } = ctx;
 
   const baseRecord = meta.getBaseContent(relPath);
-  let baseBytes: Buffer | null = baseRecord?.content ?? null;
-  if (!baseBytes) {
-    baseBytes = getFileContentFromGit(localDir, relPath);
-    if (!baseBytes) return false;
-  }
-  let theirs: string;
-  try {
-    const rawData = await api.getFileById(cloudFile.id as FileId);
-    const data = new Uint8Array(rawData);
-    const fileType = detectFileType(data, ext);
-    const markdown = convertToMarkdown(data, fileType);
-    if (markdown === null) return false;
-    theirs = markdown;
-  } catch {
-    return false;
-  }
-  let base = baseBytes.toString('utf-8');
-  // Handle legacy base content that might have been saved as raw JSON/XML
-  const baseFileType = detectFileType(new Uint8Array(baseBytes), ext);
-  if (baseFileType !== 'markdown' && baseFileType !== 'binary') {
-    const converted = convertToMarkdown(new Uint8Array(baseBytes), baseFileType);
-    if (converted !== null) base = converted;
-  }
+  const baseBytes = baseRecord?.content ?? getFileContentFromGit(localDir, relPath);
+  if (!baseBytes) return false;
 
+  const theirs = await fetchCloudMarkdown(ctx.api, cloudFile.id as FileId, ext);
+  if (theirs === null) return false;
+
+  const base = decodeBase(baseBytes, ext);
   const ours = readFileSync(localPath, 'utf-8');
   const result = threeWayMerge(base, ours, theirs);
   if (result.hasConflicts) return false;
@@ -76,7 +89,10 @@ export async function tryDiff3Merge(
   if (contentHash)
     meta.saveBaseContent(relPath, Buffer.from(result.mergedText, 'utf-8'), contentHash);
 
-  return uploadMergedFile({ relPath, localPath, cloudFile, ctx, contentHash });
+  const prevHash = baseRecord?.hash
+    ? asContentHash(baseRecord.hash)
+    : (meta.getFileInfo(relPath)?.contentHash ?? null);
+  return uploadMergedFile({ relPath, localPath, cloudFile, ctx, contentHash, prevHash });
 }
 
 async function uploadMergedFile(opts: {
@@ -85,8 +101,9 @@ async function uploadMergedFile(opts: {
   cloudFile: CloudFile;
   ctx: Diff3Context;
   contentHash: ContentHash | null;
-}): Promise<boolean> {
-  const { relPath, localPath, cloudFile, ctx, contentHash } = opts;
+  prevHash: ContentHash | null;
+}): Promise<MergeResult> {
+  const { relPath, localPath, cloudFile, ctx, contentHash, prevHash } = opts;
   const { api, meta, rootDirId } = ctx;
   try {
     const ulOpts: UploadFileOpts = {
@@ -107,8 +124,23 @@ async function uploadMergedFile(opts: {
       action: 'merge-upload',
       direction: 'push',
     });
-    return true;
-  } catch {
-    return false;
+    return 'merged';
+  } catch (e: unknown) {
+    console.warn(
+      `[diff3] merge succeeded but upload failed for ${relPath}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    // Merge was clean — keep the merged local file. Record sync using the
+    // *previous* content hash (from base record or metadata) so next cycle
+    // sees localHashChanged=true (merged ≠ prev) + cloudMtimeChanged=false
+    // → localModified → normal upload retry.
+    meta.recordSync(relPath, {
+      fileId: cloudFile.id as FileId,
+      cloudMtime: cloudFile.mtime,
+      localMtime: asEpochSeconds(readFileMtime(localPath)),
+      contentHash: prevHash,
+      action: 'merge-upload-deferred',
+      direction: 'push',
+    });
+    return 'deferred';
   }
 }
