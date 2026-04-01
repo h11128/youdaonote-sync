@@ -1,12 +1,9 @@
 ---
-description: Structured multi-pass code review protocol — fallback for manual review when code-reviewer subagent is unavailable. Triggers: code review, review diff, audit changes, PR review, post-implementation review.
+description: Code review prompt template — for independent review in a new conversation after large changes
 alwaysApply: false
 ---
 
 # 代码审查提示词模板
-
-> **首选方案**：使用 `code-reviewer` subagent（`.cursor/agents/code-reviewer.md`）自动审查。
-> 本模板作为 **fallback**——当 subagent 不可用（离线环境）或需要更深度的手动审查时使用。
 
 > 大改动完成后，在**新对话**中使用此模板做独立审查。
 > 新对话的上下文与开发对话完全隔离，能避免"自审退化为确认自己的理解"。
@@ -65,18 +62,6 @@ alwaysApply: false
 - 数据兼容：数据库 / 文件格式变化是否有迁移逻辑？
 - 配置：新增的配置项是否有合理的默认值？
 
-### 5. 功能对等性（仅限重写 / 移植项目）
-- 旧系统的每个公开函数 / 入口在新系统有对应实现或明确的"推迟/丢弃"标注？
-- 旧系统 engine 的每个步骤（init → scan → classify → refine → execute → cleanup）在新 engine 中有对应调用？
-- 新写的每个模块至少被一个上层模块导入并调用（不能只被测试导入）？
-- 哈希 / 加密算法与旧系统一致，或有文档说明为什么不同？
-- 临时方案（"先用 X 后换 Y"）是否都有 TODO 标记？
-
-### 6. 渲染契约（仅限格式转换 / 客户端渲染问题）
-- 是否先确认了 `known_good` / `known_bad` 样本并在同一观察面比较？
-- 输出格式是否满足目标客户端最小契约（节点类型 + 必需属性）？
-- 验收是否包含三层证据：结构（shape）/ 同步（dry-run）/ 渲染（客户端 spot check）？
-
 ## 输出格式
 
 对每个发现，给出：
@@ -85,109 +70,6 @@ alwaysApply: false
 - **问题**: 一句话描述
 - **建议**: 具体的修复方向
 ```
-
-## Structured Multi-Pass Review Protocol
-
-The free-form review above is the fallback for manual use. When an agent
-performs the review, it MUST follow this structured protocol instead.
-
-### Core Principle: Review First, Fix Later
-
-NEVER fix code during review. Complete ALL review passes, output the full
-findings report, THEN fix in a separate step. Interleaving review and fixes
-causes fixes to introduce new defects (observed pattern: 3-4 rounds to
-converge when review and fix are mixed).
-
-### Step 0 — Determine Scope
-
-```bash
-git diff --name-only HEAD~1   # adjust range as needed
-```
-
-Every file in this list MUST be covered. No file may be skipped.
-
-Then run a line-count check on all changed source files:
-
-```bash
-wc -l $(git diff --name-only HEAD~1 | grep '\.rs$')
-```
-
-Apply line-count thresholds from `module-organization.mdc` (currently
-300 / 600 lines) and flag violations for dimension 4 review.
-
-### Step 1 — Scan by Dimension (not by file)
-
-Pick one dimension, scan ALL changed files for it, record findings, then
-move to the next dimension. This prevents the "fatigue drift" where later
-files in a per-file scan get less scrutiny.
-
-Dimensions (includes the original dimensions above, plus additions).
-For `.rs` files, also apply `rust-idioms.mdc` (type safety, clippy discipline,
-error handling) — the dimensions below overlap with it intentionally so
-non-Rust reviews also benefit:
-
-1. **Algorithm correctness** — boundary conditions, state machine transitions,
-   numeric precision, time-window expiry with no new input
-2. **Data flow integrity** — is any value reconstructed from a lossy
-   intermediate? (e.g., float percentage → integer count)
-3. **Runtime characteristics** — call frequency, thread safety, memory growth,
-   resource leaks
-4. **Architecture consistency** — dependency direction, single responsibility,
-   adherence to existing patterns. **Mandatory line-count gate**: run
-   `wc -l` on every changed `.rs` file and apply thresholds from
-   `module-organization.mdc` (300 / 600 lines)
-5. **Backward compatibility** — signature changes with all callers updated,
-   data migration, config defaults
-6. **Functional equivalence** (rewrites only) — every old entry point has a
-   new counterpart or explicit drop annotation
-7. **DRY** — search for ≥3 lines duplicated within or across changed files
-8. **Magic numbers** — literals other than 0, 1, -1, 100 → named constants
-9. **Bare tuple returns** — >2 elements → struct
-10. **Caller completeness** — for every changed/deleted signature, grep all
-    callers to confirm none were missed
-11. **Render contract** (converter/render bugs) — validate target client
-    minimal contract fields and confirm three-gate acceptance evidence
-
-### Step 2 — Classify Findings
-
-Each finding MUST include:
-
-| Field | Description |
-|-------|-------------|
-| Severity | 🔴 Must fix / 🟡 Should fix / 🟢 Optional |
-| Location | `file_path:line_number` |
-| Problem | One sentence describing the defect |
-| Suggestion | Concrete fix direction |
-
-### Step 3 — Output Full Report Before Any Fix
-
-```
-## Review Report
-
-### 🔴 Must Fix (N)
-1. `file.rs:42` — <problem> → <suggestion>
-...
-
-### 🟡 Should Fix (N)
-1. `file.rs:108` — <problem> → <suggestion>
-...
-
-### 🟢 Optional (N)
-1. `file.rs:200` — <problem> → <suggestion>
-...
-
-### Summary
-- Files reviewed: X
-- Findings: 🔴 A / 🟡 B / 🟢 C
-- Highest-risk area: <module or file>
-```
-
-### Step 4 — Fix Phase (separate from review)
-
-Only after the complete report is output:
-1. Fix all 🔴 items first, then 🟡, then 🟢 (if time permits).
-2. After ALL fixes are applied, run the verifier subagent or re-check each
-   finding to confirm resolution and catch regressions.
 
 ## 补充说明
 

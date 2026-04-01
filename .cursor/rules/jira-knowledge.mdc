@@ -1,5 +1,5 @@
 ---
-description: Jira project management — tickets, epics, sprints, milestones, estimation, PDMOB fields
+description: Jira project management — tickets, epics, sprints, milestones, estimation, PDMOB fields, CLI usage
 alwaysApply: false
 ---
 
@@ -23,8 +23,11 @@ alwaysApply: false
 - Config tasks can batch
 
 **API 用法**:
-- Description uses ADF format
+- Description 和 comment 支持 Markdown / Jira wiki markup / ADF JSON 三种格式，CLI 自动检测并转为 ADF
+- `--description` 必须含格式标记（`## Heading`、`- list`），plain text 会被拒绝
+- `--markdown` 标志强制 Markdown 解析（跳过自动检测）
 - subtasks query: `parent=EPIC-KEY`
 - Change status via transition API
+- 推荐用 ai-tools CLI（`jira create/update/comment`）代替 raw curl
 
 **PDMOB 必填字段**: 详见本地指南（上方路径），包含 summary 格式、issuetype、labels、assignee 等。

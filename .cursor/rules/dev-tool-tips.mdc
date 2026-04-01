@@ -1,9 +1,27 @@
 ---
-description: "开发工具技巧和环境配置 — WSL、CRLF、换行符、Vitest、Mermaid、StrReplace、Cursor hooks、preToolUse、markdownlint、cargo clippy --fix、block_until_ms、后台命令、exit_code unknown、进程诊断、命令复用。Development tool tips, WSL line endings, Mermaid validation, StrReplace strategies, Cursor hook format, markdownlint auto-fix, cargo clippy fix, background command diagnostics, command reuse."
+description: "开发工具技巧和环境配置 — WSL、CRLF、换行符、Vitest、Mermaid、StrReplace、Cursor hooks、preToolUse、Grafana CLI、标准工具优先。Development tool tips, WSL line endings, Mermaid validation, StrReplace strategies, Cursor hook format, Grafana CLI, standard tools first."
 alwaysApply: false
 ---
 
 # Dev Tool Tips
+
+## 标准工具优先
+
+- CLI 能做的事 → 直接用 CLI，不去找替代脚本
+- 记忆中的工具能力列表可能过时 → 先 `--list-commands` / `--help` 确认实际命令
+- 可逆操作直接试 → CLI 命令执行结果不对可以重跑，不要预判失败然后绕路
+- 本地 MD 为 SOT 的文档工作流：编辑本地 markdown → CLI 同步到远端，绝不手动编辑远端
+
+## Grafana: 禁止用浏览器查数据
+
+**所有 Grafana 数据查询必须用 CLI**，禁止用 playwright/browser/MCP browser 访问 Grafana 网页查数据。
+
+**唯一例外**:
+1. 用户明确要求用浏览器
+2. Dashboard 外观的视觉验证（截图对比布局/样式）
+3. Okta 登录流程（CLI 内部自动处理）
+
+**原因**: CLI 已覆盖所有 Grafana 数据查询场景；浏览器更慢、更脆弱、返回非结构化数据。
 
 ## WSL 文件换行符
 
@@ -24,11 +42,7 @@ GitHub Issue: vitest-dev/vitest#9507
 
 写 Mermaid 图后用 `npx @mermaid-js/mermaid-cli` 验证渲染。hooks 中 R17a/b/c 规则会自动检测常见问题。
 
-**规则**: 禁 `<br/>`、subgraph 用英文 ID + 中文 label。
-
-**Cursor Markdown Preview 渲染 mermaid**: 安装 `bierner.markdown-mermaid` 插件后，需要 Reload Window 才能生效。首次安装后如果仍报 "No diagram type detected"，再 Reload 一次即可。已验证 classDiagram、flowchart、sequenceDiagram 均可正常渲染（2026-03-22）。
-
-**beta 后缀**: `radar-beta`（非 `radar`）、`xychart-beta` — Mermaid v11.12 仍需 `-beta` 后缀。中文标签在 CLI 渲染时可能导致解析失败（`pie title` 的括号、`xychart-beta` 的中文月份），改用英文标签。
+**规则**: 禁 `<br/>`、禁 `xychart-beta`、subgraph 用英文 ID + 中文 label。
 
 **验证流程**（遵守脚本先写文件规则）:
 1. 将提取 + 验证逻辑写入 `.local-scripts/validate_mermaid.py`
@@ -43,16 +57,6 @@ GitHub Issue: vitest-dev/vitest#9507
 - Enums: List fixed sets (domain, subject) in Prompt
 - Sync: Sync new fields across — Schema, Prompt, Coverage Stats
 
-## Markdownlint 自动修复
-
-编辑 .md 文件后如果 lint 报错，先跑自动修复再看剩余问题：
-
-```
-npx markdownlint-cli --fix <file.md>
-```
-
-项目 `.markdownlint.json` 已禁用不可自动修复且不影响可读性的规则（MD013 行宽、MD040 代码块语言、MD060 表格格式）。`--fix` 能处理空行、缩进等格式问题。**不要手动逐条修复 markdownlint 警告。**
-
 ## StrReplace Tips
 
 大段内容替换容易失败：
@@ -66,46 +70,3 @@ Cursor 对所有拦截类 hook（`beforeShellExecution`、`preToolUse`、`before
 
 **正确**: `{"permission": "deny", "agent_message": "原因"}` / `{"permission": "allow"}`
 **错误**: `{"decision": "deny", "reason": "..."}` — Cursor 会静默忽略
-
-## cargo clippy --fix 全部回滚问题
-
-`cargo clippy --fix` 应用修复后会重新编译验证。如果任何一个 fix 导致编译失败，**所有 fix 全部回滚**——不是只回滚出错的那个。这意味着一个坏 fix 会阻止所有好 fix。
-
-**典型场景**: clippy 修了 trait 签名（如 `&str` → `&'static str`）但没修 impl 侧 → 编译失败 → 46 个 fix 全部回滚 → 看起来"什么都没修"。
-
-**解决方法**: 用 `--broken-code` 强制保留修改，然后手动修编译错误：
-```
-cargo clippy --fix --all-targets --allow-dirty --allow-staged --broken-code
-```
-
-**注意**: `--broken-code` 会留下无法编译的代码。先 `git stash` 或确保能恢复。
-
-## Cursor Shell `block_until_ms=0` 后台命令诊断
-
-用 `block_until_ms=0` 启动的后台命令，终端文件可能在几秒内就出现 `exit_code: unknown` + `ended_at` footer。**这不代表进程失败**——它只意味着 shell session 被回收了，进程作为孤儿继续运行。
-
-**正确诊断流程**：
-1. 看到 `exit_code: unknown` → **不假设进程死了**
-2. `tasklist | grep <process>` 验证进程是否还活着
-3. 检查应用自身的日志文件（不依赖终端输出）
-4. 只有当进程确认不存在 + 日志无新输出时才判定为失败
-
-**常见误判**：ensemble 等长时间 LLM 任务（11 provider 并行，可能跑 5+ 分钟），终端文件 5 秒就关了，但进程正常跑完。
-
-**替代方案**：对于预期运行超过 30 秒的命令，优先用 `block_until_ms` 设置为足够大的值（如 600000），而非 `block_until_ms=0`。这样能直接在前台等结果。
-
-## 命令复用：不要凭记忆猜
-
-运行项目命令（cargo run、npm scripts 等）前，**必须**按以下顺序查找正确命令：
-
-1. `work-context.mdc` 速查表（已有精确命令）
-2. 项目 `README.md` 或 `docs/` 中的运行说明
-3. `--help` 输出
-
-**禁止**：凭上次对话的记忆拼命令。跨对话记忆不可靠——CWD、参数顺序、子命令结构都可能记错。
-
-**典型错误**：
-- `.env` 只在特定 CWD 下加载 → 从错误目录运行导致 "no providers configured"
-- 子命令的 option 放在子命令前面 → `--mode ensemble` 写在 `report` 前面导致 "unexpected argument"
-
-两次试错 = 1 分钟浪费 + 用户信任下降。查文档只需 5 秒。
