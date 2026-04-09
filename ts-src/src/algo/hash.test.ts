@@ -143,8 +143,20 @@ describe('normalizeMdFormatting', () => {
     expect(normalizeMdFormatting('use `foo` here')).toBe('use foo here');
   });
 
-  it('skips code fence lines', () => {
-    expect(normalizeMdFormatting('```python\ncode\n```')).toBe('code');
+  it('normalizes code fence lines to sentinel', () => {
+    expect(normalizeMdFormatting('```python\ncode\n```')).toBe('---fence---\ncode\n---fence---');
+  });
+
+  it('normalizes mermaid fence same as bare fence', () => {
+    expect(normalizeMdFormatting('```mermaid\ngraph LR\n```')).toBe(
+      normalizeMdFormatting('```\ngraph LR\n```'),
+    );
+  });
+
+  it('detects content change inside code fence', () => {
+    const a = normalizeMdFormatting('```\nold content\n```');
+    const b = normalizeMdFormatting('```\nnew content\n```');
+    expect(a).not.toBe(b);
   });
 
   it('strips leading whitespace', () => {

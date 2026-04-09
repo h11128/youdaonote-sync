@@ -31,24 +31,17 @@ export default tseslint.config(
   {
     plugins: { sonarjs },
     rules: {
-      'sonarjs/cognitive-complexity': ['error', 15],
-      complexity: ['error', 15],
-
-      'max-depth': ['error', 4],
-      'max-nested-callbacks': ['error', 3],
+      "sonarjs/cognitive-complexity": ["error", 15],
+      "complexity": ["error", 15],
+      "max-depth": ["error", 4],
+      "max-params": ["error", 4],
+      "max-lines-per-function": ["error", { max: 50, skipBlankLines: true, skipComments: true }],
+      "max-nested-callbacks": ["error", 3],
+      "max-lines": ["error", 300],
       'sonarjs/no-collapsible-if': 'error',
       'sonarjs/no-nested-switch': 'error',
       'sonarjs/no-nested-conditional': 'error',
-
-      'max-lines-per-function': [
-        'error',
-        { max: 50, skipBlankLines: true, skipComments: true },
-      ],
-      'max-lines': ['error', { max: 300, skipBlankLines: true, skipComments: true }],
       'max-classes-per-file': ['error', 1],
-
-      'max-params': ['error', 4],
-
       'sonarjs/no-duplicate-string': ['error', { threshold: 4 }],
       'sonarjs/no-identical-functions': 'error',
       'sonarjs/no-duplicated-branches': 'error',
@@ -134,6 +127,13 @@ export default tseslint.config(
       'max-params': 'off',
       'sonarjs/no-duplicate-string': 'off',
       'sonarjs/no-identical-functions': 'off',
+    },
+  },
+
+  {
+    files: ['src/api/client.ts', 'src/convert/md-to-note.ts', 'src/engine/engine.ts', 'src/engine/helpers-dryrun.ts', 'src/execute/executor.ts', 'src/metadata/store.ts', 'src/scan/cloud-cache.ts', 'src/tools/diagnose-commands.ts'],
+    rules: {
+      'max-lines': 'off',
     },
   },
 

@@ -71,7 +71,10 @@ export function normalizeMdFormatting(text: string): string {
     let s = rawLine.replace(RE_TRAILING_WS, '');
     if (!s) continue;
     if (RE_EMPTY_BQ.test(s)) continue;
-    if (RE_CODE_FENCE.test(s)) continue;
+    if (RE_CODE_FENCE.test(s)) {
+      result.push('---fence---');
+      continue;
+    }
     if (RE_HRULE.test(s)) {
       s = '---';
     }

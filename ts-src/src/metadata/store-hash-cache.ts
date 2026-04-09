@@ -10,7 +10,7 @@ import type Database from 'better-sqlite3';
 import type { ContentHash, EpochSeconds, RelPath } from '../types/common.js';
 import { asContentHash } from '../types/common.js';
 
-const HASH_ALGO_VERSION = 1;
+const HASH_ALGO_VERSION = 2;
 const STATE_KEY = 'hash_cache_algo_version';
 
 /**
