@@ -5,6 +5,7 @@ import { asEpochSeconds, type FileId, type NoteDomain, type RelPath } from '../t
 import type { MetadataStore } from '../metadata/store.js';
 import type { ExecuteContext, SyncStats } from './types.js';
 import { ensureParentDir } from './upload.js';
+import { logger } from '../util/logger.js';
 
 export interface HandleMoveOpts {
   relPath: RelPath;
@@ -68,7 +69,7 @@ export async function handleMove(o: HandleMoveOpts): Promise<void> {
   const oldPath = state.oldPath;
   const oldMeta = meta.getFileInfo(oldPath);
   if (!oldMeta?.fileId) {
-    console.error(`Skip move ${relPath}: no metadata for old path ${oldPath}`);
+    logger.error(`Skip move ${relPath}: no metadata for old path ${oldPath}`);
     stats.errors++;
     return;
   }

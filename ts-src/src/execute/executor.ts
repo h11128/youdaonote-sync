@@ -14,6 +14,7 @@ import { handleMove } from './move-handler.js';
 import { pLimit } from '../util/concurrency.js';
 import { readFileMtime } from '../util/utils.js';
 import { emptyStats, type ExecuteContext, type SyncStats } from './types.js';
+import { logger } from '../util/logger.js';
 
 export { emptyStats, type ExecuteContext, type SyncStats } from './types.js';
 
@@ -100,7 +101,7 @@ export async function executeAll(opts: ExecuteAllOpts): Promise<SyncStats> {
       stats.errors++;
       const detail = formatError(e);
       stats.failedFiles.push({ path: relPath, action, error: detail });
-      console.error(`Error processing dir ${relPath}: ${detail}`);
+      logger.error(`Error processing dir ${relPath}: ${detail}`);
     }
   }
 
@@ -146,13 +147,13 @@ async function runFileEntries(
       await executeSingle({ relPath, state, action, cloud, ctx, stats, direction });
       done++;
       const sym = ACTION_SYMBOLS[action] ?? '?';
-      console.log(`  [${done}/${total}] ${sym} ${relPath}`);
+      logger.info(`[${done}/${total}] ${sym} ${relPath}`);
     } catch (e: unknown) {
       done++;
       stats.errors++;
       const detail = formatError(e);
       stats.failedFiles.push({ path: relPath, action, error: detail });
-      console.error(`  [${done}/${total}] ✗ ${relPath}: ${detail}`);
+      logger.error(`[${done}/${total}] ✗ ${relPath}: ${detail}`);
     }
   };
 
@@ -275,7 +276,7 @@ async function handleDeleteCloud(o: {
 }): Promise<void> {
   const { relPath, cloudFile, ctx, stats } = o;
   if (!cloudFile?.id) {
-    console.error(`Skip deleteCloud ${relPath}: missing cloud file id`);
+    logger.error(`Skip deleteCloud ${relPath}: missing cloud file id`);
     stats.errors++;
     return;
   }
@@ -315,7 +316,7 @@ async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
   const handlers: Record<SyncAction, () => Promise<void>> = {
     download: () => {
       if (!cloudFile) {
-        console.error(`Skip download ${relPath}: missing cloud file info`);
+        logger.error(`Skip download ${relPath}: missing cloud file info`);
         stats.errors++;
         return Promise.resolve();
       }

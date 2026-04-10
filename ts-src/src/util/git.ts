@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RelPath } from '../types/common.js';
 import { requireNonEmpty } from './preconditions.js';
+import { logger } from './logger.js';
 
 export interface GitCommitOpts {
   message?: string;
@@ -130,7 +131,7 @@ function decryptGitCrypt(encrypted: Buffer, cwd: string): Buffer | null {
       }),
     );
   } catch (e: unknown) {
-    console.warn(`[git] git-crypt smudge failed: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn(`[git] git-crypt smudge failed: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 }

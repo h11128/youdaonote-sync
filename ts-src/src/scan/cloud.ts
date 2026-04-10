@@ -10,6 +10,7 @@ import {
 import type { DirInfoByIdResponse } from '../types/dir.js';
 import type { CloudFile } from '../types/scan.js';
 import { mapCloudName } from './name.js';
+import { logger } from '../util/logger.js';
 
 /**
  * Interface for the directory listing API.
@@ -152,7 +153,7 @@ async function fetchDir(
   try {
     data = await api.getDirInfoById(dirId);
   } catch (e: unknown) {
-    console.warn(
+    logger.warn(
       `Cloud scan: failed to list dir ${dirId} at "${basePath}": ${e instanceof Error ? e.message : String(e)}`,
     );
     return { entries: [], subdirs: [] };

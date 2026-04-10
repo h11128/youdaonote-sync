@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import { normalize } from 'node:path';
 import { SyncEngine } from './engine.js';
 import type { SyncEngineConfig } from '../types/engine-config.js';
+import { logger } from '../util/logger.js';
 
 /**
  * Sync watcher with local filesystem monitoring + cloud polling.
@@ -33,11 +34,11 @@ export class SyncWatcher {
   async start(): Promise<void> {
     if (this.pollTimer) return;
 
-    console.log(`Watcher started`);
-    console.log(`  Local dir: ${this.localDir}`);
-    console.log(`  Cloud poll interval: ${this.pollIntervalMs / 1000}s`);
-    console.log(`  Local change debounce: ${this.debounceMs / 1000}s`);
-    console.log(`  Press Ctrl+C to stop\n`);
+    logger.info('Watcher started');
+    logger.info(`Local dir: ${this.localDir}`);
+    logger.info(`Cloud poll interval: ${this.pollIntervalMs / 1000}s`);
+    logger.info(`Local change debounce: ${this.debounceMs / 1000}s`);
+    logger.info('Press Ctrl+C to stop\n');
 
     // Initial full sync
     await this.doSync('Initial full sync');
@@ -65,7 +66,7 @@ export class SyncWatcher {
       this.fsWatcher = null;
     }
     this.engine.close();
-    console.log('Watcher stopped');
+    logger.info('Watcher stopped');
   }
 
   private startFsWatch(): void {
@@ -79,10 +80,10 @@ export class SyncWatcher {
         this.scheduleDebounce();
       });
       this.fsWatcher.on('error', (err) => {
-        console.error(`FS watch error: ${err.message}`);
+        logger.error(`FS watch error: ${err.message}`);
       });
     } catch (e: unknown) {
-      console.warn(
+      logger.warn(
         `Could not start filesystem watcher: ${e instanceof Error ? e.message : String(e)}\n` +
           `Falling back to poll-only mode.`,
       );
@@ -113,7 +114,7 @@ export class SyncWatcher {
     this.syncing = true;
 
     const now = new Date().toLocaleTimeString('en-US', { hour12: false });
-    console.log(`\n[${now}] ${reason}`);
+    logger.info(`[${now}] ${reason}`);
 
     try {
       const result = await this.engine.sync();
@@ -123,12 +124,12 @@ export class SyncWatcher {
         let line = `  Downloaded ${s.downloaded}, Uploaded ${s.uploaded}`;
         if (s.conflicts) line += `, Conflicts ${s.conflicts}`;
         if (s.moved) line += `, Moved ${s.moved}`;
-        console.log(line);
+        logger.info(line);
       } else {
-        console.log('  No changes');
+        logger.info('No changes');
       }
     } catch (e: unknown) {
-      console.error(`  Sync failed: ${e instanceof Error ? e.message : String(e)}`);
+      logger.error(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       this.syncing = false;
     }

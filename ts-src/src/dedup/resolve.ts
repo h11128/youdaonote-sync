@@ -4,6 +4,7 @@ import type { ContentHash, RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { DedupAction, DedupStats } from './types.js';
 import { isAsset } from './types.js';
+import { logger } from '../util/logger.js';
 
 /**
  * Collision protection: verify files with same hash also have same size.
@@ -37,7 +38,7 @@ export function classifyDuplicates(
   for (const [hash, paths] of rawGroups) {
     const bySize = groupBySize(paths, root, stats);
     if (bySize.size > 1) {
-      console.warn(
+      logger.warn(
         `[dedup] hash collision: ${hash} has ${bySize.size} different sizes — possible hash collision`,
       );
     }

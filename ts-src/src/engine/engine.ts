@@ -18,6 +18,7 @@ import { computeContentHashFromBytes, computeHashesConcurrent, initXxhash } from
 import type { HashFileEntry } from '../algo/hash.js';
 import { SyncLock } from '../util/lock.js';
 import { discardOrphanDuplicates } from '../dedup/index.js';
+import { logger } from '../util/logger.js';
 import { tryCachedCloudScan, saveScanVersion, fetchCurrentVersion } from '../scan/cloud-cache.js';
 import { runExecuteSync, runPostSyncCleanup } from './execute.js';
 export type { SyncDirection } from '../types/common.js';
@@ -77,7 +78,7 @@ export class SyncEngine {
 
     const lock = new SyncLock(this.config.localDir);
     if (!this.config.dryRun && !lock.acquire()) {
-      console.error('Cannot acquire sync lock — another sync process is running');
+      logger.error('Cannot acquire sync lock — another sync process is running');
       return { stats: emptyStats(), classified: new Map() as Map<RelPath, FileState> };
     }
 

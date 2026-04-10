@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { pLimit } from '../util/concurrency.js';
+import { logger } from '../util/logger.js';
 
 const IMAGE_URL_RE = /!\[.*?\]\((.*?note\.youdao\.com.*?)\)/g;
 const ATTACH_URL_RE = /\[(.*?)\]\(((https?):\/\/note\.youdao\.com.*?)\)/g;
@@ -27,7 +28,7 @@ export async function downloadAsset(
     writeFileSync(localPath, data);
     return localPath;
   } catch (e: unknown) {
-    console.warn(`[images] failed to download asset ${url}: ${String(e)}`);
+    logger.warn(`[images] failed to download asset ${url}: ${String(e)}`);
     return null;
   }
 }

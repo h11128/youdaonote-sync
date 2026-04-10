@@ -16,6 +16,7 @@ import { detectFileType, convertToMarkdown } from './download.js';
 import { threeWayMerge } from '../algo/merge.js';
 import { getFileContentFromGit } from '../util/git.js';
 import { readFileMtime } from '../util/utils.js';
+import { logger } from '../util/logger.js';
 
 const MERGEABLE_EXTS = new Set(['.md', '.txt']);
 
@@ -126,7 +127,7 @@ async function uploadMergedFile(opts: {
     });
     return 'merged';
   } catch (e: unknown) {
-    console.warn(
+    logger.warn(
       `[diff3] merge succeeded but upload failed for ${relPath}: ${e instanceof Error ? e.message : String(e)}`,
     );
     // Merge was clean — keep the merged local file. Record sync using the

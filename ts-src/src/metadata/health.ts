@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { type ContentHash, type RelPath, asEpochSeconds } from '../types/common.js';
 import type { MetadataStore } from './store.js';
 import { computeContentHashFromFile } from '../algo/hash.js';
+import { logger } from '../util/logger.js';
 
 export enum VerifyIssueType {
   ORPHAN = 'orphan',
@@ -64,7 +65,7 @@ function applyVerifyFixes(meta: MetadataStore, localDir: string, issues: VerifyI
           if (actual) {
             meta.updateContentHash(issue.path, actual);
           } else {
-            console.warn(`verify: hash computation failed for ${issue.path}`);
+            logger.warn(`verify: hash computation failed for ${issue.path}`);
           }
           break;
         }
@@ -168,7 +169,6 @@ export interface HealStats {
 }
 
 type MutableHealStats = { -readonly [K in keyof HealStats]: HealStats[K] };
-
 function healOrphanRecords(
   meta: MetadataStore,
   localDir: string,

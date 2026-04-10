@@ -4,6 +4,7 @@ import type { LocalFile } from '../types/scan.js';
 import { asEpochSeconds, asRelPath, type RelPath } from '../types/common.js';
 import { normalizeSep, mapCloudName, compileFilter } from './name.js';
 import { requireNonEmpty } from '../util/preconditions.js';
+import { logger } from '../util/logger.js';
 export { patternToRegex } from './name.js';
 
 const LOCAL_ARTIFACT_DIRS = new Set(['images', 'attachments']);
@@ -55,7 +56,7 @@ function processEntry(
       addLocalFile(join(scanDir, entry.name), entry.name, localDir, result);
     }
   } catch (e: unknown) {
-    console.warn(`[scan] cannot access ${join(scanDir, entry.name)}: ${String(e)}`);
+    logger.warn(`[scan] cannot access ${join(scanDir, entry.name)}: ${String(e)}`);
   }
 }
 
@@ -72,7 +73,7 @@ export function scanLocal(
   try {
     entries = readdirSync(scanDir, READDIR_OPTS);
   } catch (e: unknown) {
-    console.warn(`[scan] cannot read directory ${scanDir}: ${String(e)}`);
+    logger.warn(`[scan] cannot read directory ${scanDir}: ${String(e)}`);
     return result;
   }
 
@@ -103,7 +104,7 @@ function scandirRecursive(dirpath: string, localDir: string): Map<RelPath, Local
   try {
     entries = readdirSync(dirpath, READDIR_OPTS);
   } catch (e: unknown) {
-    console.warn(`[scan] cannot read directory ${dirpath}: ${String(e)}`);
+    logger.warn(`[scan] cannot read directory ${dirpath}: ${String(e)}`);
     return target;
   }
   for (const entry of entries) {

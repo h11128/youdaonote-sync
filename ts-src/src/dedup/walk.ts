@@ -2,6 +2,7 @@ import { join, relative } from 'node:path';
 import { readdirSync, statSync } from 'node:fs';
 import { asEpochSeconds, asRelPath, type EpochSeconds, type RelPath } from '../types/common.js';
 import { requireNonEmpty } from '../util/preconditions.js';
+import { logger } from '../util/logger.js';
 
 export interface WalkEntry {
   rel: RelPath;
@@ -21,7 +22,7 @@ export function walkFiles(dir: string, root: string, cb: (entry: WalkEntry) => v
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch (e: unknown) {
-    console.warn(`[walk] cannot read directory ${dir}: ${String(e)}`);
+    logger.warn(`[walk] cannot read directory ${dir}: ${String(e)}`);
     return;
   }
   for (const ent of entries) {

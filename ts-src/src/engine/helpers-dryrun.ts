@@ -6,6 +6,7 @@ import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import { requireNonEmpty } from '../util/preconditions.js';
 import { emptyStats, type SyncStats } from '../execute/executor.js';
+import { logger } from '../util/logger.js';
 
 const REPORT_ORDER: SyncAction[] = [
   'download',
@@ -63,7 +64,7 @@ export function printPreview(
     (groups[action] ??= []).push(path);
   }
 
-  console.log('\n=== Dry-Run Preview ===\n');
+  logger.info('\n=== Dry-Run Preview ===\n');
   const order: SyncAction[] = [
     'download',
     'upload',
@@ -83,9 +84,9 @@ export function printPreview(
   for (const action of order) {
     const paths = groups[action];
     if (!paths?.length) continue;
-    console.log(`${labels[action]} (${paths.length}):`);
-    for (const p of paths) console.log(`  ${p}`);
-    console.log();
+    logger.info(`${labels[action]} (${paths.length}):`);
+    for (const p of paths) logger.info(`  ${p}`);
+    logger.info('');
   }
 }
 
@@ -127,14 +128,14 @@ export function printDryrunSummary(
     }
   }
   const total = dl + ul + conflict + move + delCloud + delLocal;
-  console.log('=== Dry-Run Summary ===');
-  console.log(`  Total changes: ${total} (${skip} unchanged)`);
-  if (dl) console.log(`  Downloads:     ${dl}`);
-  if (ul) console.log(`  Uploads:       ${ul}`);
-  if (conflict) console.log(`  Conflicts:     ${conflict}`);
-  if (move) console.log(`  Moves:         ${move}`);
-  if (delCloud) console.log(`  Delete cloud:  ${delCloud}`);
-  if (delLocal) console.log(`  Delete local:  ${delLocal}`);
+  logger.info('=== Dry-Run Summary ===');
+  logger.info(`Total changes: ${total} (${skip} unchanged)`);
+  if (dl) logger.info(`Downloads:     ${dl}`);
+  if (ul) logger.info(`Uploads:       ${ul}`);
+  if (conflict) logger.info(`Conflicts:     ${conflict}`);
+  if (move) logger.info(`Moves:         ${move}`);
+  if (delCloud) logger.info(`Delete cloud:  ${delCloud}`);
+  if (delLocal) logger.info(`Delete local:  ${delLocal}`);
 }
 
 function collectUploadWarnings(
@@ -168,17 +169,17 @@ function collectUploadWarnings(
 }
 
 function printUploadWarnings(warnings: { path: RelPath; reasons: string[] }[]): void {
-  console.log();
-  console.log('='.repeat(60));
-  console.log(`  ⚠ 可疑 UPLOAD 诊断（${warnings.length} 个文件）`);
-  console.log('='.repeat(60));
-  console.log('  以下文件标记为上传，但 metadata 显示它们曾与云端关联。');
-  console.log();
+  logger.warn('');
+  logger.warn('='.repeat(60));
+  logger.warn(`⚠ 可疑 UPLOAD 诊断（${warnings.length} 个文件）`);
+  logger.warn('='.repeat(60));
+  logger.warn('以下文件标记为上传，但 metadata 显示它们曾与云端关联。');
+  logger.warn('');
   for (const { path, reasons } of warnings) {
-    console.log(`  ${path}`);
-    for (const r of reasons) console.log(`    → ${r}`);
+    logger.warn(`  ${path}`);
+    for (const r of reasons) logger.warn(`    → ${r}`);
   }
-  console.log();
+  logger.warn('');
 }
 
 /** Diagnose suspicious UPLOADs and optionally write a markdown report. */
@@ -204,7 +205,7 @@ export function diagnoseDryrun(
       opts.reportBaseDir,
       opts.deleteOverrides,
     );
-    console.log(`\n📄 Report saved to: ${reportPath}`);
+    logger.info(`\n📄 Report saved to: ${reportPath}`);
   }
 }
 

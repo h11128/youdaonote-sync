@@ -7,6 +7,7 @@ import { emptyDedupStats } from './types.js';
 import { buildHashIndex, type BuildIndexOpts } from './hash-index.js';
 import { buildRefIndex } from './refs.js';
 import { classifyDuplicates, resolveGroup } from './resolve.js';
+import { logger } from '../util/logger.js';
 
 function removeEmptyParents(filePath: string, root: string): void {
   let parent = dirname(filePath);
@@ -40,8 +41,8 @@ function handleDryRunAction(
   reason: string,
 ): void {
   const cloudTag = cloudFileId ? ' + 云端' : '';
-  console.log(`  [去重] 删除${cloudTag} ${removePath}`);
-  console.log(`         ${reason}`);
+  logger.info(`[去重] 删除${cloudTag} ${removePath}`);
+  logger.info(`       ${reason}`);
 }
 
 interface LocalRemovalResult {

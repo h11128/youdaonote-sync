@@ -14,6 +14,7 @@ import { uploadFile, type UploadFileOpts } from './upload.js';
 import type { ExecuteContext, SyncStats } from './types.js';
 
 import { readFileMtime } from '../util/utils.js';
+import { logger } from '../util/logger.js';
 
 /**
  * Create a conflict backup of a file.
@@ -43,7 +44,7 @@ export function backupFile(filePath: string): string | null {
     copyFileSync(filePath, backupPath);
     return backupPath;
   } catch (e: unknown) {
-    console.warn(`[conflict] failed to backup ${filePath}: ${String(e)}`);
+    logger.warn(`[conflict] failed to backup ${filePath}: ${String(e)}`);
     return null;
   }
 }

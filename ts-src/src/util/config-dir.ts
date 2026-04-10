@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { logger } from './logger.js';
 
 /**
  * Resolve the youdaonote-sync config directory.
@@ -65,20 +66,20 @@ export function migrateConfigFiles(oldDir: string, newDir: string): string[] {
     const dest = join(newDir, file);
     if (!existsSync(src)) continue;
     if (existsSync(dest)) {
-      console.warn(`  [migrate] Skipped ${file} (already exists at destination)`);
+      logger.warn(`[migrate] Skipped ${file} (already exists at destination)`);
       continue;
     }
     try {
       copyFileSync(src, dest);
       copied.push(file);
     } catch (e: unknown) {
-      console.error(
-        `  [migrate] Failed to copy ${file}: ${e instanceof Error ? e.message : String(e)}`,
+      logger.error(
+        `[migrate] Failed to copy ${file}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
   if (copied.length > 0) {
-    console.log(`[migrate] Copied ${copied.join(', ')} from ${oldDir} → ${newDir}`);
+    logger.info(`[migrate] Copied ${copied.join(', ')} from ${oldDir} → ${newDir}`);
   }
   return copied;
 }
