@@ -1,120 +1,12 @@
-type JsonNode = Record<string, unknown>;
-
-function generateId(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let prefix = '';
-  for (let i = 0; i < 4; i++) {
-    prefix += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  const ts = String(Date.now()).slice(-13);
-  return prefix + '-' + ts;
-}
-
-// Inline Markdown tokens in priority order:
-// 1. bold+italic (***text***), 2. bold (**text**), 3. italic (*text*),
-// 4. links [text](url)
-// Inline code is intentionally NOT matched — Youdao Note JSON has no inline code
-// attribute, so backticks are preserved as literal text for roundtrip fidelity.
-const INLINE_RE = /(\*{3})(.+?)\1|(\*{2})(.+?)\3|(\*)(.+?)\5|\[([^\]]+)\]\(([^)]+)\)/g;
-
-interface InlineToken {
-  text: string;
-  bold?: boolean;
-  italic?: boolean;
-  href?: string;
-}
-
-function tokenizeInline(text: string): InlineToken[] {
-  const tokens: InlineToken[] = [];
-  let lastIndex = 0;
-
-  for (const m of text.matchAll(INLINE_RE)) {
-    const start = m.index;
-    if (start > lastIndex) {
-      tokens.push({ text: text.slice(lastIndex, start) });
-    }
-
-    if (m[1] === '***' && m[2]) {
-      tokens.push({ text: m[2], bold: true, italic: true });
-    } else if (m[3] === '**' && m[4]) {
-      tokens.push({ text: m[4], bold: true });
-    } else if (m[5] === '*' && m[6]) {
-      tokens.push({ text: m[6], italic: true });
-    } else if (m[7] && m[8]) {
-      tokens.push({ text: m[7], href: m[8] });
-    }
-
-    lastIndex = start + m[0].length;
-  }
-
-  if (lastIndex < text.length) {
-    tokens.push({ text: text.slice(lastIndex) });
-  }
-
-  return tokens;
-}
-
-function createSpanNode(text: string, attrs?: JsonNode[]): JsonNode {
-  const node: JsonNode = { '8': text };
-  if (attrs?.length) node['9'] = attrs;
-  return node;
-}
-
-function buildSpanAttrs(token: InlineToken): JsonNode[] | undefined {
-  const attrs: JsonNode[] = [];
-  if (token.bold) attrs.push({ '2': 'b' });
-  if (token.italic) attrs.push({ '2': 'i' });
-  return attrs.length ? attrs : undefined;
-}
-
-/**
- * Parse inline Markdown in text and return an array of children for a text line.
- * Links become `"6":"li"` child nodes; bold/italic become span attributes.
- * Plain text and inline code become simple spans.
- */
-function parseInlineToChildren(text: string): JsonNode[] {
-  const tokens = tokenizeInline(text);
-  if (!tokens.length) return [makeSpanLine([createSpanNode(text)])];
-
-  const children: JsonNode[] = [];
-  let pendingSpans: JsonNode[] = [];
-
-  const flushSpans = (): void => {
-    if (pendingSpans.length) {
-      children.push(makeSpanLine(pendingSpans));
-      pendingSpans = [];
-    }
-  };
-
-  for (const token of tokens) {
-    if (token.href) {
-      flushSpans();
-      children.push(createLinkChild(token.text, token.href));
-    } else {
-      pendingSpans.push(createSpanNode(token.text, buildSpanAttrs(token)));
-    }
-  }
-
-  flushSpans();
-  return children;
-}
-
-function makeSpanLine(spans: JsonNode[]): JsonNode {
-  return { '2': '2', '3': generateId(), '7': spans };
-}
-
-function createElement(typeCode?: string, attrs?: JsonNode, children?: JsonNode[]): JsonNode {
-  const elem: JsonNode = { '3': generateId() };
-  if (attrs) elem['4'] = attrs;
-  if (children !== undefined) elem['5'] = children;
-  if (typeCode) elem['6'] = typeCode;
-  return elem;
-}
-
-function createLinkChild(text: string, url: string): JsonNode {
-  const spanLine = makeSpanLine([createSpanNode(text)]);
-  return { '3': generateId(), '4': { hf: url }, '5': [spanLine], '6': 'li' };
-}
+import { mermaidToPlantUml } from './mermaid-to-plantuml.js';
+import {
+  type JsonNode,
+  generateId,
+  createSpanNode,
+  parseInlineToChildren,
+  makeSpanLine,
+  createElement,
+} from './note-json-builders.js';
 
 function createParagraph(text: string): JsonNode {
   return createElement(undefined, undefined, parseInlineToChildren(text));
@@ -135,6 +27,24 @@ function createCodeBlock(code: string, language = ''): JsonNode {
     return createElement(undefined, undefined, [makeSpanLine(spans)]);
   });
   return createElement('cd', { la: language }, lines);
+}
+
+const DIAGRAM_LANGUAGES = new Set(['mermaid', 'plantuml', 'puml', 'uml']);
+
+function isDiagramLanguage(lang: string): boolean {
+  return DIAGRAM_LANGUAGES.has(lang.toLowerCase());
+}
+
+function createDiagramBlock(code: string, language: string): JsonNode {
+  let diagramCode = code;
+  if (language.toLowerCase() === 'mermaid') {
+    diagramCode = mermaidToPlantUml(code);
+  }
+  const lines = diagramCode.split('\n').map((ln) => {
+    const spans = [createSpanNode(ln)];
+    return createElement('cl', undefined, [makeSpanLine(spans)]);
+  });
+  return createElement('diagram', { la: 'PlantUML' }, lines);
 }
 
 function createQuote(text: string): JsonNode {
@@ -165,7 +75,6 @@ function createTable(rows: string[][]): JsonNode {
   const rowNodes = normalizedRows.map((r) => createTableRow(r));
   const attrs = {
     version: 1,
-    // Native notes include these geometry arrays; desktop rendering expects them.
     cw: Array.from({ length: colCount }, () => 120),
     rh: Array.from({ length: rowNodes.length }, () => 40),
   };
@@ -297,8 +206,33 @@ function collectTableRows(
   return { tableRows, nextI: i };
 }
 
-export function markdownToNoteJson(mdContent: string): string {
-  const lines = mdContent.split('\n');
+function tryParseCodeFence(lines: string[], i: number): { node: JsonNode; nextI: number } | null {
+  const codeMatch = /^```(\w*)$/.exec(lines[i] ?? '');
+  if (!codeMatch) return null;
+  const lang = codeMatch[1] ?? '';
+  const { codeLines, nextI } = collectCodeLines(lines, i + 1);
+  const codeContent = codeLines.join('\n');
+  const node = isDiagramLanguage(lang)
+    ? createDiagramBlock(codeContent, lang)
+    : createCodeBlock(codeContent, lang);
+  return { node, nextI: nextI + 1 };
+}
+
+function tryParseQuote(lines: string[], i: number): { node: JsonNode; nextI: number } | null {
+  if (!(lines[i] ?? '').startsWith('>')) return null;
+  const { quoteLines, nextI } = collectQuoteLines(lines, i);
+  return { node: createQuote(quoteLines.join('\n')), nextI };
+}
+
+function tryParseTable(lines: string[], i: number): { node: JsonNode; nextI: number } | null {
+  const trimmed = (lines[i] ?? '').trim();
+  if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return null;
+  const { tableRows, nextI } = collectTableRows(lines, i);
+  if (!tableRows.length) return null;
+  return { node: createTable(tableRows), nextI };
+}
+
+function parseBlocks(lines: string[]): JsonNode[] {
   const contentList: JsonNode[] = [];
   let i = 0;
 
@@ -306,49 +240,50 @@ export function markdownToNoteJson(mdContent: string): string {
     const line = lines[i];
     if (line === undefined) break;
 
-    const codeMatch = /^```(\w*)$/.exec(line);
-    if (codeMatch) {
-      const { codeLines, nextI } = collectCodeLines(lines, i + 1);
-      contentList.push(createCodeBlock(codeLines.join('\n'), codeMatch[1] ?? ''));
-      i = nextI + 1;
-      continue;
-    }
-
     if (!line.trim()) {
       i++;
       continue;
     }
 
-    if (line.startsWith('>')) {
-      const { quoteLines, nextI } = collectQuoteLines(lines, i);
-      contentList.push(createQuote(quoteLines.join('\n')));
-      i = nextI;
+    const fence = tryParseCodeFence(lines, i);
+    if (fence) {
+      contentList.push(fence.node);
+      i = fence.nextI;
       continue;
     }
 
-    const trimmedLine = line.trim();
-    if (trimmedLine.startsWith('|') && trimmedLine.endsWith('|')) {
-      const { tableRows, nextI } = collectTableRows(lines, i);
-      if (tableRows.length) {
-        contentList.push(createTable(tableRows));
-        i = nextI;
-        continue;
-      }
+    const quote = tryParseQuote(lines, i);
+    if (quote) {
+      contentList.push(quote.node);
+      i = quote.nextI;
+      continue;
+    }
+
+    const table = tryParseTable(lines, i);
+    if (table) {
+      contentList.push(table.node);
+      i = table.nextI;
+      continue;
     }
 
     contentList.push(parseMarkdownLine(line));
     i++;
   }
 
-  const docId = generateId();
-  const result = {
+  return contentList;
+}
+
+function wrapDocument(contentList: JsonNode[]): string {
+  return JSON.stringify({
     '2': '1',
-    '3': docId,
+    '3': generateId(),
     '4': { version: 1, incompatibleVersion: 0, fv: '0' },
     '5': contentList,
     title: '',
     __compress__: true,
-  };
+  });
+}
 
-  return JSON.stringify(result);
+export function markdownToNoteJson(mdContent: string): string {
+  return wrapDocument(parseBlocks(mdContent.split('\n')));
 }

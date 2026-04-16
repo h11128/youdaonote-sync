@@ -1,3 +1,6 @@
+import { isMermaidConvertedPlantUml } from './mermaid-to-plantuml.js';
+import { plantumlToMermaid } from './plantuml-to-mermaid.js';
+
 const F_ATTRS = '4';
 const F_CHILDREN = '5';
 const F_TYPE = '6';
@@ -187,6 +190,24 @@ function convertTable(content: JsonNode): string {
   return tableLines;
 }
 
+function convertDiagram(content: JsonNode): string {
+  const codes = (content[F_CHILDREN] as JsonNode[] | undefined) ?? [];
+  let codeBlock = '';
+  for (const code of codes) {
+    codeBlock += getCommonText(code) + '\n';
+  }
+
+  if (isMermaidConvertedPlantUml(codeBlock)) {
+    const mermaidCode = plantumlToMermaid(codeBlock.trim());
+    return `\`\`\`mermaid\n${mermaidCode}\n\`\`\``;
+  }
+
+  const attrs = (content[F_ATTRS] as JsonNode | undefined) ?? {};
+  const rawLang = safeStr(attrs.la);
+  const lang = rawLang.toLowerCase() === 'mermaid' ? 'mermaid' : 'plantuml';
+  return `\`\`\`${lang}\n${codeBlock}\`\`\``;
+}
+
 const TYPE_CONVERTERS: Record<string, (content: JsonNode) => string> = {
   h: convertHeading,
   im: convertImage,
@@ -196,6 +217,7 @@ const TYPE_CONVERTERS: Record<string, (content: JsonNode) => string> = {
   q: convertQuote,
   l: convertList,
   t: convertTable,
+  diagram: convertDiagram,
 };
 
 /**

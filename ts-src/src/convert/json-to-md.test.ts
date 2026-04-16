@@ -186,6 +186,62 @@ describe('jsonBytesToMarkdown — links, images, code', () => {
   });
 });
 
+describe('jsonBytesToMarkdown — diagram blocks', () => {
+  it('converts Mermaid diagram to mermaid code fence', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { la: 'Mermaid' },
+          '5': [
+            { '5': [{ '7': [{ '8': 'graph LR' }] }], '6': 'cl' },
+            { '5': [{ '7': [{ '8': '  A --> B' }] }], '6': 'cl' },
+          ],
+          '6': 'diagram',
+        },
+      ],
+    });
+    const result = jsonBytesToMarkdown(data);
+    expect(result).toContain('```mermaid');
+    expect(result).toContain('graph LR');
+    expect(result).toContain('  A --> B');
+    expect(result).toContain('```');
+  });
+
+  it('converts PlantUML diagram to plantuml code fence', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { la: 'PlantUML' },
+          '5': [
+            { '5': [{ '7': [{ '8': '@startuml' }] }], '6': 'cl' },
+            { '5': [{ '7': [{ '8': 'A -> B' }] }], '6': 'cl' },
+            { '5': [{ '7': [{ '8': '@enduml' }] }], '6': 'cl' },
+          ],
+          '6': 'diagram',
+        },
+      ],
+    });
+    const result = jsonBytesToMarkdown(data);
+    expect(result).toContain('```plantuml');
+    expect(result).toContain('@startuml');
+    expect(result).toContain('A -> B');
+  });
+
+  it('unknown diagram language defaults to plantuml', () => {
+    const data = encode({
+      '5': [
+        {
+          '4': { la: 'SomeOther' },
+          '5': [{ '5': [{ '7': [{ '8': 'content' }] }], '6': 'cl' }],
+          '6': 'diagram',
+        },
+      ],
+    });
+    const result = jsonBytesToMarkdown(data);
+    expect(result).toContain('```plantuml');
+  });
+});
+
 describe('jsonBytesToMarkdown — multi-children blocks', () => {
   it('heading with link child reads all children', () => {
     const data = encode({

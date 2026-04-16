@@ -48,6 +48,30 @@ describe('markdownToNoteJson — structure', () => {
     expect((codeBlock!['4'] as N).la).toBe('python');
   });
 
+  it('handles mermaid as diagram node (converted to PlantUML)', () => {
+    const all = blocks('```mermaid\ngraph LR\n  A --> B\n```');
+    const diagram = all.find((e) => e['6'] === 'diagram');
+    expect(diagram).toBeDefined();
+    expect((diagram!['4'] as N).la).toBe('PlantUML');
+    expect(all.find((e) => e['6'] === 'cd')).toBeUndefined();
+  });
+
+  it('handles plantuml as diagram node', () => {
+    const all = blocks('```plantuml\n@startuml\nA -> B\n@enduml\n```');
+    const diagram = all.find((e) => e['6'] === 'diagram');
+    expect(diagram).toBeDefined();
+    expect((diagram!['4'] as N).la).toBe('PlantUML');
+  });
+
+  it('diagram children use "cl" type', () => {
+    const all = blocks('```mermaid\ngraph LR\n```');
+    const diagram = all.find((e) => e['6'] === 'diagram');
+    expect(diagram).toBeDefined();
+    const children = diagram?.['5'] as N[] | undefined;
+    expect(children?.length).toBeGreaterThan(0);
+    expect(children?.[0]?.['6']).toBe('cl');
+  });
+
   it('handles unordered lists', () => {
     const first = firstBlock('- item one');
     expect(first['6']).toBe('l');
@@ -241,6 +265,11 @@ describe('roundtrip: md -> note JSON -> md', () => {
       expected: '| H1 | H2 |\n| -- | -- |\n| A | B |\n| C | D |',
     },
     { name: 'HR', md: '---', expected: '---' },
+    {
+      name: 'plantuml diagram',
+      md: '```plantuml\n@startuml\nA -> B\n@enduml\n```',
+      expected: '```plantuml\n@startuml\nA -> B\n@enduml\n```',
+    },
   ];
 
   for (const { name, md, expected } of cases) {
