@@ -1,8 +1,9 @@
 # RFC: 确定性护栏（Deterministic Guardrails）
 
-> 状态：Draft
-> 创建时间：2026-04-08
-> 作者：Jason (via Cursor)
+> 状态：Draft — 尚未实现  
+> 创建时间：2026-04-08  
+> 最后更新：2026-04-15  
+> 作者：Jason (via Cursor)  
 > 动机来源：[Claude Code 分析 §2.3](../../myforge/docs/claude-code-leak-analysis.md)
 
 ---
@@ -56,8 +57,11 @@ if (cloudFiles.length === 0 && localFiles.length > 0) {
 
 ## 4. 里程碑
 
-| Phase | 内容 | 产出 |
-|---|---|---|
-| 1 | 删除阈值 + 空列表保护 | guardrails 模块 |
-| 2 | 操作溯源字段 | sync_log schema 变更 |
-| 3 | dry-run 增强（suspended 时自动输出 diff 预览） | CLI 输出 |
+| Phase | 内容 | 产出 | 状态 |
+|---|---|---|---|
+| 1 | 删除阈值 + 空列表保护 | guardrails 模块 | ⬜ Not started |
+| 2 | 操作溯源字段 | sync_log schema 变更 | ⬜ Not started |
+| 3 | dry-run 增强（suspended 时自动输出 diff 预览） | CLI 输出 | ⬜ Not started |
+
+注：删除传播功能（`--propagate-deletes`）已在架构审查 Phase 6 中实现（含回收站机制），
+但本 RFC 的**阈值拦截**和**审计溯源**是独立的安全层，尚未开始。
