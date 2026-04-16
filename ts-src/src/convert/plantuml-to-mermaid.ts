@@ -12,6 +12,7 @@ interface PumlNode {
   label: string;
   color: string | undefined;
   textColor: string | undefined;
+  strokeColor: string | undefined;
 }
 
 interface PumlEdge {
@@ -22,7 +23,8 @@ interface PumlEdge {
 }
 
 const DIR_RE = /^(left to right|right to left|top to bottom) direction$/i;
-const RECT_RE = /^rectangle\s+"([^"]+)"\s+as\s+(\S+)(?:\s+#([^;\s]+)(?:;text:(\S+))?)?$/;
+const RECT_RE =
+  /^rectangle\s+"([^"]+)"\s+as\s+(\S+)(?:\s+#([^;\s]+)(?:;text:([^;\s]+))?(?:;line:(\S+))?)?$/;
 const EDGE_RE =
   /^(\S+)\s+(--|-->|\.\.>|\.\.|==>|==|-\[hidden\]->|-\[hidden\]-)\s+(\S+)(?:\s*:\s*(.+))?$/;
 
@@ -36,6 +38,25 @@ export function plantumlToMermaid(pumlCode: string): string {
 
   const { direction, nodes, edges } = parseLines(lines);
   return formatMermaid(direction, nodes, edges);
+}
+
+function parseRect(m: RegExpExecArray): PumlNode {
+  return {
+    id: m[2] ?? '',
+    label: m[1] ?? '',
+    color: m[3] ? `#${m[3]}` : undefined,
+    textColor: m[4] ? `#${m[4]}` : undefined,
+    strokeColor: m[5] ? `#${m[5]}` : undefined,
+  };
+}
+
+function parseEdge(m: RegExpExecArray): PumlEdge {
+  return {
+    from: m[1] ?? '',
+    to: m[3] ?? '',
+    label: m[4] ?? '',
+    style: mapEdgeStyle(m[2] ?? ''),
+  };
 }
 
 function parseLines(lines: string[]): {
@@ -56,23 +77,13 @@ function parseLines(lines: string[]): {
 
     const rectMatch = RECT_RE.exec(line);
     if (rectMatch) {
-      nodes.push({
-        id: rectMatch[2] ?? '',
-        label: rectMatch[1] ?? '',
-        color: rectMatch[3] ? `#${rectMatch[3]}` : undefined,
-        textColor: rectMatch[4] ? `#${rectMatch[4]}` : undefined,
-      });
+      nodes.push(parseRect(rectMatch));
       continue;
     }
 
     const edgeMatch = EDGE_RE.exec(line);
     if (edgeMatch) {
-      edges.push({
-        from: edgeMatch[1] ?? '',
-        to: edgeMatch[3] ?? '',
-        label: edgeMatch[4] ?? '',
-        style: mapEdgeStyle(edgeMatch[2] ?? ''),
-      });
+      edges.push(parseEdge(edgeMatch));
     }
   }
 
@@ -88,8 +99,10 @@ function mapDirection(d: string): string {
 
 function mapEdgeStyle(arrow: string): string {
   if (arrow === '--') return '---';
-  if (arrow === '..>' || arrow === '..') return arrow === '..' ? '-.-' : '-.->';
-  if (arrow === '==>' || arrow === '==') return arrow === '==' ? '===' : '==>';
+  if (arrow === '..') return '-.-';
+  if (arrow === '..>') return '-.->';
+  if (arrow === '==') return '===';
+  if (arrow === '==>') return '==>';
   if (arrow === '-[hidden]->' || arrow === '-[hidden]-') return '~~~';
   return '-->';
 }
@@ -112,6 +125,7 @@ function formatMermaid(direction: string, nodes: PumlNode[], edges: PumlEdge[]):
     if (node.color) {
       const parts = [`fill:${node.color}`];
       if (node.textColor) parts.push(`color:${node.textColor}`);
+      if (node.strokeColor) parts.push(`stroke:${node.strokeColor}`);
       out.push(`    style ${node.id} ${parts.join(',')}`);
     }
   }

@@ -1,21 +1,18 @@
-/** Convert Mermaid (flowchart/sequence/pie) to PlantUML with roundtrip marker. */
+/**
+ * Convert Mermaid flowchart syntax to PlantUML with a roundtrip marker.
+ *
+ * Only flowcharts are converted; sequence/pie/other types are returned as-is
+ * because the reverse path (plantuml-to-mermaid.ts) only supports flowcharts.
+ */
 
 export const MERMAID_SOURCE_MARKER = "' @source:mermaid";
 
 export function mermaidToPlantUml(mermaidCode: string): string {
   const lines = mermaidCode.trim().split('\n');
-  if (!lines.length) return mermaidCode;
-
   const firstLine = (lines[0] ?? '').trim().toLowerCase();
 
   if (firstLine.startsWith('graph') || firstLine.startsWith('flowchart')) {
     return convertFlowchart(lines);
-  }
-  if (firstLine.startsWith('sequencediagram')) {
-    return convertSequence(lines);
-  }
-  if (firstLine.startsWith('pie')) {
-    return convertPie(lines);
   }
 
   return mermaidCode;
@@ -33,12 +30,9 @@ const DIRECTION_MAP: Record<string, string> = {
   bt: '',
 };
 
-type NodeShape = 'rect' | 'round' | 'diamond' | 'circle' | 'default';
-
 interface FlowNode {
   id: string;
   label: string;
-  shape: NodeShape;
 }
 
 interface FlowEdge {
@@ -52,14 +46,6 @@ interface FlowEdge {
 interface FlowStyle {
   nodeId: string;
   props: Record<string, string>;
-}
-
-function detectShape(rect?: string, round?: string, diamond?: string, circle?: string): NodeShape {
-  if (rect) return 'rect';
-  if (round) return 'round';
-  if (diamond) return 'diamond';
-  if (circle) return 'circle';
-  return 'default';
 }
 
 function firstDefined(...values: (string | undefined)[]): string {
@@ -91,8 +77,7 @@ function parseNodeOnlyLine(line: string, nodes: Map<string, FlowNode>): boolean 
   if (!m) return false;
   const id = m[1] ?? '';
   const label = firstDefined(m[2], m[3], m[4], m[5]);
-  const shape = detectShape(m[2], m[3], m[4], m[5]);
-  registerNode(nodes, id, label, shape);
+  registerNode(nodes, id, label);
   return true;
 }
 
@@ -102,14 +87,12 @@ function parseEdgeLine(line: string, nodes: Map<string, FlowNode>, edges: FlowEd
 
   const fromId = m[1] ?? '';
   const fromLabel = firstDefined(m[2], m[3], m[4], m[5]);
-  const fromShape = detectShape(m[2], m[3], m[4], m[5]);
   const arrow = (m[6] ?? '').trim();
   const toId = m[7] ?? '';
   const toLabel = firstDefined(m[8], m[9], m[10], m[11]);
-  const toShape = detectShape(m[8], m[9], m[10], m[11]);
 
-  registerNode(nodes, fromId, fromLabel, fromShape);
-  registerNode(nodes, toId, toLabel, toShape);
+  registerNode(nodes, fromId, fromLabel);
+  registerNode(nodes, toId, toLabel);
 
   const directed = arrow.includes('>');
   const lineStyle = classifyLineStyle(arrow);
@@ -198,18 +181,12 @@ function resolveArrow(edge: FlowEdge): string {
   return '--';
 }
 
-function registerNode(
-  nodes: Map<string, FlowNode>,
-  id: string,
-  label: string,
-  shape: NodeShape,
-): void {
+function registerNode(nodes: Map<string, FlowNode>, id: string, label: string): void {
   const existing = nodes.get(id);
   if (!existing) {
-    nodes.set(id, { id, label: label || id, shape });
+    nodes.set(id, { id, label: label || id });
   } else if (label && !existing.label) {
     existing.label = label;
-    existing.shape = shape;
   }
 }
 
@@ -218,8 +195,12 @@ function buildColorMap(styles: FlowStyle[]): Map<string, string> {
   for (const s of styles) {
     const fill = s.props.fill;
     const fontColor = s.props.color;
+    const stroke = s.props.stroke;
     if (fill) {
-      map.set(s.nodeId, `#${stripHash(fill)}` + (fontColor ? `;text:${stripHash(fontColor)}` : ''));
+      let val = `#${stripHash(fill)}`;
+      if (fontColor) val += `;text:${stripHash(fontColor)}`;
+      if (stroke) val += `;line:${stripHash(stroke)}`;
+      map.set(s.nodeId, val);
     }
   }
   return map;
@@ -227,64 +208,4 @@ function buildColorMap(styles: FlowStyle[]): Map<string, string> {
 
 function stripHash(color: string): string {
   return color.startsWith('#') ? color.slice(1) : color;
-}
-
-const SEQ_MSG_RE = /^(\S+)\s*(->>|-->>|->>-|->|-->)\s*(\S+)\s*:\s*(.+)$/;
-const SEQ_NOTE_RE = /^note\s+(left|right)\s+of\s+(\S+)\s*:\s*(.+)$/i;
-
-function convertSequence(lines: string[]): string {
-  const out: string[] = [MERMAID_SOURCE_MARKER, '@startuml'];
-  for (let i = 1; i < lines.length; i++) {
-    const line = (lines[i] ?? '').trim();
-    if (!line || line.startsWith('%%')) continue;
-
-    const msgMatch = SEQ_MSG_RE.exec(line);
-    if (msgMatch) {
-      const pumlArrow = mapSeqArrow(msgMatch[2] ?? '');
-      out.push(`${msgMatch[1]} ${pumlArrow} ${msgMatch[3]} : ${msgMatch[4]}`);
-      continue;
-    }
-
-    if (/^participant\s+/i.test(line) || /^actor\s+/i.test(line)) {
-      out.push(line);
-      continue;
-    }
-
-    const noteMatch = SEQ_NOTE_RE.exec(line);
-    if (noteMatch) {
-      out.push(`note ${noteMatch[1]} of ${noteMatch[2]} : ${noteMatch[3]}`);
-    }
-  }
-  out.push('@enduml');
-  return out.join('\n');
-}
-
-function mapSeqArrow(mermaidArrow: string): string {
-  if (mermaidArrow === '->>') return '->>';
-  if (mermaidArrow === '-->>') return '-->>';
-  if (mermaidArrow === '-->') return '-->';
-  return '->';
-}
-
-function convertPie(lines: string[]): string {
-  const out: string[] = [MERMAID_SOURCE_MARKER, '@startuml'];
-  out.push('!include <C4/C4_Context>');
-
-  const slices: { label: string; value: number }[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = (lines[i] ?? '').trim();
-    const sliceMatch = /^"([^"]+)"\s*:\s*([\d.]+)$/.exec(line);
-    if (sliceMatch) {
-      slices.push({ label: sliceMatch[1] ?? '', value: parseFloat(sliceMatch[2] ?? '0') });
-    }
-  }
-
-  if (slices.length) {
-    out.push('@startjson');
-    out.push(JSON.stringify(Object.fromEntries(slices.map((s) => [s.label, s.value])), null, 2));
-    out.push('@endjson');
-  }
-
-  out.push('@enduml');
-  return out.join('\n');
 }
