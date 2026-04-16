@@ -130,25 +130,25 @@ describe('mermaidToPlantUml — complex graph', () => {
   });
 });
 
-describe('mermaidToPlantUml — sequence diagram', () => {
-  it('converts basic sequence', () => {
+describe('mermaidToPlantUml — unsupported diagram types returned as-is', () => {
+  it('returns sequence diagram as-is (no roundtrip reverse path)', () => {
     const mermaid = `sequenceDiagram
     Alice ->> Bob: Hello
     Bob -->> Alice: Hi back`;
 
     const result = mermaidToPlantUml(mermaid);
-    expect(result).toContain(MERMAID_SOURCE_MARKER);
-    expect(result).toContain('@startuml');
-    expect(result).toContain('Alice ->> Bob : Hello');
-    expect(result).toContain('Bob -->> Alice : Hi back');
-    expect(result).toContain('@enduml');
+    expect(result).toBe(mermaid);
+    expect(isMermaidConvertedPlantUml(result)).toBe(false);
   });
 
-  it('preserves participant declarations', () => {
-    const result = mermaidToPlantUml(
-      'sequenceDiagram\n    participant Alice\n    Alice ->> Bob: Hi',
-    );
-    expect(result).toContain('participant Alice');
+  it('returns pie chart as-is (no roundtrip reverse path)', () => {
+    const mermaid = `pie
+    "Cats" : 40
+    "Dogs" : 30`;
+
+    const result = mermaidToPlantUml(mermaid);
+    expect(result).toBe(mermaid);
+    expect(isMermaidConvertedPlantUml(result)).toBe(false);
   });
 });
 
@@ -264,6 +264,16 @@ rectangle "Node" as N #ff0000;text:ffffff
 
     const result = plantumlToMermaid(puml);
     expect(result).toContain('style N fill:#ff0000,color:#ffffff');
+  });
+
+  it('restores stroke color on roundtrip', () => {
+    const puml = `' @source:mermaid
+@startuml
+rectangle "Box" as B #2d6a4f;text:fff;line:1b4332
+@enduml`;
+
+    const result = plantumlToMermaid(puml);
+    expect(result).toContain('style B fill:#2d6a4f,color:#fff,stroke:#1b4332');
   });
 });
 
@@ -382,5 +392,7 @@ graph LR
     expect(result).toContain('B["🔧 工具 ×2"]');
     expect(result).toContain('## 本周进度');
     expect(result).not.toContain('@startuml');
+    expect(result).toContain('stroke:#1b4332');
+    expect(result).toContain('stroke:#0d1b2a');
   });
 });

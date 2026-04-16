@@ -1,4 +1,5 @@
 import { isMermaidConvertedPlantUml } from './mermaid-to-plantuml.js';
+import type { JsonNode } from './note-json-builders.js';
 import { plantumlToMermaid } from './plantuml-to-mermaid.js';
 
 const F_ATTRS = '4';
@@ -8,8 +9,6 @@ const F_SPANS = '7';
 const F_TEXT = '8';
 const F_TEXT_ATTRS = '9';
 const F_ATTR_TYPE = '2';
-
-type JsonNode = Record<string, unknown>;
 
 function getCommonText(content: JsonNode): string {
   let allText = '';

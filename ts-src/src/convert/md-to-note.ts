@@ -207,7 +207,7 @@ function collectTableRows(
 }
 
 function tryParseCodeFence(lines: string[], i: number): { node: JsonNode; nextI: number } | null {
-  const codeMatch = /^```(\w*)$/.exec(lines[i] ?? '');
+  const codeMatch = /^```(\w*)\s*$/.exec(lines[i] ?? '');
   if (!codeMatch) return null;
   const lang = codeMatch[1] ?? '';
   const { codeLines, nextI } = collectCodeLines(lines, i + 1);
