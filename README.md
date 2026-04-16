@@ -113,7 +113,32 @@ npx youdaonote-sync watch --interval 60
 npx youdaonote-sync watch --git
 ```
 
-### 5. Web GUI
+### 5. Windows 定时任务（每日自动同步）
+
+项目附带 `.local-scripts/scheduled-sync.bat` 用于无人值守的每日同步。
+
+当前已注册的 Windows Task Scheduler 任务：
+
+| 任务名 | 触发时间 | 脚本 | 日志 |
+|--------|---------|------|------|
+| `YoudaoNoteSync` | 每天 18:00 | `.local-scripts/scheduled-sync.bat` | `logs/scheduled-sync.log` |
+
+条件：用户已登录 + 网络可用 + 静默运行（Hidden），错过时间后登录会补执行。
+
+```bash
+# 手动触发一次
+MSYS_NO_PATHCONV=1 schtasks /run /tn "YoudaoNoteSync"
+
+# 查看任务状态
+MSYS_NO_PATHCONV=1 schtasks /query /tn "YoudaoNoteSync" /v /fo LIST
+
+# 从 XML 重建任务（如被删除或需要迁移）
+MSYS_NO_PATHCONV=1 schtasks /create /tn "YoudaoNoteSync" /xml ".local-scripts/scheduled-sync-task.xml" /f
+```
+
+> 注意：Git Bash 下 schtasks 的 `/` 参数会被 MSYS 路径转换干扰，必须加 `MSYS_NO_PATHCONV=1`。
+
+### 6. Web GUI
 
 ```bash
 # 启动 Web 图形界面（默认端口 3456）
@@ -125,7 +150,7 @@ npx youdaonote-sync gui --port 8080
 
 然后在浏览器中打开 `http://localhost:3456`，可以浏览、搜索和下载笔记。
 
-### 6. 诊断工具
+### 7. 诊断工具
 
 ```bash
 # 查看 dry-run 汇总统计
@@ -164,7 +189,7 @@ npx youdaonote-sync diagnose compare-note --a "目录/A.md" --b "目录/B.md" --
 npx youdaonote-sync diagnose compare-cloud-local --target "目录/文件名.md" --max-diffs 10
 ```
 
-### 7. 表格修复发布门禁（必跑）
+### 8. 表格修复发布门禁（必跑）
 
 当改动 `md-to-note` / `json-to-md` 表格逻辑后，发布前至少跑：
 
@@ -180,7 +205,7 @@ npm run build
 npx youdaonote-sync diagnose verify-note --target "目录/文件名.md"
 ```
 
-### 8. 调试规范资产（Skill / Rules / PR 模板）
+### 9. 调试规范资产（Skill / Rules / PR 模板）
 
 为避免再次出现“结构正确但客户端渲染失败”的慢定位问题，仓库已提供三类资产：
 
