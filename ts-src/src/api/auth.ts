@@ -13,6 +13,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { saveCookies, hasRequiredCookies, type CookieEntry } from './cookies.js';
 import { getConfigDir } from '../util/config-dir.js';
+import { logger } from '../util/logger.js';
 
 const NOTE_URL = 'https://note.youdao.com/web/';
 const REQUIRED_COOKIE_NAMES = ['YNOTE_CSTK', 'YNOTE_LOGIN', 'YNOTE_SESS'];
@@ -104,7 +105,7 @@ export async function refreshCookiesIfNeeded(headless = true): Promise<boolean> 
   const browserDataDir = getBrowserDataDir();
   if (!existsSync(browserDataDir)) return false;
 
-  console.log('Attempting to refresh cookies...');
+  logger.info('Attempting to refresh cookies...');
 
   try {
     const context = await pw.chromium.launchPersistentContext(browserDataDir, {
@@ -118,11 +119,11 @@ export async function refreshCookiesIfNeeded(headless = true): Promise<boolean> 
     await page.waitForTimeout(3000);
 
     const ok = hasCookies(await context.cookies()) && trySaveCookies(await context.cookies());
-    if (ok) console.log('Cookies refreshed successfully.');
+    logger.info('Cookies refreshed successfully.');
     await context.close();
     return ok;
   } catch (e: unknown) {
-    console.error(`Cookie refresh failed: ${e instanceof Error ? e.message : String(e)}`);
+    logger.error(`Cookie refresh failed: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 }
@@ -133,13 +134,13 @@ export async function refreshCookiesIfNeeded(headless = true): Promise<boolean> 
  * Returns 0 on success, 1 on failure.
  */
 export async function browserLogin(): Promise<number> {
-  console.log('\n' + '='.repeat(60));
-  console.log('  Youdao Note Login');
-  console.log('='.repeat(60) + '\n');
+  logger.info('\n' + '='.repeat(60));
+  logger.info('  Youdao Note Login');
+  logger.info('='.repeat(60) + '\n');
 
   const pw = await loadPlaywright();
   if (!pw) {
-    console.error(
+    logger.error(
       'Playwright is not installed. Run:\n\n  npm install playwright\n  npx playwright install chromium\n',
     );
     return 1;
@@ -167,35 +168,35 @@ async function doLogin(context: PlaywrightContext): Promise<number> {
   // Check if existing browser state already has valid cookies
   const existing = await context.cookies();
   if (hasCookies(existing) && trySaveCookies(existing)) {
-    console.log('Detected existing login state, verified!');
-    console.log(`Cookies saved to: ${getCookiesPath()}`);
+    logger.info('Detected existing login state, verified!');
+    logger.info(`Cookies saved to: ${getCookiesPath()}`);
     return 0;
   }
 
   const page = context.pages()[0] ?? (await context.newPage());
-  console.log('Opening Youdao Note...');
-  console.log('Please complete login in the browser window.');
-  console.log(`Waiting for login (timeout: ${LOGIN_TIMEOUT_S / 60} minutes)...\n`);
+  logger.info('Opening Youdao Note...');
+  logger.info('Please complete login in the browser window.');
+  logger.info(`Waiting for login (timeout: ${LOGIN_TIMEOUT_S / 60} minutes)...\n`);
   await page.goto(NOTE_URL);
 
   const loggedIn = await waitForLogin(context, page);
   if (!loggedIn) {
-    console.error('Timeout waiting for login. Please try again.');
+    logger.error('Timeout waiting for login. Please try again.');
     return 1;
   }
 
   await page.waitForTimeout(2000);
-  console.log('\nExtracting cookies...');
+  logger.info('\nExtracting cookies...');
 
   if (!trySaveCookies(await context.cookies())) {
-    console.error('Failed to extract all required cookies.');
+    logger.error('Failed to extract all required cookies.');
     return 1;
   }
 
-  console.log(`\nCookies saved to: ${getCookiesPath()}`);
-  console.log('\nLogin successful! Available commands:');
-  console.log('  npx youdaonote-sync sync      # Sync notes');
-  console.log('  npx youdaonote-sync watch     # Watch mode\n');
+  logger.info(`\nCookies saved to: ${getCookiesPath()}`);
+  logger.info('\nLogin successful! Available commands:');
+  logger.info('  npx youdaonote-sync sync      # Sync notes');
+  logger.info('  npx youdaonote-sync watch     # Watch mode\n');
   return 0;
 }
 
@@ -203,12 +204,12 @@ async function waitForLogin(context: PlaywrightContext, page: PlaywrightPage): P
   let waited = 0;
   while (waited < LOGIN_TIMEOUT_S) {
     if (hasCookies(await context.cookies())) {
-      console.log('Login detected!');
+      logger.info('Login detected!');
       return true;
     }
     await page.waitForTimeout(POLL_INTERVAL_S * 1000);
     waited += POLL_INTERVAL_S;
-    if (waited % 10 === 0) console.log(`  Waited ${waited}s...`);
+    if (waited % 10 === 0) logger.info(`  Waited ${waited}s...`);
   }
   return false;
 }

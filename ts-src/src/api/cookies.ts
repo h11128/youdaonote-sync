@@ -3,6 +3,7 @@ import { join, dirname } from 'node:path';
 import { platform, homedir } from 'node:os';
 import { env } from 'node:process';
 import { requireNonEmpty } from '../util/preconditions.js';
+import { logger } from '../util/logger.js';
 
 export interface CookieEntry {
   readonly name: string;
@@ -86,7 +87,7 @@ export function backupCookies(cookiesPath: string): string | null {
     copyFileSync(cookiesPath, backupPath);
     return backupPath;
   } catch (e: unknown) {
-    console.warn(`[cookies] failed to backup ${cookiesPath}: ${String(e)}`);
+    logger.warn(`[cookies] failed to backup ${cookiesPath}: ${String(e)}`);
     return null;
   }
 }
