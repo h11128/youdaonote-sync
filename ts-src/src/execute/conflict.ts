@@ -9,6 +9,7 @@ import {
   type SyncDirection,
 } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
+import type { SyncLogMetadata } from '../types/state.js';
 import { downloadFile } from './download.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
 import type { ExecuteContext, SyncStats } from './types.js';
@@ -56,6 +57,7 @@ export interface ConflictOpts {
   ctx: ExecuteContext;
   stats: SyncStats;
   direction: SyncDirection;
+  logMeta?: SyncLogMetadata | undefined;
 }
 
 /**
@@ -67,7 +69,7 @@ export async function conflictFallback(opts: ConflictOpts): Promise<void> {
 }
 
 async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
-  const { relPath, localPath, cloudFile, ctx, stats } = opts;
+  const { relPath, localPath, cloudFile, ctx, stats, logMeta } = opts;
   const { api, meta, rootDirId } = ctx;
   if (existsSync(localPath)) {
     backupFile(localPath);
@@ -88,6 +90,7 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
     contentHash: ctx.hashFn && fileBuffer ? ctx.hashFn(fileBuffer, localPath) : null,
     action: 'conflict-upload',
     direction: 'push',
+    ...logMeta,
   });
   stats.uploaded++;
   stats.conflicts++;
@@ -96,7 +99,7 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
 }
 
 async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
-  const { relPath, localPath, cloudFile, ctx, stats } = opts;
+  const { relPath, localPath, cloudFile, ctx, stats, logMeta } = opts;
   const { api, meta } = ctx;
   if (existsSync(localPath)) backupFile(localPath);
   if (!cloudFile) {
@@ -118,6 +121,7 @@ async function conflictPullFallback(opts: ConflictOpts): Promise<void> {
     cloudContentHash: result.rawContentHash,
     action: 'conflict-download',
     direction: 'pull',
+    ...logMeta,
   });
   stats.conflicts++;
   stats.changedPaths.push(localPath);

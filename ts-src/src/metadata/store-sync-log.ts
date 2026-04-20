@@ -20,9 +20,12 @@ export function getSyncLog(
   newHash: string | null;
   cloudId: string | null;
   detail: string | null;
+  decisionReason: string | null;
+  policyVersion: string | null;
+  guardrailChecks: string | null;
 }[] {
   let sql =
-    'SELECT id, timestamp, path, action, direction, old_hash, new_hash, cloud_id, detail FROM sync_log';
+    'SELECT id, timestamp, path, action, direction, old_hash, new_hash, cloud_id, detail, decision_reason, policy_version, guardrail_checks FROM sync_log';
   const params: unknown[] = [];
   if (opts?.path) {
     sql += ' WHERE path = ?';
@@ -44,6 +47,9 @@ export function getSyncLog(
     newHash: (r.new_hash as string) || null,
     cloudId: (r.cloud_id as string) || null,
     detail: (r.detail as string) || null,
+    decisionReason: (r.decision_reason as string) || null,
+    policyVersion: (r.policy_version as string) || null,
+    guardrailChecks: (r.guardrail_checks as string) || null,
   }));
 }
 
@@ -62,10 +68,13 @@ export function insertSyncLog(
     newHash: string | null;
     cloudId: string | null;
     detail: string | null;
+    decisionReason?: string | null;
+    policyVersion?: string | null;
+    guardrailChecks?: string | null;
   },
 ): void {
   db.prepare(
-    'INSERT INTO sync_log (timestamp, path, action, direction, old_hash, new_hash, cloud_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO sync_log (timestamp, path, action, direction, old_hash, new_hash, cloud_id, detail, decision_reason, policy_version, guardrail_checks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(
     row.timestamp,
     row.path,
@@ -75,5 +84,8 @@ export function insertSyncLog(
     row.newHash,
     row.cloudId,
     row.detail,
+    row.decisionReason ?? null,
+    row.policyVersion ?? null,
+    row.guardrailChecks ?? null,
   );
 }

@@ -58,7 +58,7 @@ describe('classify: sync and new states', () => {
       meta: makeMeta(),
       localHash: asContentHash('hash-abc'),
     });
-    expect(result.kind).toBe('synced');
+    expect(result.state.kind).toBe('synced');
   });
 
   it('localNew — local exists, cloud does not, never synced', () => {
@@ -68,7 +68,7 @@ describe('classify: sync and new states', () => {
       meta: null,
       localHash: asContentHash('hash-new'),
     });
-    expect(result.kind).toBe('localNew');
+    expect(result.state.kind).toBe('localNew');
   });
 
   it('cloudNew — cloud exists, local does not, never synced', () => {
@@ -78,7 +78,7 @@ describe('classify: sync and new states', () => {
       meta: null,
       localHash: null,
     });
-    expect(result.kind).toBe('cloudNew');
+    expect(result.state.kind).toBe('cloudNew');
   });
 });
 
@@ -90,7 +90,7 @@ describe('classify: deleted states', () => {
       meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
-    expect(result.kind).toBe('localDeleted');
+    expect(result.state.kind).toBe('localDeleted');
   });
 
   it('localDeletedCloudModified — local gone, cloud changed since last sync', () => {
@@ -100,7 +100,7 @@ describe('classify: deleted states', () => {
       meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
-    expect(result.kind).toBe('localDeletedCloudModified');
+    expect(result.state.kind).toBe('localDeletedCloudModified');
   });
 
   it('cloudDeleted — cloud gone, local unchanged since last sync', () => {
@@ -110,7 +110,7 @@ describe('classify: deleted states', () => {
       meta: makeMeta({ localMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
-    expect(result.kind).toBe('cloudDeleted');
+    expect(result.state.kind).toBe('cloudDeleted');
   });
 
   it('cloudDeletedLocalModified — cloud gone, local changed since last sync', () => {
@@ -120,7 +120,7 @@ describe('classify: deleted states', () => {
       meta: makeMeta({ localMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
-    expect(result.kind).toBe('cloudDeletedLocalModified');
+    expect(result.state.kind).toBe('cloudDeletedLocalModified');
   });
 });
 
@@ -132,7 +132,7 @@ describe('classify: modified states', () => {
       meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: asContentHash('hash-changed'),
     });
-    expect(result.kind).toBe('localModified');
+    expect(result.state.kind).toBe('localModified');
   });
 
   it('cloudModifiedContent — both exist, only cloud mtime changed (hash not available)', () => {
@@ -142,7 +142,7 @@ describe('classify: modified states', () => {
       meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: null,
     });
-    expect(result.kind).toBe('cloudModifiedContent');
+    expect(result.state.kind).toBe('cloudModifiedContent');
   });
 
   it('conflict — both exist, both hash and cloud mtime changed', () => {
@@ -152,7 +152,7 @@ describe('classify: modified states', () => {
       meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: asContentHash('hash-changed'),
     });
-    expect(result.kind).toBe('conflict');
+    expect(result.state.kind).toBe('conflict');
   });
 
   it('gone — neither local nor cloud exists', () => {
@@ -162,7 +162,7 @@ describe('classify: modified states', () => {
       meta: makeMeta(),
       localHash: null,
     });
-    expect(result.kind).toBe('gone');
+    expect(result.state.kind).toBe('gone');
   });
 
   it('cloudModifiedContent — cloud mtime changed, local hash unchanged', () => {
@@ -172,7 +172,7 @@ describe('classify: modified states', () => {
       meta: makeMeta({ cloudMtime: asEpochSeconds(1000) }),
       localHash: asContentHash('hash-abc'),
     });
-    expect(result.kind).toBe('cloudModifiedContent');
+    expect(result.state.kind).toBe('cloudModifiedContent');
   });
 });
 

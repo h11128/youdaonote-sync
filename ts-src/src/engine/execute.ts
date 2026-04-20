@@ -5,7 +5,7 @@
 
 import type { ContentHash, DirId, RelPath, SyncDirection } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
-import type { FileState } from '../types/state.js';
+import type { FileState, SyncLogMetadata } from '../types/state.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { gc } from '../metadata/health.js';
@@ -21,6 +21,7 @@ import type { SyncEngineConfig } from '../types/engine-config.js';
 export async function runExecuteSync(
   ctx: {
     classified: Map<RelPath, FileState>;
+    metadata?: Map<RelPath, SyncLogMetadata>;
     cloudSnap: Map<RelPath, CloudFile>;
     localSnap?: Map<RelPath, LocalFile>;
     rootDirId: DirId;
@@ -46,6 +47,7 @@ export async function runExecuteSync(
     ctx: executeCtx,
     direction: ctx.direction,
     deleteOverrides: ctx.deleteOverrides,
+    metadata: ctx.metadata,
   });
   if (stats.failedMoves.length > 0) {
     await fallbackDeleteOldFiles(stats, api, meta);

@@ -1,6 +1,7 @@
 import { asDirId, type ContentHash, type DirId, type RelPath } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
-import type { FileState } from '../types/state.js';
+import type { FileState, SyncLogMetadata } from '../types/state.js';
+import { stateToAction } from '../types/state.js';
 import { YoudaoNoteApi } from '../api/client.js';
 import { MetadataStore } from '../metadata/store.js';
 import { healPreScan, healPostHash } from '../metadata/health.js';
@@ -89,6 +90,7 @@ export class SyncEngine {
     }
   }
 
+  // eslint-disable-next-line max-lines-per-function, complexity
   private async syncInner(): Promise<SyncResult> {
     const { localDir, dryRun } = this.config;
     if (!dryRun) {
@@ -100,17 +102,56 @@ export class SyncEngine {
     const { cloudSnap, localSnap, localHashes, rootDirId, didFullScan } =
       await this.obtainSnapshots(localDir);
 
+    // Guardrail: Empty cloud response protection
+    if (cloudSnap.size === 0 && localSnap.size > 0) {
+      logger.error(
+        'Cloud returned empty list but local has files — aborting sync to prevent mass deletion',
+      );
+      return { stats: emptyStats(), classified: new Map() as Map<RelPath, FileState> };
+    }
+
     if (!dryRun) {
       this.p?.beginPhase('healPostHash');
       healPostHash(this.meta, localDir, localHashes, true);
       this.p?.endPhase();
     }
-    const classified = await this.classifyAndRefine(cloudSnap, localSnap, localHashes);
+    const { classified, metadata } = await this.classifyAndRefine(
+      cloudSnap,
+      localSnap,
+      localHashes,
+    );
     const direction = this.config.direction ?? 'both';
     if (direction !== 'both') filterByDirection(classified, direction);
     const deleteOverrides = this.config.propagateDeletes
       ? collectDeleteOverrides(classified)
       : undefined;
+
+    // Guardrail: Delete threshold check
+    const maxDeletes = this.config.maxDeletesPerSync ?? 5;
+    const pendingDeletes: RelPath[] = [];
+    for (const [path, state] of classified) {
+      const action = deleteOverrides?.get(path) ?? stateToAction(state);
+      if (action === 'deleteCloud' || action === 'deleteLocal') {
+        pendingDeletes.push(path);
+      }
+    }
+
+    if (pendingDeletes.length > maxDeletes) {
+      logger.warn(
+        `Threshold exceeded: ${pendingDeletes.length} deletes, limit ${maxDeletes}. ` +
+          `Sync suspended to prevent accidental mass deletion.`,
+      );
+      diagnoseDryrun(classified, this.meta, {
+        reportBaseDir: localDir,
+        localHashes,
+        deleteOverrides,
+      });
+      logger.info(
+        `Please review the diff report above. If these deletes are intentional, ` +
+          `increase 'maxDeletesPerSync' in your config or use --dry-run to verify.`,
+      );
+      return { stats: emptyStats(), classified };
+    }
 
     if (dryRun) {
       diagnoseDryrun(classified, this.meta, {
@@ -122,7 +163,7 @@ export class SyncEngine {
     }
 
     const stats = await runExecuteSync(
-      { classified, cloudSnap, localSnap, rootDirId, direction, deleteOverrides },
+      { classified, metadata, cloudSnap, localSnap, rootDirId, direction, deleteOverrides },
       this.config,
       this.api,
       this.meta,
@@ -236,10 +277,10 @@ export class SyncEngine {
     cloudSnap: Map<RelPath, CloudFile>,
     localSnap: Map<RelPath, LocalFile>,
     localHashes: Map<RelPath, ContentHash | null>,
-  ): Promise<Map<RelPath, FileState>> {
+  ): Promise<{ classified: Map<RelPath, FileState>; metadata: Map<RelPath, SyncLogMetadata> }> {
     this.p?.beginPhase('classifyAll');
     const metaSnap = this.meta.getAllFiles();
-    const classified = classifyAll(cloudSnap, localSnap, metaSnap, localHashes);
+    const { classified, metadata } = classifyAll(cloudSnap, localSnap, metaSnap, localHashes);
     this.p?.endPhase(`${classified.size} entries`);
 
     this.p?.beginPhase('detectMoves');
@@ -265,7 +306,7 @@ export class SyncEngine {
     });
     this.p?.endPhase();
 
-    return classified;
+    return { classified, metadata };
   }
 
   private applyMoveDetection(
@@ -306,7 +347,7 @@ export class SyncEngine {
     if (loginErr) throw new Error(`Login failed: ${loginErr}`);
 
     const { cloudSnap, localSnap, localHashes } = await this.obtainSnapshots(this.config.localDir);
-    const classified = await this.classifyAndRefine(cloudSnap, localSnap, localHashes);
+    const { classified } = await this.classifyAndRefine(cloudSnap, localSnap, localHashes);
     const direction = this.config.direction ?? 'both';
     if (direction !== 'both') filterByDirection(classified, direction);
     return { classified, cloudSnap, localSnap };

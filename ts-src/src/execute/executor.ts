@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { FileState, SyncAction } from '../types/state.js';
+import type { FileState, SyncAction, SyncLogMetadata } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import type { DirId, FileId, NoteDomain, RelPath, SyncDirection } from '../types/common.js';
 import { asEpochSeconds, joinRelPath } from '../types/common.js';
@@ -34,15 +34,16 @@ interface PartitionOpts {
   local: ReadonlyMap<RelPath, { isDir: boolean }> | undefined;
   stats: SyncStats;
   deleteOverrides?: ReadonlyMap<RelPath, 'deleteCloud' | 'deleteLocal'> | undefined;
+  metadata?: ReadonlyMap<RelPath, SyncLogMetadata> | undefined;
 }
 
 function partitionEntries(opts: PartitionOpts): {
-  dirEntries: [RelPath, FileState, SyncAction][];
-  fileEntries: [RelPath, FileState, SyncAction][];
+  dirEntries: [RelPath, FileState, SyncAction, SyncLogMetadata | undefined][];
+  fileEntries: [RelPath, FileState, SyncAction, SyncLogMetadata | undefined][];
 } {
-  const { classified, cloud, local, stats, deleteOverrides } = opts;
-  const dirEntries: [RelPath, FileState, SyncAction][] = [];
-  const fileEntries: [RelPath, FileState, SyncAction][] = [];
+  const { classified, cloud, local, stats, deleteOverrides, metadata } = opts;
+  const dirEntries: [RelPath, FileState, SyncAction, SyncLogMetadata | undefined][] = [];
+  const fileEntries: [RelPath, FileState, SyncAction, SyncLogMetadata | undefined][] = [];
   for (const [relPath, state] of classified) {
     const action = deleteOverrides?.get(relPath) ?? stateToAction(state);
     if (action === 'skip') {
@@ -50,7 +51,8 @@ function partitionEntries(opts: PartitionOpts): {
       continue;
     }
     const isDir = cloud.get(relPath)?.isDir ?? local?.get(relPath)?.isDir ?? false;
-    (isDir ? dirEntries : fileEntries).push([relPath, state, action]);
+    const logMeta = metadata?.get(relPath);
+    (isDir ? dirEntries : fileEntries).push([relPath, state, action, logMeta]);
   }
   return { dirEntries, fileEntries };
 }
@@ -68,7 +70,7 @@ function resolveUploadMeta(
   return domain != null ? { domain } : undefined;
 }
 
-type Entry = [RelPath, FileState, SyncAction];
+type Entry = [RelPath, FileState, SyncAction, SyncLogMetadata | undefined];
 
 export interface ExecuteAllOpts {
   classified: ReadonlyMap<RelPath, FileState>;
@@ -76,10 +78,11 @@ export interface ExecuteAllOpts {
   ctx: ExecuteContext;
   direction?: SyncDirection | undefined;
   deleteOverrides?: ReadonlyMap<RelPath, 'deleteCloud' | 'deleteLocal'> | undefined;
+  metadata?: ReadonlyMap<RelPath, SyncLogMetadata> | undefined;
 }
 
 export async function executeAll(opts: ExecuteAllOpts): Promise<SyncStats> {
-  const { classified, cloud, ctx, deleteOverrides } = opts;
+  const { classified, cloud, ctx, deleteOverrides, metadata } = opts;
   const direction = opts.direction ?? 'both';
   const stats = emptyStats();
   const ctxWithInflight = {
@@ -92,11 +95,12 @@ export async function executeAll(opts: ExecuteAllOpts): Promise<SyncStats> {
     local: ctx.localSnap,
     stats,
     deleteOverrides,
+    metadata,
   });
 
-  for (const [relPath, _state, action] of dirEntries) {
+  for (const [relPath, _state, action, logMeta] of dirEntries) {
     try {
-      await executeDir(relPath, action, ctxWithInflight, stats);
+      await executeDir(relPath, action, ctxWithInflight, stats, logMeta);
     } catch (e: unknown) {
       stats.errors++;
       const detail = formatError(e);
@@ -142,9 +146,9 @@ async function runFileEntries(
   let done = 0;
   const concurrency = ctx.concurrency ?? 3;
   const limit = pLimit(concurrency);
-  const run = async ([relPath, state, action]: Entry): Promise<void> => {
+  const run = async ([relPath, state, action, logMeta]: Entry): Promise<void> => {
     try {
-      await executeSingle({ relPath, state, action, cloud, ctx, stats, direction });
+      await executeSingle({ relPath, state, action, cloud, ctx, stats, direction, logMeta });
       done++;
       const sym = ACTION_SYMBOLS[action] ?? '?';
       logger.info(`[${done}/${total}] ${sym} ${relPath}`);
@@ -166,15 +170,27 @@ async function runFileEntries(
  * Handle directory sync: download → create local dir, upload → create cloud dir.
  * Matches Python _execute_dir.
  */
+// eslint-disable-next-line max-params
 async function executeDir(
   relPath: RelPath,
   action: SyncAction,
   ctx: ExecuteContext,
   stats: SyncStats,
+  logMeta?: SyncLogMetadata,
 ): Promise<void> {
   if (action === 'download') {
     mkdirSync(join(ctx.localDir, relPath), { recursive: true });
     stats.downloaded++;
+    if (logMeta) {
+      ctx.meta.recordSync(relPath, {
+        fileId: '' as FileId,
+        cloudMtime: asEpochSeconds(0),
+        localMtime: asEpochSeconds(0),
+        action: 'download',
+        direction: 'pull',
+        ...logMeta,
+      });
+    }
   } else if (action === 'upload') {
     await ensureParentDir({
       api: ctx.api,
@@ -184,6 +200,16 @@ async function executeDir(
       inflight: ctx.dirCreateInflight,
     });
     stats.uploaded++;
+    if (logMeta) {
+      ctx.meta.recordSync(relPath, {
+        fileId: '' as FileId,
+        cloudMtime: asEpochSeconds(0),
+        localMtime: asEpochSeconds(0),
+        action: 'upload',
+        direction: 'push',
+        ...logMeta,
+      });
+    }
   } else {
     stats.skipped++;
   }
@@ -197,6 +223,7 @@ interface ExecuteSingleOpts {
   ctx: ExecuteContext;
   stats: SyncStats;
   direction: SyncDirection;
+  logMeta?: SyncLogMetadata | undefined;
 }
 
 async function handleUpload(o: {
@@ -205,8 +232,9 @@ async function handleUpload(o: {
   metaRecord: { fileId?: FileId; domain?: NoteDomain } | undefined;
   ctx: ExecuteContext;
   stats: SyncStats;
+  logMeta?: SyncLogMetadata | undefined;
 }): Promise<void> {
-  const { relPath, localPath, metaRecord, ctx, stats } = o;
+  const { relPath, localPath, metaRecord, ctx, stats, logMeta } = o;
   const { api, meta, rootDirId } = ctx;
   // Read once, reuse for hash + upload
   const fileBuffer = readFileSync(localPath);
@@ -238,6 +266,7 @@ async function handleUpload(o: {
     contentHash: uploadHash,
     action: 'upload',
     direction: 'push',
+    ...logMeta,
   });
   stats.uploaded++;
   stats.changedPaths.push(localPath);
@@ -245,7 +274,7 @@ async function handleUpload(o: {
 }
 
 async function handleConflict(o: ConflictOpts): Promise<void> {
-  const { relPath, localPath, cloudFile, ctx, stats, direction } = o;
+  const { relPath, localPath, cloudFile, ctx, stats, direction, logMeta } = o;
   if (direction === 'both' && cloudFile) {
     const mergeResult: MergeResult = await tryDiff3Merge(relPath, localPath, cloudFile, ctx);
     if (mergeResult) {
@@ -255,7 +284,7 @@ async function handleConflict(o: ConflictOpts): Promise<void> {
       return;
     }
   }
-  await conflictFallback({ relPath, localPath, cloudFile, ctx, stats, direction });
+  await conflictFallback({ relPath, localPath, cloudFile, ctx, stats, direction, logMeta });
 }
 
 export function trashPath(localDir: string, relPath: RelPath): string {
@@ -273,8 +302,9 @@ async function handleDeleteCloud(o: {
   cloudFile: CloudFile | undefined;
   ctx: ExecuteContext;
   stats: SyncStats;
+  logMeta?: SyncLogMetadata | undefined;
 }): Promise<void> {
-  const { relPath, cloudFile, ctx, stats } = o;
+  const { relPath, cloudFile, ctx, stats, logMeta } = o;
   if (!cloudFile?.id) {
     logger.error(`Skip deleteCloud ${relPath}: missing cloud file id`);
     stats.errors++;
@@ -284,6 +314,18 @@ async function handleDeleteCloud(o: {
   ctx.meta.removeFileInfo(relPath);
   stats.deletedCloud++;
   stats.changedPaths.push(join(ctx.localDir, relPath));
+  // Record delete in sync log if needed (currently removeFileInfo doesn't log, but recordSync does)
+  // For now, if it's a delete, we might want to log it explicitly if logMeta is provided
+  if (logMeta) {
+    ctx.meta.recordSync(relPath, {
+      fileId: cloudFile.id as FileId,
+      cloudMtime: cloudFile.mtime,
+      localMtime: asEpochSeconds(0),
+      action: 'deleteCloud',
+      direction: 'push',
+      ...logMeta,
+    });
+  }
 }
 
 function handleDeleteLocal(o: {
@@ -291,11 +333,22 @@ function handleDeleteLocal(o: {
   localPath: string;
   ctx: ExecuteContext;
   stats: SyncStats;
+  logMeta?: SyncLogMetadata | undefined;
 }): void {
-  const { relPath, localPath, ctx, stats } = o;
+  const { relPath, localPath, ctx, stats, logMeta } = o;
   if (!existsSync(localPath)) {
     ctx.meta.removeFileInfo(relPath);
     stats.deletedLocal++;
+    if (logMeta) {
+      ctx.meta.recordSync(relPath, {
+        fileId: '' as FileId,
+        cloudMtime: asEpochSeconds(0),
+        localMtime: asEpochSeconds(0),
+        action: 'deleteLocal',
+        direction: 'pull',
+        ...logMeta,
+      });
+    }
     return;
   }
   const dest = trashPath(ctx.localDir, relPath);
@@ -303,10 +356,20 @@ function handleDeleteLocal(o: {
   ctx.meta.removeFileInfo(relPath);
   stats.deletedLocal++;
   stats.changedPaths.push(localPath);
+  if (logMeta) {
+    ctx.meta.recordSync(relPath, {
+      fileId: '' as FileId,
+      cloudMtime: asEpochSeconds(0),
+      localMtime: asEpochSeconds(0),
+      action: 'deleteLocal',
+      direction: 'pull',
+      ...logMeta,
+    });
+  }
 }
 
 async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
-  const { relPath, state, action, cloud, ctx, stats, direction } = opts;
+  const { relPath, state, action, cloud, ctx, stats, direction, logMeta } = opts;
   const { localDir } = ctx;
   const canonicalPath = join(localDir, relPath);
   const localPath = ctx.localSnap?.get(relPath)?.path ?? canonicalPath;
@@ -320,17 +383,18 @@ async function executeSingle(opts: ExecuteSingleOpts): Promise<void> {
         stats.errors++;
         return Promise.resolve();
       }
-      return handleDownload({ relPath, localPath: canonicalPath, cloudFile, ctx, stats });
+      return handleDownload({ relPath, localPath: canonicalPath, cloudFile, ctx, stats, logMeta });
     },
     upload: () => {
       const uploadMeta = resolveUploadMeta(metaRecord ?? undefined, cloudFile);
-      return handleUpload({ relPath, localPath, metaRecord: uploadMeta, ctx, stats });
+      return handleUpload({ relPath, localPath, metaRecord: uploadMeta, ctx, stats, logMeta });
     },
-    conflict: () => handleConflict({ relPath, localPath, cloudFile, ctx, stats, direction }),
-    move: () => handleMove({ relPath, state, ctx, stats }),
-    deleteCloud: () => handleDeleteCloud({ relPath, cloudFile, ctx, stats }),
+    conflict: () =>
+      handleConflict({ relPath, localPath, cloudFile, ctx, stats, direction, logMeta }),
+    move: () => handleMove({ relPath, state, ctx, stats, logMeta }),
+    deleteCloud: () => handleDeleteCloud({ relPath, cloudFile, ctx, stats, logMeta }),
     deleteLocal: () => {
-      handleDeleteLocal({ relPath, localPath, ctx, stats });
+      handleDeleteLocal({ relPath, localPath, ctx, stats, logMeta });
       return Promise.resolve();
     },
     skip: () => Promise.resolve(),

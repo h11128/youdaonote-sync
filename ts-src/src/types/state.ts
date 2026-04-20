@@ -16,6 +16,12 @@ export type FileState =
   | { readonly kind: 'moved'; readonly oldPath: RelPath }
   | { readonly kind: 'gone' };
 
+export interface SyncLogMetadata {
+  readonly decisionReason?: string;
+  readonly policyVersion?: string;
+  readonly guardrailChecks?: string;
+}
+
 export type SyncAction =
   | 'skip'
   | 'upload'

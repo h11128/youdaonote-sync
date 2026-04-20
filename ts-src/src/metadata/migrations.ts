@@ -65,6 +65,9 @@ const MIGRATION_SQL: readonly string[] = [
       size INTEGER NOT NULL,
       hash TEXT NOT NULL
   )`,
+  'ALTER TABLE sync_log ADD COLUMN decision_reason TEXT',
+  'ALTER TABLE sync_log ADD COLUMN policy_version TEXT',
+  'ALTER TABLE sync_log ADD COLUMN guardrail_checks TEXT',
 ];
 
 export function initSchema(db: Database.Database): void {

@@ -1,6 +1,6 @@
 import { basename, dirname, join } from 'node:path';
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
-import type { FileState } from '../types/state.js';
+import type { FileState, SyncLogMetadata } from '../types/state.js';
 import { asEpochSeconds, type FileId, type NoteDomain, type RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { ExecuteContext, SyncStats } from './types.js';
@@ -12,6 +12,7 @@ export interface HandleMoveOpts {
   state: FileState;
   ctx: ExecuteContext;
   stats: SyncStats;
+  logMeta?: SyncLogMetadata | undefined;
 }
 
 async function moveCloudFile(opts: {
@@ -63,7 +64,7 @@ function moveLocalFile(localDir: string, oldPath: RelPath, relPath: RelPath): vo
  * Matches Python _execute_move.
  */
 export async function handleMove(o: HandleMoveOpts): Promise<void> {
-  const { relPath, state, ctx, stats } = o;
+  const { relPath, state, ctx, stats, logMeta } = o;
   if (state.kind !== 'moved') return;
   const { meta, localDir } = ctx;
   const oldPath = state.oldPath;
@@ -105,6 +106,7 @@ export async function handleMove(o: HandleMoveOpts): Promise<void> {
     localMtime,
     action: 'moved',
     direction: 'push',
+    ...logMeta,
   });
   stats.moved++;
   stats.changedPaths.push(newLocalAbs);

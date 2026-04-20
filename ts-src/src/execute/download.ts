@@ -17,6 +17,7 @@ import {
   type RelPath,
 } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
+import type { SyncLogMetadata } from '../types/state.js';
 import { xmlBytesToMarkdown } from '../convert/xml-to-md.js';
 import { jsonBytesToMarkdown } from '../convert/json-to-md.js';
 import { htmlBytesToMarkdown } from '../convert/html-to-md.js';
@@ -174,8 +175,9 @@ export async function handleDownload(o: {
   cloudFile: CloudFile;
   ctx: ExecuteContext;
   stats: SyncStats;
+  logMeta?: SyncLogMetadata | undefined;
 }): Promise<void> {
-  const { relPath, localPath, cloudFile, ctx, stats } = o;
+  const { relPath, localPath, cloudFile, ctx, stats, logMeta } = o;
   const { api, meta } = ctx;
   const dlOpts: {
     cloudMtime?: EpochSeconds;
@@ -193,6 +195,7 @@ export async function handleDownload(o: {
     cloudContentHash: result.rawContentHash,
     action: 'download',
     direction: 'pull',
+    ...logMeta,
   });
   if (cloudFile.domain === NoteDomain.NOTE && result.contentHash) {
     const mdContent = readFileSync(localPath);

@@ -14,6 +14,8 @@ export interface SyncEngineConfig {
   autoGit?: boolean | undefined;
   autoDedup?: boolean | undefined;
   propagateDeletes?: boolean | undefined;
+  /** Max deletes allowed per sync session. Defaults to 5. */
+  maxDeletesPerSync?: number | undefined;
   hashFn?: ((data: Uint8Array, path: string) => ContentHash | null) | undefined;
   /** Optional: inject for testing; otherwise created from cookiesPath/metadataPath. */
   api?: YoudaoNoteApi;
