@@ -41,3 +41,7 @@ __pycache__/
 htmlcov/
 
 .cursor/
+
+# vendored by myforge/scripts/install-hooks.sh for the pre-commit git-crypt guard
+/target/release/git-crypt-tool
+/target/release/git-crypt-tool.exe
