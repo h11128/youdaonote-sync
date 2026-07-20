@@ -12,7 +12,12 @@ import { detectMoves } from '../classify/moves.js';
 import { calibrateMetadata } from '../classify/calibrate.js';
 import { emptyStats } from '../execute/executor.js';
 import type { SyncStats } from '../execute/executor.js';
-import { filterCloudSnap, filterByDirection } from './helpers.js';
+import {
+  filterCloudSnap,
+  filterByDirection,
+  filterMapByExclude,
+  markExcludedAsGone,
+} from './helpers.js';
 import { diagnoseDryrun, dryRunStats } from './helpers-dryrun.js';
 import { refineAllConflicts } from './refine.js';
 import { computeContentHashFromBytes, computeHashesConcurrent, initXxhash } from '../algo/hash.js';
@@ -279,8 +284,13 @@ export class SyncEngine {
     localHashes: Map<RelPath, ContentHash | null>,
   ): Promise<{ classified: Map<RelPath, FileState>; metadata: Map<RelPath, SyncLogMetadata> }> {
     this.p?.beginPhase('classifyAll');
-    const metaSnap = this.meta.getAllFiles();
+    const pathFilters = {
+      ...(this.config.syncInclude !== undefined ? { include: this.config.syncInclude } : {}),
+      ...(this.config.syncExclude !== undefined ? { exclude: this.config.syncExclude } : {}),
+    };
+    const metaSnap = filterMapByExclude(this.meta.getAllFiles(), pathFilters);
     const { classified, metadata } = classifyAll(cloudSnap, localSnap, metaSnap, localHashes);
+    markExcludedAsGone(classified, pathFilters);
     this.p?.endPhase(`${classified.size} entries`);
 
     this.p?.beginPhase('detectMoves');

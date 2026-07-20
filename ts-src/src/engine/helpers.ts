@@ -5,6 +5,7 @@ import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { FileState, SyncAction } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import { patternToRegex } from '../scan/local.js';
+import { compileFilter } from '../scan/name.js';
 
 const HASHABLE_EXTS = new Set([
   '.md',
@@ -80,6 +81,76 @@ export function filterByDirection(
 }
 
 export { collectConflictCandidates, HASHABLE_EXTS };
+
+export function matchesExclude(path: string, exclude?: string[]): boolean {
+  if (!exclude?.length) return false;
+  const excludeRes = exclude.map(patternToRegex);
+  return excludeRes.some((re) => re.test(path));
+}
+
+interface PathFilterOpts {
+  include?: string[];
+  exclude?: string[];
+}
+
+function hasPathFilters(opts?: PathFilterOpts): boolean {
+  return (opts?.include?.length ?? 0) > 0 || (opts?.exclude?.length ?? 0) > 0;
+}
+
+function pathAllowed(path: string, opts?: PathFilterOpts): boolean {
+  if (!hasPathFilters(opts)) return true;
+  return compileFilter(opts?.include ?? [], opts?.exclude ?? [])(path);
+}
+
+/** Drop paths that fail sync include/exclude (same rules as cloud/local scan). */
+export function filterMapByExclude<T>(
+  source: ReadonlyMap<RelPath, T>,
+  opts?: PathFilterOpts | string[],
+): ReadonlyMap<RelPath, T> {
+  const normalized = normalizeFilterOpts(opts);
+  if (!hasPathFilters(normalized)) return source;
+  const out = new Map<RelPath, T>();
+  for (const [path, value] of source) {
+    if (pathAllowed(path, normalized)) out.set(path, value);
+  }
+  return out;
+}
+
+function normalizeFilterOpts(opts?: PathFilterOpts | string[]): PathFilterOpts | undefined {
+  if (!opts) return undefined;
+  if (Array.isArray(opts)) return { exclude: opts };
+  return opts;
+}
+
+/** Force excluded paths to `gone` so execute never downloads/uploads them. */
+export function markExcludedAsGone(
+  classified: Map<RelPath, FileState>,
+  opts?: PathFilterOpts | string[],
+): void {
+  const normalized = normalizeFilterOpts(opts);
+  if (!hasPathFilters(normalized)) return;
+  for (const path of [...classified.keys()]) {
+    if (!pathAllowed(path, normalized)) classified.set(path, { kind: 'gone' });
+  }
+}
+
+/** Remove metadata rows for excluded paths — prevents stale entries from re-entering classify. */
+export function purgeExcludedMetadata(
+  meta: MetadataStore,
+  opts?: PathFilterOpts | string[],
+): number {
+  const normalized = normalizeFilterOpts(opts);
+  if (!hasPathFilters(normalized)) return 0;
+  const toRemove: RelPath[] = [];
+  for (const path of meta.getAllFiles().keys()) {
+    if (!pathAllowed(path, normalized)) toRemove.push(path);
+  }
+  if (toRemove.length === 0) return 0;
+  meta.batch(() => {
+    for (const path of toRemove) meta.removeFileInfo(path);
+  });
+  return toRemove.length;
+}
 
 export function buildDedupInputs(
   localSnap: Map<RelPath, LocalFile>,

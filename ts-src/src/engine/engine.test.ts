@@ -3,7 +3,15 @@ import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { SyncEngine, collectDeleteOverrides } from './engine.js';
-import { filterCloudSnap, filterByDirection } from './helpers.js';
+import {
+  filterCloudSnap,
+  filterByDirection,
+  markExcludedAsGone,
+  matchesExclude,
+  filterMapByExclude,
+  purgeExcludedMetadata,
+} from './helpers.js';
+import { MetadataStore } from '../metadata/store.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 import { asDirId, asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
 import type { NoteDomain, RelPath } from '../types/common.js';
@@ -144,6 +152,84 @@ describe('filterByDirection', () => {
     expect(classified.get(asRelPath('local-mod.md'))?.kind).toBe('localModified');
     expect(classified.get(asRelPath('cloud-new.md'))?.kind).toBe('gone');
     expect(classified.get(asRelPath('conflict.md'))?.kind).toBe('gone');
+  });
+});
+
+describe('markExcludedAsGone', () => {
+  it('marks excluded paths as gone', () => {
+    const classified = new Map<RelPath, FileState>([
+      [asRelPath('有道云笔记.md'), { kind: 'localModified' }],
+      [asRelPath('notes/ok.md'), { kind: 'localModified' }],
+      [asRelPath('visits/__pycache__/x.pyc'), { kind: 'cloudNew' }],
+    ]);
+
+    markExcludedAsGone(classified, ['有道云笔记.md', '**/__pycache__/**', '**/*.pyc']);
+
+    expect(classified.get(asRelPath('有道云笔记.md'))?.kind).toBe('gone');
+    expect(classified.get(asRelPath('visits/__pycache__/x.pyc'))?.kind).toBe('gone');
+    expect(classified.get(asRelPath('notes/ok.md'))?.kind).toBe('localModified');
+    expect(matchesExclude('visits/__pycache__/x.pyc', ['**/__pycache__/**'])).toBe(true);
+  });
+});
+
+describe('filterMapByExclude', () => {
+  it('drops excluded paths and keeps others', () => {
+    const source = new Map([
+      [asRelPath('notes/ok.md'), 1],
+      [asRelPath('有道云笔记.md'), 2],
+      [asRelPath('visits/__pycache__/x.pyc'), 3],
+    ]);
+
+    const filtered = filterMapByExclude(source, {
+      exclude: ['有道云笔记.md', '**/__pycache__/**', '**/*.pyc'],
+    });
+
+    expect(filtered.has(asRelPath('notes/ok.md'))).toBe(true);
+    expect(filtered.has(asRelPath('有道云笔记.md'))).toBe(false);
+    expect(filtered.has(asRelPath('visits/__pycache__/x.pyc'))).toBe(false);
+  });
+
+  it('returns same map reference when no filters', () => {
+    const source = new Map([[asRelPath('a.md'), 1]]);
+    expect(filterMapByExclude(source)).toBe(source);
+  });
+
+  it('honors include patterns', () => {
+    const source = new Map([
+      [asRelPath('notes/keep.md'), 1],
+      [asRelPath('notes/skip.txt'), 2],
+    ]);
+    const filtered = filterMapByExclude(source, { include: ['*.md'] });
+    expect(filtered.has(asRelPath('notes/keep.md'))).toBe(true);
+    expect(filtered.has(asRelPath('notes/skip.txt'))).toBe(false);
+  });
+});
+
+describe('purgeExcludedMetadata', () => {
+  it('removes excluded metadata rows', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'purge-meta-'));
+    const meta = new MetadataStore(join(dir, 'purge-meta.db'));
+    try {
+      meta.setFileInfo(asRelPath('notes/ok.md'), {
+        fileId: asFileId('f-ok'),
+        cloudMtime: asEpochSeconds(1),
+        localMtime: asEpochSeconds(1),
+      });
+      meta.setFileInfo(asRelPath('有道云笔记.md'), {
+        fileId: asFileId('f-enc'),
+        cloudMtime: asEpochSeconds(1),
+        localMtime: asEpochSeconds(1),
+      });
+
+      const purged = purgeExcludedMetadata(meta, { exclude: ['有道云笔记.md'] });
+
+      expect(purged).toBe(1);
+      expect(meta.getFileInfo(asRelPath('有道云笔记.md'))).toBeNull();
+      expect(meta.getFileInfo(asRelPath('notes/ok.md'))).not.toBeNull();
+    } finally {
+      meta.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

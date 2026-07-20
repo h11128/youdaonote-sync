@@ -12,10 +12,11 @@ import { gc } from '../metadata/health.js';
 import { executeAll } from '../execute/executor.js';
 import type { SyncStats, ExecuteContext } from '../execute/executor.js';
 import { fallbackDeleteOldFiles } from '../execute/move-handler.js';
-import { buildDedupInputs, cleanupStalePaths } from './helpers.js';
+import { buildDedupInputs, cleanupStalePaths, purgeExcludedMetadata } from './helpers.js';
 import { computeContentHashFromBytes } from '../algo/hash.js';
 import { autoDedup } from '../dedup/index.js';
 import { gitAutoCommit } from '../util/git.js';
+import { logger } from '../util/logger.js';
 import type { SyncEngineConfig } from '../types/engine-config.js';
 
 export async function runExecuteSync(
@@ -69,6 +70,13 @@ export async function runPostSyncCleanup(
 ): Promise<void> {
   const { cloudSnap, localSnap, localHashes, stats, didFullScan } = opts;
   if (didFullScan) cleanupStalePaths(meta, cloudSnap);
+  const purged = purgeExcludedMetadata(meta, {
+    ...(config.syncInclude !== undefined ? { include: config.syncInclude } : {}),
+    ...(config.syncExclude !== undefined ? { exclude: config.syncExclude } : {}),
+  });
+  if (purged > 0) {
+    logger.info(`Purged ${purged} excluded path(s) from metadata`);
+  }
   gc(meta, config.localDir);
 
   const { deletedPaths: dedupDeletedPaths, deletedCount: dedupDeletedCount } =

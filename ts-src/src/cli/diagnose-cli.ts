@@ -6,10 +6,14 @@ interface DiagnoseConfig {
   cookiesPath: string;
   metadataPath: string;
   localDir: string;
+  syncExclude?: string[];
+  syncInclude?: string[];
 }
 
 interface RootConfig {
   local_dir: string;
+  sync_exclude?: string[];
+  sync_include?: string[];
 }
 
 type GetConfigDir = () => string;
@@ -32,6 +36,8 @@ function diagnoseCfg(getConfigDir: GetConfigDir, loadConfig: LoadConfig): Diagno
     cookiesPath: join(configDir, COOKIES_FILE),
     metadataPath: join(configDir, METADATA_FILE),
     localDir: config.local_dir,
+    ...(config.sync_exclude !== undefined ? { syncExclude: config.sync_exclude } : {}),
+    ...(config.sync_include !== undefined ? { syncInclude: config.sync_include } : {}),
   };
 }
 
