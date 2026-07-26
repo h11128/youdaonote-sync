@@ -276,7 +276,8 @@ async function handleUpload(o: {
 async function handleConflict(o: ConflictOpts): Promise<void> {
   const { relPath, localPath, cloudFile, ctx, stats, direction, logMeta } = o;
   if (direction === 'both' && cloudFile) {
-    const mergeResult: MergeResult = await tryDiff3Merge(relPath, localPath, cloudFile, ctx);
+    const mergeCtx = logMeta !== undefined ? { ...ctx, logMeta } : ctx;
+    const mergeResult: MergeResult = await tryDiff3Merge(relPath, localPath, cloudFile, mergeCtx);
     if (mergeResult) {
       stats.merged++;
       stats.changedPaths.push(localPath);

@@ -2,7 +2,8 @@
 
 > 事件：Markdown 表格上传后，桌面端出现“发生了一些错误”，并伴随显示异常  
 > 范围：`md -> note json` 转换、云端回读验证、客户端验收流程、批量迁移流程  
-> 目标：解释“为什么花了很久才定位根因”，并给出跨层改进
+> 目标：解释“为什么花了很久才定位根因”，并给出跨层改进  
+> 用户命令见 [README 诊断](../README.md#常用诊断)；PR 证据栏见 [.github/PULL_REQUEST_TEMPLATE.md](../.github/PULL_REQUEST_TEMPLATE.md)
 
 ---
 
@@ -29,14 +30,14 @@
 
 ### 阶段 B：拐点出现（样本纠正）
 
-- 用户明确纠正：“`3月22` 是好版本，`3月18` 是差版本”
+- 用户明确纠正：样本 B（`known_good`）可渲染，样本 A（`known_bad`）不可渲染
 - 这一步是决定性转折：终于建立了正确 A/B 对照
 - 随后对比才发现：好版本是 `native-table`，坏版本是 `pipe-text`
 
 ### 阶段 C：技术修复生效，但流程问题暴露
 
 - 修复：重新输出原生表格结构，并补齐 `cw/rh/version`
-- 结果：`3月18` 桌面端确认恢复
+- 结果：样本 A 桌面端确认恢复
 - 新问题：用户指出“为什么不先自己验证”，暴露出流程上的验收短板
 
 ### 阶段 D：能力补齐 + 工程化收尾
@@ -325,24 +326,11 @@ Main: merge evidence -> pick fix -> implement once
 
 ---
 
-## 14. 立即可执行的落地项（针对本项目）
+## 14. 公开仓库中的落地项
 
-1. 在后续表格相关变更中，PR 模板增加三栏：
-   - `shape evidence`
-   - `dry-run evidence`
-   - `desktop spot check`
-2. 把“样本确认三问 + 三层门禁”摘要加入 `coding-patterns.mdc`
-3. 将本次 debug 流程沉淀为一个专用 skill（作为团队排障入口）
-4. 后续涉及批量迁移时，默认使用 subagent 并行收集证据，但由主线程统一提交改动
+对外部贡献者，以这些为准（本地私有 `.cursor/` 规则/skill **不在本仓库**，clone 后看不到）：
 
-## 14.1 实施状态（2026-03）
-
-- ✅ PR 模板已加入三栏证据：`shape evidence` / `dry-run evidence` / `desktop spot check`
-  - 文件：`.github/PULL_REQUEST_TEMPLATE.md`
-- ✅ `coding-patterns.mdc` 已加入样本先行、契约优先、三层门禁、策略切换、subagent 边界规则
-  - 文件：`.cursor/rules/coding-patterns.mdc`
-- ✅ 已新增专用 skill：`debug-note-table-render`
-  - 文件：`.cursor/skills/debug-note-table-render/SKILL.md`
-  - 参考：`.cursor/skills/debug-note-table-render/reference.md`
-- ✅ `work-context.mdc` 已加入当前 debug 关键 entry（样本先行 / 三层门禁 / verify-note 默认验收）
-  - 文件：`.cursor/rules/work-context.mdc`
+1. ✅ PR 模板三栏证据：[`PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)
+2. ✅ 诊断命令：`check-note-tables` / `verify-note` / `migrate-note-tables` / `force-reupload`（见 [README](../README.md#常用诊断)）
+3. ✅ 验收约定：结构证据 + dry-run 证据 + 桌面端抽检，缺一不可
+4. 批量迁移时：并行收集证据可以，但由主线程统一提交改动

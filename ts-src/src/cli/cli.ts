@@ -5,7 +5,8 @@ import { SyncEngine } from '../engine/engine.js';
 import { SyncWatcher } from '../engine/watcher.js';
 import { registerBrowseCommands } from './browse.js';
 import { registerDiagnoseCommands } from './diagnose-cli.js';
-import { getConfigDir, warnIfLegacyConfig, migrateConfigFiles } from '../util/config-dir.js';
+import { registerConfigCommands, requireConfigSot } from './config-cli.js';
+import { getConfigDir } from '../util/config-dir.js';
 
 interface Config {
   local_dir: string;
@@ -14,6 +15,7 @@ interface Config {
   is_relative_path?: boolean;
   sync_include?: string[];
   sync_exclude?: string[];
+  maxDeletesPerSync?: number;
 }
 
 function loadConfig(configDir: string): Config {
@@ -44,11 +46,14 @@ function resolveDirection(opts: SyncActionOpts): 'both' | 'push' | 'pull' {
 }
 
 async function runSyncAction(opts: SyncActionOpts): Promise<void> {
+  requireConfigSot();
   const configDir = getConfigDir();
   const config = loadConfig(configDir);
   const localDir = opts.dir ?? config.local_dir;
   if (!localDir) {
     console.error('Error: local_dir not set in config.json (or use --dir)');
+    console.error(`Config SOT: ${configDir}`);
+    console.error('Run: npx youdaonote-sync config doctor');
     process.exit(1);
   }
   const engine = new SyncEngine({
@@ -62,33 +67,55 @@ async function runSyncAction(opts: SyncActionOpts): Promise<void> {
     autoDedup: opts.noDedup ? false : undefined,
     autoGit: opts.git ?? undefined,
     propagateDeletes: opts.propagateDeletes ?? undefined,
+    maxDeletesPerSync: config.maxDeletesPerSync,
   });
   try {
     const t0 = Date.now();
     const result = await engine.sync();
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    const s = result.stats;
-    const delPart =
-      s.deletedCloud + s.deletedLocal > 0 ? ` 🗑${s.deletedCloud}c/${s.deletedLocal}l` : '';
-    console.log(
-      `\nSync complete: ↓${s.downloaded} ↑${s.uploaded} ⚡${s.conflicts} →${s.moved}${delPart} (${s.skipped} skipped, ${s.errors} errors) [${elapsed}s]`,
-    );
-    if (s.failedFiles.length > 0) {
-      console.log('\nFailed files:');
-      for (const f of s.failedFiles) {
-        console.log(`  ✗ [${f.action}] ${f.path}: ${f.error}`);
-      }
-    }
+    reportSyncResult(result, ((Date.now() - t0) / 1000).toFixed(1));
   } finally {
     engine.close();
   }
 }
 
+function reportSyncResult(result: Awaited<ReturnType<SyncEngine['sync']>>, elapsed: string): void {
+  if (result.status === 'aborted') {
+    console.error(`\nSync ABORTED (${result.reason ?? 'unknown'}) [${elapsed}s]`);
+    process.exitCode = 3;
+    return;
+  }
+  if (result.status === 'suspended') {
+    console.error(`\nSync SUSPENDED (${result.reason ?? 'unknown'}) [${elapsed}s]`);
+    if (result.reportPath) console.error(`Review report: ${result.reportPath}`);
+    console.error(
+      `Increase maxDeletesPerSync in config.json if the deletes are intentional, then re-run.`,
+    );
+    process.exitCode = 2;
+    return;
+  }
+
+  const s = result.stats;
+  const delPart =
+    s.deletedCloud + s.deletedLocal > 0 ? ` 🗑${s.deletedCloud}c/${s.deletedLocal}l` : '';
+  console.log(
+    `\nSync complete: ↓${s.downloaded} ↑${s.uploaded} ⚡${s.conflicts} →${s.moved}${delPart} (${s.skipped} skipped, ${s.errors} errors) [${elapsed}s]`,
+  );
+  if (result.reportPath) console.log(`Report: ${result.reportPath}`);
+  if (s.failedFiles.length > 0) {
+    console.log('\nFailed files:');
+    for (const f of s.failedFiles) {
+      console.log(`  ✗ [${f.action}] ${f.path}: ${f.error}`);
+    }
+  }
+}
+
 function runWatchAction(opts: { interval: string; git?: boolean }): void {
+  requireConfigSot();
   const configDir = getConfigDir();
   const config = loadConfig(configDir);
   if (!config.local_dir) {
     console.error('Error: local_dir not set in config.json');
+    console.error(`Config SOT: ${configDir}`);
     process.exit(1);
   }
   const watcher = new SyncWatcher(
@@ -109,8 +136,6 @@ function runWatchAction(opts: { interval: string; git?: boolean }): void {
 }
 
 export function createCli(): Command {
-  warnIfLegacyConfig();
-
   const program = new Command();
   program
     .name('youdaonote-sync')
@@ -118,6 +143,7 @@ export function createCli(): Command {
     .version('0.1.0');
 
   registerSyncCommands(program);
+  registerConfigCommands(program);
   registerUtilCommands(program);
   registerBrowseCommands(program, getConfigDir, loadConfig);
   registerDiagnoseCommands(program, getConfigDir, loadConfig);
@@ -153,6 +179,7 @@ function registerSyncCommands(program: Command): void {
     .command('login')
     .description('Login via browser (Playwright)')
     .action(() => {
+      requireConfigSot();
       void import('../api/auth.js').then(({ browserLogin }) =>
         browserLogin().then((code) => process.exit(code)),
       );
@@ -161,23 +188,11 @@ function registerSyncCommands(program: Command): void {
 
 function registerUtilCommands(program: Command): void {
   program
-    .command('migrate')
-    .description('Migrate config files from legacy cwd/config/ to platform config dir')
-    .action(() => {
-      const oldDir = join(process.cwd(), 'config');
-      const newDir = getConfigDir();
-      console.log(`Migrating: ${oldDir} → ${newDir}`);
-      const copied = migrateConfigFiles(oldDir, newDir);
-      if (copied.length === 0) {
-        console.log('Nothing to migrate (source missing or destination already has files).');
-      }
-    });
-
-  program
     .command('gui')
     .description('Open web-based GUI for browsing and downloading notes')
     .option('--port <number>', 'HTTP server port', '3456')
     .action((opts: { port: string }) => {
+      requireConfigSot();
       const cfgDir = getConfigDir();
       const cfg = loadConfig(cfgDir);
       void import('../gui/server.js').then(({ startGuiServer }) => {

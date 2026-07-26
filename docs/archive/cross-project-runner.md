@@ -1,5 +1,8 @@
 # Cross-Project Runner Framework
 
+> **Archived.** This describes a Cursor multi-project helper, not required to install or use youdaonote-sync.  
+> For the product itself, see the root [README](../../README.md).
+
 A lightweight framework for invoking local project commands from any Cursor workspace via AI conversation.
 
 ## Architecture
@@ -18,7 +21,7 @@ A lightweight framework for invoking local project commands from any Cursor work
 User (in any project): "帮我同步有道笔记"
   → AI matches skill description → loads youdao-sync/SKILL.md
   → Skill instructs: read ~/.cursor/project-index.json
-  → Resolve: E:/Projects/youdaonote-sync/ts-src
+  → Resolve: <absolute-path-to>/youdaonote-sync/ts-src
   → Shell: cd {path} && npx youdaonote-sync sync
   → Parse output, report stats
 ```
@@ -55,7 +58,7 @@ All execution goes through the Shell tool with absolute paths. No special plugin
 
 ```json
 "my-project": {
-  "path": "E:/Projects/my-project",
+  "path": "/absolute/path/to/my-project",
   "working_dir": ".",
   "description": "What this project does",
   "commands": {
@@ -65,13 +68,14 @@ All execution goes through the Shell tool with absolute paths. No special plugin
     }
   },
   "prerequisites": {
-    "check": "test -d E:/Projects/my-project/node_modules",
-    "setup": "cd E:/Projects/my-project && npm install"
+    "check": "test -d /absolute/path/to/my-project/node_modules",
+    "setup": "cd /absolute/path/to/my-project && npm install"
   }
 }
 ```
 
 3. (Optional) Create a dedicated skill at `~/.cursor/skills/my-project/SKILL.md` if the project needs specialized handling.
+
 
 ## Design Decisions
 

@@ -36,11 +36,17 @@ describe('getSyncLog', () => {
       localMtime: asEpochSeconds(100),
       action: 'download',
       direction: 'pull',
+      decisionReason: 'rule_0_cloudNew',
+      policyVersion: '1.0',
+      guardrailChecks: '{"empty_cloud":"pass"}',
     });
     const logs = meta.getSyncLog();
     expect(logs.length).toBe(1);
     expect(logs[0]!.action).toBe('download');
     expect(logs[0]!.direction).toBe('pull');
+    expect(logs[0]!.decisionReason).toBe('rule_0_cloudNew');
+    expect(logs[0]!.policyVersion).toBe('1.0');
+    expect(logs[0]!.guardrailChecks).toBe('{"empty_cloud":"pass"}');
   });
 
   it('filters by path', () => {

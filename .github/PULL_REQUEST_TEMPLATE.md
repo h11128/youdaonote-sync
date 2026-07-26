@@ -14,6 +14,8 @@
 
 ## Evidence
 
+Use [README diagnose](../README.md#常用诊断) when applicable. For NOTE table render issues, see [incident retrospective](../docs/note-table-incident-retrospective-2026-03.md).
+
 ### Shape Evidence
 
 <!-- Required for converter/render changes -->
@@ -47,4 +49,4 @@
 - [ ] I confirmed sample definitions (`known_good` / `known_bad`) for render-related fixes
 - [ ] I validated render contract fields when format conversion is involved
 - [ ] I attached evidence for structure + sync + render gates when applicable
-- [ ] I updated docs/rules/skill files if workflow or commands changed
+- [ ] I updated public docs (`README.md` / `docs/`) if user-facing behavior or commands changed

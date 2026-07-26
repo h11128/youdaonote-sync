@@ -1,8 +1,10 @@
 # TypeScript 重写：设计与实现方案
 
-> 2026-03-01 | 前置分析见 [sync-engine-overhaul.md](sync-engine-overhaul.md)
->
-> 本文档是实现层面的设计，不再重复"为什么要重写"。TS 代码库 SOLID 与 Dev Practice 审查见 [solid-and-dev-practice-audit-ts.md](solid-and-dev-practice-audit-ts.md)。
+> **历史设计文档（2026-03）**。Python 实现已从仓库移除；日常安装与用法以根目录 [README](../README.md) 为准。  
+> 前置分析：[sync-engine-overhaul.md](./archive/sync-engine-overhaul.md)  
+> SOLID / Dev Practice 审查：[solid-and-dev-practice-audit-ts.md](./archive/solid-and-dev-practice-audit-ts.md)
+
+本文档保留作架构参考，其中「可交替运行 Python/TS」「tsup 打包」等表述已过时：当前入口为 `ts-src` + `tsc` 构建。
 
 ## 一、架构
 

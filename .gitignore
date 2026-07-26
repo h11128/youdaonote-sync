@@ -16,8 +16,18 @@ ts-src/dist/
 coverage/
 ts-src/coverage/
 
-# Project config (user-specific runtime data)
+# Secrets / local machine config (never commit)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Project config (user-specific runtime data — use platform SOT, not the repo)
 config/
+config.legacy-backup/
+config.migrated-*/
+
 captured_api_requests.json
 logs/
 backups/

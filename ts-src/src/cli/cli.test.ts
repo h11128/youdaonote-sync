@@ -66,9 +66,10 @@ describe('createCli', () => {
     expect(opts).toContain('--propagate-deletes');
   });
 
-  it('registers migrate command', () => {
+  it('registers migrate and config commands', () => {
     const program = createCli();
     const names = program.commands.map((c) => c.name());
     expect(names).toContain('migrate');
+    expect(names).toContain('config');
   });
 });

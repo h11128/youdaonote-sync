@@ -17,6 +17,7 @@ import { threeWayMerge } from '../algo/merge.js';
 import { getFileContentFromGit } from '../util/git.js';
 import { readFileMtime } from '../util/utils.js';
 import { logger } from '../util/logger.js';
+import type { SyncLogMetadata } from '../types/state.js';
 
 const MERGEABLE_EXTS = new Set(['.md', '.txt']);
 
@@ -28,6 +29,7 @@ export interface Diff3Context {
   rootDirId: DirId;
   localDir: string;
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
+  logMeta?: SyncLogMetadata;
 }
 
 async function fetchCloudMarkdown(
@@ -69,7 +71,7 @@ export async function tryDiff3Merge(
 ): Promise<MergeResult> {
   const ext = extname(relPath).toLowerCase();
   if (!MERGEABLE_EXTS.has(ext) || !existsSync(localPath)) return false;
-  const { meta, localDir } = ctx;
+  const { meta, localDir, logMeta } = ctx;
 
   const baseRecord = meta.getBaseContent(relPath);
   const baseBytes = baseRecord?.content ?? getFileContentFromGit(localDir, relPath);
@@ -93,7 +95,15 @@ export async function tryDiff3Merge(
   const prevHash = baseRecord?.hash
     ? asContentHash(baseRecord.hash)
     : (meta.getFileInfo(relPath)?.contentHash ?? null);
-  return uploadMergedFile({ relPath, localPath, cloudFile, ctx, contentHash, prevHash });
+  return uploadMergedFile({
+    relPath,
+    localPath,
+    cloudFile,
+    ctx,
+    contentHash,
+    prevHash,
+    ...(logMeta !== undefined ? { logMeta } : {}),
+  });
 }
 
 async function uploadMergedFile(opts: {
@@ -103,8 +113,9 @@ async function uploadMergedFile(opts: {
   ctx: Diff3Context;
   contentHash: ContentHash | null;
   prevHash: ContentHash | null;
+  logMeta?: SyncLogMetadata | undefined;
 }): Promise<MergeResult> {
-  const { relPath, localPath, cloudFile, ctx, contentHash, prevHash } = opts;
+  const { relPath, localPath, cloudFile, ctx, contentHash, prevHash, logMeta } = opts;
   const { api, meta, rootDirId } = ctx;
   try {
     const ulOpts: UploadFileOpts = {
@@ -124,6 +135,7 @@ async function uploadMergedFile(opts: {
       contentHash,
       action: 'merge-upload',
       direction: 'push',
+      ...logMeta,
     });
     return 'merged';
   } catch (e: unknown) {
@@ -141,6 +153,7 @@ async function uploadMergedFile(opts: {
       contentHash: prevHash,
       action: 'merge-upload-deferred',
       direction: 'push',
+      ...logMeta,
     });
     return 'deferred';
   }

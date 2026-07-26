@@ -19,13 +19,14 @@
  *   cd ts-src && npx tsx src/smoke-test.ts --keep   # 不清理测试数据
  *
  * 前提:
- *   config/cookies.json 存在且有效（或有道桌面客户端已登录）
+ *   SOT cookies.json 存在且有效（%APPDATA%/youdaonote-sync 或 YOUDAONOTE_CONFIG_DIR）
  */
 
 import { join } from 'node:path';
 import { YoudaoNoteApi } from './client.js';
 import { NoteDomain } from '../types/common.js';
 import type { FileId, DirId } from '../types/common.js';
+import { getConfigDir } from '../util/config-dir.js';
 
 const KEEP = process.argv.includes('--keep');
 const TEST_DIR_NAME = `_smoke_test_${Date.now()}`;
@@ -174,7 +175,7 @@ async function testCleanup(api: YoudaoNoteApi): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const cookiesPath = join(process.cwd(), '..', 'config', 'cookies.json');
+  const cookiesPath = join(getConfigDir(), 'cookies.json');
   const api = new YoudaoNoteApi(cookiesPath);
 
   console.log();

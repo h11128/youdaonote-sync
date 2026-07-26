@@ -1,10 +1,12 @@
 # AI 开发流程反思：诊断工具的忽视与行为惯性
 
-**日期**: 2026-03-29
-**背景**: 在诊断 `youdaonote-sync` 项目中 `2026年3月28日.md` 的同步冲突时，AI 忽略了项目中已有的 `diagnose` CLI 工具，耗费大量时间手写 SQL 查询和 TS 诊断脚本，导致诊断过程低效且引入了额外的调试成本。
+> **历史复盘（已归档）**。不描述产品安装步骤；日常用法见 [README](../../../README.md)。
+
+**日期**: 2026-03-29  
+**背景**: 在诊断某笔记文件的同步冲突时，AI 忽略了项目中已有的 `diagnose` CLI，耗费大量时间手写 SQL / TS 脚本。
 
 在初步反思后，用户尖锐地指出：“就只有这三个（修改规则文件）你确定问题就不会复发吗？”
-这促使我重新审视整个干预链条，发现之前的反思**仅仅停留在“被动规则注入”层面，完全没有触及真正的系统性失效点**。
+这促使重新审视整个干预链条，发现之前的反思**仅仅停留在“被动规则注入”层面，完全没有触及真正的系统性失效点**。
 
 ---
 
@@ -66,7 +68,7 @@
 
 ### 3.2 强化主动技能：重写 Agent Skill (Level 2 - SOP 注入) ✅ 已完成
 **问题**：原有的 `youdao-sync` Skill 内容陈旧，且没有明确指导如何处理“冲突”。
-**行动**：直接修改了 `C:\Users\h1112\.cursor\skills\youdao-sync\SKILL.md`：
+**行动**：更新全局 Cursor skill `youdao-sync/SKILL.md`：
 1. 增加了明确的冲突诊断命令：`npm run diagnose -- decision --target "<file_path>"`
 2. 加入了**绝对禁令**：
    > **CRITICAL**: NEVER use `sqlite3` or write custom TS/Python scripts to query `sync_metadata.db` or simulate sync logic. ALWAYS use `npm run diagnose`.

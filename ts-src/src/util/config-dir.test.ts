@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { migrateConfigFiles } from './config-dir.js';
+import {
+  migrateConfigFiles,
+  inspectConfigSot,
+  ensureConfigSot,
+  getConfigDir,
+} from './config-dir.js';
 
 describe('migrateConfigFiles', () => {
   let tmpDir: string;
@@ -78,5 +83,57 @@ describe('migrateConfigFiles', () => {
     vi.restoreAllMocks();
 
     expect(copied).toEqual([]);
+  });
+});
+
+describe('inspectConfigSot / ensureConfigSot', () => {
+  let tmpDir: string;
+  let prevEnv: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'config-sot-'));
+    prevEnv = process.env.YOUDAONOTE_CONFIG_DIR;
+    process.env.YOUDAONOTE_CONFIG_DIR = join(tmpDir, 'sot');
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.YOUDAONOTE_CONFIG_DIR;
+    else process.env.YOUDAONOTE_CONFIG_DIR = prevEnv;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reports SOT path from YOUDAONOTE_CONFIG_DIR', () => {
+    const report = inspectConfigSot(tmpDir);
+    expect(report.configDir).toBe(join(tmpDir, 'sot'));
+    expect(report.source).toBe('env');
+    expect(report.conflict).toBe(false);
+  });
+
+  it('detects conflict when legacy and SOT both have config.json', () => {
+    const sot = join(tmpDir, 'sot');
+    const legacy = join(tmpDir, 'config');
+    mkdirSync(sot, { recursive: true });
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(sot, 'config.json'), '{"a":1}');
+    writeFileSync(join(legacy, 'config.json'), '{"a":2}');
+
+    const report = inspectConfigSot(tmpDir);
+    expect(report.conflict).toBe(true);
+    expect(report.message).toContain('CONFLICT');
+  });
+
+  it('migrates legacy-only config into SOT', () => {
+    const legacy = join(tmpDir, 'config');
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'config.json'), '{"local_dir":"/notes"}');
+
+    vi.spyOn(console, 'warn').mockImplementation(vi.fn());
+    vi.spyOn(console, 'log').mockImplementation(vi.fn());
+    const report = ensureConfigSot(tmpDir);
+    vi.restoreAllMocks();
+
+    expect(report.hasSotConfig).toBe(true);
+    expect(report.conflict).toBe(false);
+    expect(readFileSync(join(getConfigDir(), 'config.json'), 'utf-8')).toContain('/notes');
   });
 });

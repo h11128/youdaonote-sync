@@ -38,7 +38,7 @@ describe('printPreview', () => {
 
     printPreview(classified);
 
-    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const output = logSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
     expect(output).toContain('DOWNLOAD');
     expect(output).toContain('cloud.md');
     expect(output).toContain('UPLOAD');
@@ -60,7 +60,7 @@ describe('printPreview', () => {
 
     printPreview(classified, overrides);
 
-    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const output = logSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
     expect(output).toContain('DELETE CLOUD');
     expect(output).toContain('local-gone.md');
     expect(output).toContain('DELETE LOCAL');
@@ -72,7 +72,7 @@ describe('printPreview', () => {
 
     printPreview(classified);
 
-    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const output = logSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
     expect(output).toContain('Dry-Run Preview');
     expect(output).not.toContain('DOWNLOAD');
     expect(output).not.toContain('UPLOAD');
@@ -100,7 +100,7 @@ describe('printDryrunSummary', () => {
 
     printDryrunSummary(classified);
 
-    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const output = logSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
     expect(output).toContain('Total changes: 4');
     expect(output).toContain('1 unchanged');
     expect(output).toContain('Downloads:');
@@ -122,7 +122,7 @@ describe('printDryrunSummary', () => {
 
     printDryrunSummary(classified, overrides);
 
-    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const output = logSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
     expect(output).toContain('Delete cloud:');
     expect(output).toContain('Delete local:');
     expect(output).toContain('Total changes: 2');
@@ -134,7 +134,7 @@ describe('printDryrunSummary', () => {
 
     printDryrunSummary(classified);
 
-    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const output = logSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
     expect(output).toContain('Uploads:');
     expect(output).not.toContain('Downloads');
     expect(output).not.toContain('Conflicts');
@@ -143,12 +143,15 @@ describe('printDryrunSummary', () => {
 
 describe('diagnoseDryrun', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(noop);
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(noop);
   });
   afterEach(() => {
     logSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 
   it('outputs preview, summary, and warnings together', () => {
@@ -161,7 +164,7 @@ describe('diagnoseDryrun', () => {
 
     diagnoseDryrun(classified, meta);
 
-    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const output = logSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
     expect(output).toContain('Dry-Run Preview');
     expect(output).toContain('Dry-Run Summary');
   });
@@ -190,7 +193,9 @@ describe('diagnoseDryrun', () => {
 
     diagnoseDryrun(classified, meta, { localHashes });
 
-    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const output = [...logSpy.mock.calls, ...warnSpy.mock.calls]
+      .map((c) => c.map(String).join(' '))
+      .join('\n');
     expect(output).toContain('hash: old-hash → new-hash');
     expect(output).toContain('可疑 UPLOAD');
   });
@@ -254,7 +259,7 @@ describe('writeDryrunReport', () => {
       [asRelPath('c.md'), { kind: 'synced' }],
     ]);
 
-    const reportPath = writeDryrunReport(classified, [], tmpDir);
+    const reportPath = writeDryrunReport({ classified, warnings: [], baseDir: tmpDir });
 
     expect(reportPath).toContain('.local-reports');
     expect(reportPath).toMatch(/dry-run-.*\.md$/);
@@ -272,7 +277,7 @@ describe('writeDryrunReport', () => {
     const classified = new Map<RelPath, FileState>([[asRelPath('x.md'), { kind: 'localNew' }]]);
     const warnings = [{ path: asRelPath('x.md'), reasons: ['hash mismatch', 'mtime differs'] }];
 
-    const reportPath = writeDryrunReport(classified, warnings, tmpDir);
+    const reportPath = writeDryrunReport({ classified, warnings, baseDir: tmpDir });
     const content = readFileSync(reportPath, 'utf-8');
 
     expect(content).toContain('Suspicious Uploads');
@@ -284,7 +289,7 @@ describe('writeDryrunReport', () => {
   it('omits warnings section when no warnings', () => {
     const classified = new Map<RelPath, FileState>([[asRelPath('a.md'), { kind: 'localNew' }]]);
 
-    const reportPath = writeDryrunReport(classified, [], tmpDir);
+    const reportPath = writeDryrunReport({ classified, warnings: [], baseDir: tmpDir });
     const content = readFileSync(reportPath, 'utf-8');
 
     expect(content).not.toContain('Suspicious');

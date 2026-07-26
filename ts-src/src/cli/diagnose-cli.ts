@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { join } from 'node:path';
 import { addInspectDiagnoseCommands } from './diagnose-inspect-cli.js';
+import { requireConfigSot } from './config-cli.js';
 
 interface DiagnoseConfig {
   cookiesPath: string;
@@ -26,6 +27,7 @@ const TARGET_PATHS_OPTION = 'File paths to process';
 const TARGET_OPTION = '--target <paths...>';
 
 function diagnoseCfg(getConfigDir: GetConfigDir, loadConfig: LoadConfig): DiagnoseConfig {
+  requireConfigSot();
   const configDir = getConfigDir();
   const config = loadConfig(configDir);
   if (!config.local_dir) {

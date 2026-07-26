@@ -64,6 +64,8 @@ describe('SyncEngine Guardrails', () => {
     const result = await engine.sync();
 
     expect(result.stats.downloaded).toBe(0);
+    expect(result.status).toBe('aborted');
+    expect(result.reason).toBe('empty_cloud_response');
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining('Cloud returned empty list but local has files'),
     );
@@ -139,6 +141,8 @@ describe('SyncEngine Guardrails', () => {
     const result = await engine.sync();
 
     expect(result.stats.deletedLocal).toBe(0);
+    expect(result.status).toBe('suspended');
+    expect(result.reason).toBe('delete_threshold');
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining('Threshold exceeded: 10 deletes, limit 5'),
     );

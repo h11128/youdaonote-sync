@@ -12,8 +12,8 @@
 
 | 类别 | 表现 | 根因 |
 |------|------|------|
-| Ghost update | `2026年行动指南.md` 被判 DOWNLOAD — diff 显示全是格式重排，内容零变化 | 决策只看 mtime，不验证 content hash |
-| 重命名丢匹配 | "上数学课…" DOWNLOAD + "擦黑板答题" UPLOAD — 实为同一文件改名 | 移动检测依赖文件名相似度，改名太大就失效 |
+| Ghost update | `example-guide.md` 被判 DOWNLOAD — diff 显示全是格式重排，内容零变化 | 决策只看 mtime，不验证 content hash |
+| 重命名丢匹配 | `old-title` DOWNLOAD + `new-title` UPLOAD — 实为同一文件改名 | 移动检测依赖文件名相似度，改名太大就失效 |
 | 孤儿目录 | 9 个已删/改名目录被判 DOWNLOAD | 目录无 `previously_synced` 逻辑 |
 
 ### 1.2 Bug 模式分类

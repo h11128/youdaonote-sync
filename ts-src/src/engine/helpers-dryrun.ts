@@ -190,23 +190,27 @@ export function diagnoseDryrun(
     reportBaseDir?: string | undefined;
     localHashes?: ReadonlyMap<RelPath, ContentHash | null> | undefined;
     deleteOverrides?: ReadonlyMap<RelPath, 'deleteCloud' | 'deleteLocal'> | undefined;
+    suspendReason?: string | undefined;
+    suspendDetail?: string | undefined;
   },
-): void {
+): string | undefined {
   printPreview(classified, opts?.deleteOverrides);
   printDryrunSummary(classified, opts?.deleteOverrides);
 
   const warnings = collectUploadWarnings(classified, meta, opts?.localHashes);
   if (warnings.length > 0) printUploadWarnings(warnings);
 
-  if (opts?.reportBaseDir) {
-    const reportPath = writeDryrunReport(
-      classified,
-      warnings,
-      opts.reportBaseDir,
-      opts.deleteOverrides,
-    );
-    logger.info(`\n📄 Report saved to: ${reportPath}`);
-  }
+  if (!opts?.reportBaseDir) return undefined;
+  const reportPath = writeDryrunReport({
+    classified,
+    warnings,
+    baseDir: opts.reportBaseDir,
+    ...(opts.deleteOverrides !== undefined ? { deleteOverrides: opts.deleteOverrides } : {}),
+    ...(opts.suspendReason !== undefined ? { suspendReason: opts.suspendReason } : {}),
+    ...(opts.suspendDetail !== undefined ? { suspendDetail: opts.suspendDetail } : {}),
+  });
+  logger.info(`\n📄 Report saved to: ${reportPath}`);
+  return reportPath;
 }
 
 export function dryRunStats(
@@ -242,12 +246,15 @@ export function dryRunStats(
   return Object.freeze(stats);
 }
 
-export function writeDryrunReport(
-  classified: Map<RelPath, FileState>,
-  warnings: { path: RelPath; reasons: string[] }[],
-  baseDir: string,
-  deleteOverrides?: ReadonlyMap<RelPath, 'deleteCloud' | 'deleteLocal'>,
-): string {
+export function writeDryrunReport(opts: {
+  classified: Map<RelPath, FileState>;
+  warnings: { path: RelPath; reasons: string[] }[];
+  baseDir: string;
+  deleteOverrides?: ReadonlyMap<RelPath, 'deleteCloud' | 'deleteLocal'>;
+  suspendReason?: string;
+  suspendDetail?: string;
+}): string {
+  const { classified, warnings, baseDir, deleteOverrides, suspendReason, suspendDetail } = opts;
   requireNonEmpty('baseDir', baseDir);
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10);
@@ -255,35 +262,29 @@ export function writeDryrunReport(
   const reportDir = join(baseDir, '.local-reports');
   if (!existsSync(reportDir)) mkdirSync(reportDir, { recursive: true });
   const reportPath = join(reportDir, `dry-run-${dateStr}-${timeStr}.md`);
-
   const groups = groupByAction(classified, deleteOverrides);
   const skipCount = groups.get('skip')?.length ?? 0;
-  const totalChanges = classified.size - skipCount;
-
-  const lines: string[] = [];
-  lines.push(`# Dry-Run Report — ${dateStr} ${now.toISOString().slice(11, 16)}`);
-  lines.push('');
-  lines.push('## Summary');
-  lines.push('');
-  lines.push('| Type | Count |');
-  lines.push('|------|-------|');
-  lines.push(`| Total changes | ${totalChanges} |`);
+  const lines: string[] = [`# Dry-Run Report — ${dateStr} ${now.toISOString().slice(11, 16)}`, ''];
+  if (suspendReason) {
+    lines.push(
+      `> **SUSPENDED:** \`${suspendReason}\`${suspendDetail ? ` — ${suspendDetail}` : ''}`,
+      '',
+    );
+  }
+  lines.push('## Summary', '', '| Type | Count |', '|------|-------|');
+  lines.push(`| Total changes | ${classified.size - skipCount} |`);
   for (const action of REPORT_ORDER) {
     const items = groups.get(action);
     if (items?.length) lines.push(`| ${REPORT_LABELS[action]} | ${items.length} |`);
   }
-  lines.push(`| Unchanged (skipped) | ${skipCount} |`);
-  lines.push('');
-
+  lines.push(`| Unchanged (skipped) | ${skipCount} |`, '');
   for (const action of REPORT_ORDER) {
     const items = groups.get(action);
     if (!items?.length) continue;
-    lines.push(`## ${REPORT_LABELS[action]} (${items.length})`);
-    lines.push('');
+    lines.push(`## ${REPORT_LABELS[action]} (${items.length})`, '');
     for (const p of items) lines.push(`- ${p}`);
     lines.push('');
   }
-
   appendWarnings(lines, warnings);
   writeFileSync(reportPath, lines.join('\n'), 'utf-8');
   return reportPath;

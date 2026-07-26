@@ -105,6 +105,9 @@ export class MetadataStore {
       direction?: string;
       oldHash?: ContentHash | null;
       detail?: string;
+      decisionReason?: string | null;
+      policyVersion?: string | null;
+      guardrailChecks?: string | null;
     },
   ): void {
     if (!localPath) throw new Error('localPath must not be empty');
@@ -126,6 +129,9 @@ export class MetadataStore {
           newHash: opts.contentHash ?? null,
           cloudId: opts.fileId,
           detail: opts.detail ?? null,
+          decisionReason: opts.decisionReason ?? null,
+          policyVersion: opts.policyVersion ?? null,
+          guardrailChecks: opts.guardrailChecks ?? null,
         });
       }
     });
@@ -260,6 +266,9 @@ export class MetadataStore {
     newHash: string | null;
     cloudId: string | null;
     detail: string | null;
+    decisionReason: string | null;
+    policyVersion: string | null;
+    guardrailChecks: string | null;
   }[] {
     return storeState.getSyncLog(this.db, opts, (p) => this.normalizePath(p));
   }

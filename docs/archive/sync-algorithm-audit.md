@@ -524,7 +524,7 @@ files[rel] = {"path": p, "is_dir": False,
 
 **原理**：用 Levenshtein 距离衡量两个路径的相似度，而不是只看共享祖先深度。
 
-**适用场景**：`内在世界/计划/总结.md` → `内在世界/计划和总结/总结.md`。共享祖先只有 1 层（"内在世界"），但路径编辑距离很小。
+**适用场景**：`notes/plan/summary.md` → `notes/plans-and-summary/summary.md`。共享祖先只有 1 层（`notes`），但路径编辑距离很小。
 
 **评估**：
 - 比 common_ancestor_depth 更细腻

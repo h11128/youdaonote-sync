@@ -9,8 +9,10 @@ import { YoudaoNoteApi } from '../api/client.js';
 import { formatFileSize } from '../util/utils.js';
 import type { DirId } from '../types/common.js';
 import type { DirectoryEntry } from '../browse/search.js';
+import { requireConfigSot } from './config-cli.js';
 
 function loginApi(configDir: string): YoudaoNoteApi {
+  requireConfigSot();
   const api = new YoudaoNoteApi(join(configDir, 'cookies.json'));
   const err = api.loginByCookies();
   if (err) {

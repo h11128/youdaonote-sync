@@ -35,6 +35,10 @@ import type { SyncProfiler } from '../perf/profiler.js';
 export interface SyncResult {
   stats: SyncStats;
   classified: Map<RelPath, FileState>;
+  /** ok = executed or dry-run preview; suspended = delete threshold; aborted = empty cloud */
+  status: 'ok' | 'suspended' | 'aborted';
+  reason?: string;
+  reportPath?: string;
 }
 
 /**
@@ -85,7 +89,12 @@ export class SyncEngine {
     const lock = new SyncLock(this.config.localDir);
     if (!this.config.dryRun && !lock.acquire()) {
       logger.error('Cannot acquire sync lock — another sync process is running');
-      return { stats: emptyStats(), classified: new Map() as Map<RelPath, FileState> };
+      return {
+        stats: emptyStats(),
+        classified: new Map() as Map<RelPath, FileState>,
+        status: 'aborted',
+        reason: 'lock_held',
+      };
     }
 
     try {
@@ -112,7 +121,12 @@ export class SyncEngine {
       logger.error(
         'Cloud returned empty list but local has files — aborting sync to prevent mass deletion',
       );
-      return { stats: emptyStats(), classified: new Map() as Map<RelPath, FileState> };
+      return {
+        stats: emptyStats(),
+        classified: new Map() as Map<RelPath, FileState>,
+        status: 'aborted',
+        reason: 'empty_cloud_response',
+      };
     }
 
     if (!dryRun) {
@@ -142,29 +156,54 @@ export class SyncEngine {
     }
 
     if (pendingDeletes.length > maxDeletes) {
+      const reason = 'delete_threshold';
       logger.warn(
         `Threshold exceeded: ${pendingDeletes.length} deletes, limit ${maxDeletes}. ` +
           `Sync suspended to prevent accidental mass deletion.`,
       );
-      diagnoseDryrun(classified, this.meta, {
+      logger.warn(`=== SYNC SUSPENDED (${reason}) ===`);
+      logger.warn(
+        `Pending deletes: ${pendingDeletes.length} (limit ${maxDeletes}). Review the preview below.`,
+      );
+      const reportPath = diagnoseDryrun(classified, this.meta, {
         reportBaseDir: localDir,
         localHashes,
         deleteOverrides,
+        suspendReason: reason,
+        suspendDetail: `${pendingDeletes.length} deletes exceed maxDeletesPerSync=${maxDeletes}`,
       });
       logger.info(
-        `Please review the diff report above. If these deletes are intentional, ` +
-          `increase 'maxDeletesPerSync' in your config or use --dry-run to verify.`,
+        `If these deletes are intentional, increase 'maxDeletesPerSync' in config.json ` +
+          `or re-run with --dry-run after reviewing the report.`,
       );
-      return { stats: emptyStats(), classified };
+      return {
+        stats: emptyStats(),
+        classified,
+        status: 'suspended',
+        reason,
+        ...(reportPath !== undefined ? { reportPath } : {}),
+      };
     }
 
+    stampGuardrailChecks(metadata, {
+      empty_cloud: 'pass',
+      delete_threshold: 'pass',
+      pendingDeletes: pendingDeletes.length,
+      maxDeletes,
+    });
+
     if (dryRun) {
-      diagnoseDryrun(classified, this.meta, {
+      const reportPath = diagnoseDryrun(classified, this.meta, {
         reportBaseDir: localDir,
         localHashes,
         deleteOverrides,
       });
-      return { stats: dryRunStats(classified, deleteOverrides), classified };
+      return {
+        stats: dryRunStats(classified, deleteOverrides),
+        classified,
+        status: 'ok',
+        ...(reportPath !== undefined ? { reportPath } : {}),
+      };
     }
 
     const stats = await runExecuteSync(
@@ -179,7 +218,7 @@ export class SyncEngine {
       this.api,
       this.meta,
     );
-    return { stats, classified };
+    return { stats, classified, status: 'ok' };
   }
 
   private async obtainSnapshots(localDir: string): Promise<{
@@ -365,6 +404,17 @@ export class SyncEngine {
 
   close(): void {
     this.meta.close();
+  }
+}
+
+/** Stamp guardrail check JSON onto every path's sync-log metadata before execute. */
+export function stampGuardrailChecks(
+  metadata: Map<RelPath, SyncLogMetadata>,
+  checks: Record<string, unknown>,
+): void {
+  const json = JSON.stringify(checks);
+  for (const [path, meta] of metadata) {
+    metadata.set(path, { ...meta, guardrailChecks: json });
   }
 }
 

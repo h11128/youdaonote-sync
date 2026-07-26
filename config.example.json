@@ -1,0 +1,8 @@
+{
+  "local_dir": "/path/to/your/notes",
+  "smms_secret_token": "",
+  "is_relative_path": true,
+  "maxDeletesPerSync": 5,
+  "sync_include": [],
+  "sync_exclude": ["**/*.log", "**/.trash/**", "**/.local-reports/**"]
+}

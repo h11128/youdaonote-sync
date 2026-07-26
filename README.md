@@ -2,30 +2,49 @@
 
 有道云笔记本地同步工具：把云端笔记同步成 Markdown，支持双向同步、定时监听和 Web 浏览。
 
-- 语言：TypeScript / Node.js
-- 仓库：https://github.com/h11128/youdaonote-sync
+- **语言**：[TypeScript](https://www.typescriptlang.org/) / [Node.js](https://nodejs.org/)（需 **18+**，推荐 20+）
+- **仓库**：[github.com/h11128/youdaonote-sync](https://github.com/h11128/youdaonote-sync)
+- **Issues**：[提交问题](https://github.com/h11128/youdaonote-sync/issues) · [模板](./.github/ISSUE_TEMPLATE/提-issue-请使用这个模版.md)
+- **许可**：[MIT](./LICENSE.md)
+- **文档索引**：[docs/README.md](./docs/README.md)
 
-## 它能做什么
+## 端到端同步流程（主路径）
 
-| 能力 | 说明 |
-|------|------|
-| 双向同步 | 本地 ↔ 云端互相更新 |
-| 单向同步 | `--push` 只上传，`--pull` 只下载 |
-| 自动同步 | `watch`：监听本地改动 + 定时轮询云端 |
-| 格式转换 | 有道 XML/JSON/HTML ↔ Markdown |
-| 图片处理 | 下载到本地，或上传到 SM.MS 图床 |
-| 去重 / 移动检测 | 清理云端重复文件，识别重命名与移动 |
-| Git 提交 | 同步后可选自动 `git commit` |
-| Web GUI | 浏览器浏览、搜索、下载笔记 |
-| 诊断 | `diagnose` 查看决策、缓存、表格结构等 |
+整条链路：**安装 → 配置 SOT → 登录 → dry-run → sync**。
 
-## 环境要求
+### Single source of truth（本地配置只有一处）
 
-- Node.js **18+**（推荐 20+）
-- 可访问有道云笔记账号
-- 自动登录需要 Playwright（可选，也可手动准备 Cookie）
+运行时**只读一个目录**（SOT），由 [`config-dir.ts`](./ts-src/src/util/config-dir.ts) 解析：
 
-## 安装
+| 优先级 | 来源 |
+|--------|------|
+| 1 | 环境变量 `YOUDAONOTE_CONFIG_DIR`（可选） |
+| 2 | Windows `%APPDATA%\youdaonote-sync\` · macOS/Linux `~/.config/youdaonote-sync/` |
+
+仓库里的 `config/` **不是**运行时配置（已废弃）。若 SOT 与仓库 `config/` **同时**有 `config.json`，`sync` / `login` / `watch` / `diagnose` 会直接失败，避免改错目录。
+
+| 仓库内（仅模板） | 本机 SOT（真实配置，不进 git） |
+|------------------|--------------------------------|
+| [`config.example.json`](./config.example.json) | `{SOT}/config.json` |
+| [`.env.example`](./.env.example) | 可选 `.env`（只覆盖 `YOUDAONOTE_CONFIG_DIR` 等） |
+| — | `{SOT}/cookies.json`、`{SOT}/sync_metadata.db` |
+
+```bash
+npx youdaonote-sync config path      # 打印 SOT 路径
+npx youdaonote-sync config doctor    # 冲突与缺文件检查
+npx youdaonote-sync migrate          # 旧 cwd/config/ → SOT（完成后请删除旧目录）
+```
+
+```text
+[有道云笔记]  ←── {SOT}/cookies.json ──→  youdaonote-sync CLI
+                                            │
+                   {SOT}/config.json ───────┤
+                   {SOT}/sync_metadata.db ──┤
+                                            ▼
+                                     {local_dir}/*.md
+```
+
+### 1. 安装
 
 ```bash
 git clone https://github.com/h11128/youdaonote-sync.git
@@ -34,197 +53,142 @@ npm install
 npm run build
 ```
 
-可选：安装 Playwright，用于浏览器扫码登录：
+可选登录依赖：[Playwright](https://playwright.dev/docs/intro)
 
 ```bash
 npm install playwright
 npx playwright install chromium
 ```
 
-之后所有命令都在 `ts-src/` 目录下执行（或通过 `npx youdaonote-sync …`）。
+入口：[bin.ts](./ts-src/src/bin.ts) · 引擎：[engine.ts](./ts-src/src/engine/engine.ts)
 
-## 配置
-
-配置文件默认放在系统目录（不在仓库里，也不会进 git）：
-
-| 系统 | 路径 |
-|------|------|
-| Windows | `%APPDATA%\youdaonote-sync\` |
-| macOS / Linux | `~/.config/youdaonote-sync/` |
-
-也可用环境变量覆盖：
+### 2. 写入 SOT 配置
 
 ```bash
-export YOUDAONOTE_CONFIG_DIR=/path/to/your-config
+npx youdaonote-sync config path
+# 把 config.example.json 复制到上一步打印的目录，命名为 config.json
 ```
-
-创建 `config.json`（把 `local_dir` 改成你的笔记目录）：
 
 ```json
 {
   "local_dir": "/path/to/your/notes",
-  "ydnote_dir": "",
-  "smms_secret_token": "",
   "is_relative_path": true,
-  "sync_exclude": [
-    "**/*.log",
-    "**/__pycache__/**"
-  ]
+  "maxDeletesPerSync": 5,
+  "sync_exclude": ["**/*.log", "**/.trash/**", "**/.local-reports/**"]
 }
 ```
 
 | 字段 | 含义 |
 |------|------|
 | `local_dir` | 本地笔记根目录（必填） |
-| `ydnote_dir` | 只同步云端某个子目录；空字符串表示全部 |
-| `smms_secret_token` | SM.MS 图床 token；不填则图片下载到本地 |
-| `is_relative_path` | 图片链接是否写成相对路径 |
-| `sync_include` | 可选，只同步匹配的路径（glob 数组） |
-| `sync_exclude` | 可选，排除匹配的路径（glob 数组） |
+| `smms_secret_token` | 可选 [SM.MS token](https://sm.ms/home/apitoken) |
+| `maxDeletesPerSync` | 单次最大删除数，默认 `5`（[RFC](./docs/rfc-deterministic-guardrails.md)） |
+| `sync_include` / `sync_exclude` | 选择性同步 |
 
-同目录还会自动生成：
-
-- `cookies.json` — 登录凭证
-- `sync_metadata.db` — 同步元数据（SQLite）
-
-若你以前把配置放在仓库的 `config/`，可运行一次：
+### 3. 登录
 
 ```bash
-npx youdaonote-sync migrate
-```
-
-## 快速开始
-
-### 1. 登录
-
-```bash
+cd ts-src
 npx youdaonote-sync login
 ```
 
-会打开浏览器，扫码或账号登录即可。
+[auth.ts](./ts-src/src/api/auth.ts) 把 Cookie 写入 **SOT**，不是仓库。
 
-### 2. 先预览，再正式同步
+### 4. 预览 → 正式同步
 
 ```bash
-# 只看会做什么，不改任何文件
 npx youdaonote-sync sync --dry-run
-
-# 双向同步
 npx youdaonote-sync sync
-
-# 只上传 / 只下载
 npx youdaonote-sync sync --push
 npx youdaonote-sync sync --pull
-
-# 同步后自动 git commit
 npx youdaonote-sync sync --git
-
-# 临时覆盖本地目录
-npx youdaonote-sync sync --dir /path/to/notes
+npx youdaonote-sync sync --propagate-deletes
 ```
 
-### 3. 自动同步（守护进程）
+CLI：[cli.ts](./ts-src/src/cli/cli.ts) · dry-run 报告：`{local_dir}/.local-reports/`
+
+护栏：空云端列表 → abort（exit 3）；删除过多 → suspend（exit 2）。见 [RFC](./docs/rfc-deterministic-guardrails.md)。
+
+### 5. 常驻 / GUI / 诊断（可选）
 
 ```bash
-# 默认每 300 秒轮询一次云端，并监听本地改动
-npx youdaonote-sync watch
-
-# 自定义间隔（秒）
-npx youdaonote-sync watch --interval 60 --git
-```
-
-### 4. Web GUI
-
-```bash
+npx youdaonote-sync watch --interval 300
 npx youdaonote-sync gui
-# 浏览器打开 http://localhost:3456
-
-npx youdaonote-sync gui --port 8080
+npx youdaonote-sync diagnose summary
+npx youdaonote-sync config doctor
 ```
 
-### 5. 浏览 / 导出（不依赖同步元数据）
+## 它能做什么
 
-```bash
-npx youdaonote-sync list --path "工作"
-npx youdaonote-sync search --name "周报"
-npx youdaonote-sync download --cloud-path "工作/周报.md" --out ./tmp
-npx youdaonote-sync pull --dir ./youdaonote-export
-```
+| 能力 | 说明 |
+|------|------|
+| 双向同步 | 本地 ↔ 云端互相更新 |
+| 单向同步 | `--push` / `--pull` |
+| 自动同步 | [`watch`](./ts-src/src/engine/watcher.ts) |
+| 格式转换 | [`convert/`](./ts-src/src/convert/) |
+| 图片 | 本地或 [SM.MS](https://sm.ms/) |
+| 去重 / 移动 | [`dedup/`](./ts-src/src/dedup/) · [`moves.ts`](./ts-src/src/classify/moves.ts) |
+| 删除保护 | [RFC](./docs/rfc-deterministic-guardrails.md) |
+| Git | [`util/git.ts`](./ts-src/src/util/git.ts) |
+| Web GUI | [`gui/`](./ts-src/src/gui/) |
+| 诊断 | [`diagnose-cli.ts`](./ts-src/src/cli/diagnose-cli.ts) |
 
 ## 同步规则（简版）
 
-- 只有本地有 → 上传；若元数据显示曾经同步过，则视为云端已删，默认不重建
-- 只有云端有 → 下载；若元数据显示曾经同步过，则视为本地已删，默认不重建
-- 两边都有但内容相同（即使 mtime 变了）→ 跳过
-- 两边内容不同 → 尽量单向同步；无法判定时按较新一侧覆盖
-- 支持移动/重命名检测，减少「删旧建新」
-- 可用 `sync_include` / `sync_exclude` 做选择性同步
-- 需要把删除同步到另一端时，加 `--propagate-deletes`（会配合本地回收站逻辑）
+- 只有本地有 → 上传；元数据曾同步过则视为云端已删，默认不重建
+- 只有云端有 → 下载；元数据曾同步过则视为本地已删，默认不重建
+- 内容相同 → 跳过（即使 mtime 变了）
+- 内容不同 → 尽量单向；否则按较新一侧
+- 移动检测：[`moves.ts`](./ts-src/src/classify/moves.ts)
+- 删除传播：`--propagate-deletes`
 
-## 常用诊断
-
-出问题先 dry-run，再用 diagnose：
+## NOTE 表格诊断
 
 ```bash
-npx youdaonote-sync sync --dry-run
-npx youdaonote-sync diagnose summary
-npx youdaonote-sync diagnose path --target "目录/文件名.md"
-npx youdaonote-sync diagnose decision --target "目录/文件名.md"
-npx youdaonote-sync diagnose reset-cache
-npx youdaonote-sync diagnose force-reupload --target "目录/文件名.md"
+npx youdaonote-sync diagnose check-note-tables --target "folder/note.md"
+npx youdaonote-sync diagnose verify-note --target "folder/note.md"
+npx youdaonote-sync diagnose compare-cloud-local --target "folder/note.md"
 ```
 
-NOTE 表格相关（桌面端渲染异常时）：
-
-```bash
-npx youdaonote-sync diagnose check-note-tables --target "目录/文件名.md"
-npx youdaonote-sync diagnose verify-note --target "目录/文件名.md"
-npx youdaonote-sync diagnose compare-cloud-local --target "目录/文件名.md"
-```
-
-更多命令见：`npx youdaonote-sync diagnose --help`
+复盘：[note-table-incident-retrospective-2026-03.md](./docs/note-table-incident-retrospective-2026-03.md) · PR 模板：[PULL_REQUEST_TEMPLATE.md](./.github/PULL_REQUEST_TEMPLATE.md)
 
 ## Windows 定时同步（可选）
 
-可用系统任务计划程序每天跑一次同步。仓库不附带已注册任务；请自行创建，例如调用：
+用 [任务计划程序](https://learn.microsoft.com/windows/win32/taskschd/task-scheduler-start-page)，工作目录指向 `ts-src`：
 
 ```bat
-cd /d E:\Projects\youdaonote-sync\ts-src
+cd /d C:\path\to\youdaonote-sync\ts-src
 npx youdaonote-sync sync --git
 ```
 
-在 Git Bash 里操作 `schtasks` 时，建议加 `MSYS_NO_PATHCONV=1`，避免路径被错误转换。
+Git Bash 下 `schtasks` 建议加 `MSYS_NO_PATHCONV=1`。
 
 ## 开发
 
 ```bash
 cd ts-src
-
-npm test          # 测试
-npm run typecheck # 类型检查
-npm run lint      # Lint
-npm run format    # 格式化
-npm run build     # 编译到 dist/
+npm test
+npm run typecheck
+npm run lint
+npm run format
+npm run build
 ```
 
-源码在 `ts-src/src/`：
+| 目录 | 职责 |
+|------|------|
+| [`api/`](./ts-src/src/api/) | API / 登录 / Cookie |
+| [`scan/`](./ts-src/src/scan/) | 扫描与缓存 |
+| [`classify/`](./ts-src/src/classify/) | 决策 |
+| [`engine/`](./ts-src/src/engine/) | 编排 |
+| [`execute/`](./ts-src/src/execute/) | 执行 |
+| [`convert/`](./ts-src/src/convert/) | 格式转换 |
+| [`metadata/`](./ts-src/src/metadata/) | SQLite |
+| [`gui/`](./ts-src/src/gui/) | Web GUI |
+| [`cli/`](./ts-src/src/cli/) | CLI |
+| [`tools/`](./ts-src/src/tools/) | 诊断 |
 
-```
-ts-src/src/
-├── api/        # 有道 API、登录、Cookie
-├── scan/       # 云端 / 本地扫描与缓存
-├── classify/   # 同步决策（上传/下载/冲突/移动）
-├── engine/     # 编排：scan → classify → execute
-├── execute/    # 单文件执行（下载、上传、冲突合并）
-├── convert/    # 格式转换
-├── metadata/   # SQLite 元数据
-├── gui/        # Web GUI
-├── cli/        # 命令行入口
-└── tools/      # 诊断工具
-```
-
-设计说明与审查记录见 `docs/`。
+设计参考：[typescript-rewrite-design.md](./docs/typescript-rewrite-design.md) · 归档：[docs/archive/](./docs/archive/)
 
 ## License
 
-MIT
+[MIT](./LICENSE.md)
