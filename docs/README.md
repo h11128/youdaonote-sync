@@ -8,7 +8,8 @@ Public docs for [youdaonote-sync](https://github.com/h11128/youdaonote-sync).
 |-----|---------|
 | [README](../README.md) | Install + E2E sync |
 | [guides/configuration.md](./guides/configuration.md) | Config SOT — single directory, doctor, fields |
-| [design/architecture.md](./design/architecture.md) | Component / pipeline / sequence diagrams |
+| [guides/youdao-api.md](./guides/youdao-api.md) | Youdao private API (auth, push/download, fileId) |
+| [design/architecture.md](./design/architecture.md) | Component / pipeline / classify Decision Table |
 | [rfc/RFC-001-deterministic-guardrails.md](./rfc/RFC-001-deterministic-guardrails.md) | Delete threshold, empty-cloud abort, audit log |
 
 ## Historical (frozen at document date)
@@ -39,7 +40,7 @@ Layout mirrors a standard docs taxonomy (`guides/`, `design/`, `rfc/`, `retrospe
 **Rules**
 
 1. SOT docs (`guides/`, `design/architecture.md`, root README) must reflect current implementation.
-2. Historical docs: keep original filename; add a one-line banner pointing to current docs. Do not rewrite to match today's code.
+2. Historical docs: keep content frozen; add a one-line banner pointing to current docs. Filenames may be renamed only to match the naming table above (e.g. retrospectives → `YYYY-MM-DD-…`). Do not rewrite body text to match today's code.
 3. New retrospectives: follow [retrospectives/README.md](./retrospectives/README.md) (Reflection / Troubleshooting / Avoidance).
 4. English filenames for new public docs; Chinese is fine inside the body.
 

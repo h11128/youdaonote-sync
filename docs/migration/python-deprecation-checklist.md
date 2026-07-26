@@ -5,7 +5,7 @@
 
 > 创建时间：2026-03-10
 > 目的：逐文件对照被删除的 Python 代码，确认 TS 端是否已有对应实现
-> 相关文档：`ts-python-comparison-report.md`（模块级差异）、`ts-rewrite-retrospective.md`（遗漏复盘）
+> 相关文档：`ts-python-comparison-report.md`（模块级差异）、`2026-03-02-ts-rewrite-retrospective.md`（遗漏复盘）
 
 状态说明：
 - ✅ 已有对应实现

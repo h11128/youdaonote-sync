@@ -2,6 +2,7 @@
 
 > **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
 
+**TL;DR** — Python 同步引擎功能完整但存在效率问题：(1) scanner 对每个文件做独立 API 调用（无批量），(2) 移动检测用 O(n²) 暴力匹配，(3) 去重在每次同步时全量扫描。建议的优化路线（Bloom 过滤器、Merkle 树、并发扫描）已在 TypeScript 重写中落地。当前架构参见 [architecture.md](../design/architecture.md)。
 
 > 生成时间：2026-02-21
 > 审查范围：`src/sync/` 全部模块（engine, scanner, decision, moves, dedup, metadata, utils, merkle, bloom, merge, rolling_hash, desktop_data）

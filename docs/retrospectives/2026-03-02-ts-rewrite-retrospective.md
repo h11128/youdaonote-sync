@@ -2,6 +2,7 @@
 
 > **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
 
+**TL;DR** — TS 重写审查发现三类遗漏：(1) 已实现但未接入的模块（refine、merge、heal），(2) 哈希算法不一致（MD5 vs xxHash），(3) 缺少边界防御（空目录保护、metadata 校验）。全部在同日修复。根因是 AI 辅助编码时"写了测试就以为接入了"，改进措施是增加 e2e 集成验证。
 
 > 日期：2026-03-02
 > 触发事件：审查 12 个 commit（ca4e19c → c6f0a14）时发现 TS 重写相对 Python 实现存在多处算法 / 流程遗漏

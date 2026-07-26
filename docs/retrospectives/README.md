@@ -17,6 +17,6 @@ Per project practice:
 
 | Doc | Topic |
 |-----|-------|
-| [2026-03-note-table-incident.md](./2026-03-note-table-incident.md) | NOTE native-table vs pipe-text render failure |
-| [ts-rewrite-retrospective.md](./ts-rewrite-retrospective.md) | Python → TypeScript rewrite lessons (historical) |
+| [2026-03-02-ts-rewrite-retrospective.md](./2026-03-02-ts-rewrite-retrospective.md) | Python → TypeScript rewrite lessons (historical) |
+| [2026-03-24-note-table-incident.md](./2026-03-24-note-table-incident.md) | NOTE native-table vs pipe-text render failure |
 | [2026-03-29-ai-development-retrospective.md](./2026-03-29-ai-development-retrospective.md) | AI agent diagnostic tool avoidance (historical) |

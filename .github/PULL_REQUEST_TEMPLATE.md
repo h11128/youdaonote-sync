@@ -14,7 +14,7 @@
 
 ## Evidence
 
-Use [README diagnose](../README.md#常用诊断) when applicable. For NOTE table render issues, see [incident retrospective](../docs/retrospectives/2026-03-note-table-incident.md).
+Use [README diagnose](../README.md#常用诊断) when applicable. For NOTE table render issues, see [incident retrospective](../docs/retrospectives/2026-03-24-note-table-incident.md).
 
 ### Shape Evidence
 

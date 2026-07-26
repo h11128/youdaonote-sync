@@ -7,6 +7,7 @@
 - **Issues**：[提交问题](https://github.com/h11128/youdaonote-sync/issues) · [模板](./.github/ISSUE_TEMPLATE/提-issue-请使用这个模版.md)
 - **许可**：[MIT](./LICENSE.md)
 - **配置指南**：[docs/guides/configuration.md](./docs/guides/configuration.md)
+- **有道 API**：[docs/guides/youdao-api.md](./docs/guides/youdao-api.md)
 - **架构**：[docs/design/architecture.md](./docs/design/architecture.md)
 - **文档索引**：[docs/README.md](./docs/README.md)
 
@@ -137,7 +138,7 @@ npx youdaonote-sync diagnose verify-note --target "folder/note.md"
 npx youdaonote-sync diagnose compare-cloud-local --target "folder/note.md"
 ```
 
-复盘：[2026-03-note-table-incident.md](./docs/retrospectives/2026-03-note-table-incident.md)
+复盘：[2026-03-24-note-table-incident.md](./docs/retrospectives/2026-03-24-note-table-incident.md)
 
 ## 开发
 
