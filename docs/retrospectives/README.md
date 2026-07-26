@@ -3,7 +3,7 @@
 Use this folder for write-ups that still inform current practice (bugs fixed, process changes, guardrails added).
 
 **Naming:** `YYYY-MM-DD-kebab-case.md`  
-**Frozen history only:** move to [`../archive/retrospectives/`](../archive/retrospectives/).
+**Frozen history only:** historical retrospectives stay in this folder with a banner.
 
 ## Required sections (after a real incident / CI failure)
 

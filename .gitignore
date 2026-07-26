@@ -52,6 +52,6 @@ htmlcov/
 
 .cursor/
 
-# vendored by myforge/scripts/install-hooks.sh for the pre-commit git-crypt guard
+# git-crypt-tool binary (built from myforge; no longer vendored by install-hooks)
 /target/release/git-crypt-tool
 /target/release/git-crypt-tool.exe

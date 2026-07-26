@@ -1,6 +1,6 @@
 # TypeScript 重写：设计与实现方案
 
-> **历史设计文档（2026-03）**。Python 实现已从仓库移除；日常安装与用法以根目录 [README](../../../README.md) 为准。  
+> **历史设计文档（2026-03）**。Python 实现已从仓库移除；日常安装与用法以根目录 [README](../../README.md) 为准。  
 > 前置分析：[sync-engine-overhaul.md](./sync-engine-overhaul.md)  
 > SOLID / Dev Practice 审查：[solid-and-dev-practice-audit-ts.md](../audits/solid-and-dev-practice-audit-ts.md)
 

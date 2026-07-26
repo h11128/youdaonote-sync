@@ -126,4 +126,4 @@ flowchart TD
 | Execute | [`ts-src/src/execute/`](../../ts-src/src/execute/) |
 | Guardrails RFC | [`RFC-001`](../rfc/RFC-001-deterministic-guardrails.md) |
 
-Historical design notes (may be stale): [`archive/design/typescript-rewrite-design.md`](../archive/design/typescript-rewrite-design.md) · [`archive/`](../archive/).
+Historical design notes (may be stale): [`typescript-rewrite-design.md`](./typescript-rewrite-design.md) · [`audits/`](../audits/).
