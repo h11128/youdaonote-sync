@@ -10,7 +10,6 @@ import { getConfigDir } from '../util/config-dir.js';
 
 interface Config {
   local_dir: string;
-  ydnote_dir: string;
   smms_secret_token?: string;
   is_relative_path?: boolean;
   sync_include?: string[];
@@ -21,7 +20,7 @@ interface Config {
 function loadConfig(configDir: string): Config {
   const configPath = join(configDir, 'config.json');
   if (!existsSync(configPath)) {
-    return { local_dir: '', ydnote_dir: '' };
+    return { local_dir: '' };
   }
   return JSON.parse(readFileSync(configPath, 'utf-8')) as Config;
 }

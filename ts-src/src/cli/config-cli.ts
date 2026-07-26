@@ -39,7 +39,7 @@ export function registerConfigCommands(program: Command): void {
 
   program
     .command('migrate')
-    .description('Copy legacy cwd/config/ into the SOT config directory')
+    .description('One-shot: copy old repo config/ into the SOT (then retires the old folder)')
     .action(() => {
       const oldDir = getLegacyConfigDir();
       const newDir = getConfigDir();

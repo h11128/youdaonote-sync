@@ -198,8 +198,3 @@ export function migrateConfigFiles(oldDir: string, newDir: string): string[] {
   }
   return copied;
 }
-
-/** @deprecated Use ensureConfigSot / assertConfigSot */
-export function warnIfLegacyConfig(): void {
-  ensureConfigSot();
-}
