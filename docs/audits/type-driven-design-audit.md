@@ -1,5 +1,8 @@
 # Type-Driven Design Audit
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > Date: 2026-02-28
 > **状态：分析报告，建议 F1+F2+F9 为优先实施项。当前尚未开始重构（属于未来优化计划）。**
 

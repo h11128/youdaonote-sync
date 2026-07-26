@@ -1,5 +1,8 @@
 # SOLID 原则审查报告
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 审查范围：`src/` 全部源码（不含 `tools/`、`test/`）
 > 日期：2026-02-02
 > **状态：22 个问题中 20 个已修复（见底部修复记录），2 个标为低优先级。v2 跟进审核见 `solid-audit-v2.md`。**

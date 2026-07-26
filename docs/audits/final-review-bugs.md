@@ -1,5 +1,8 @@
 # Final Review — Bug Report
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > **状态：唯一发现的 bug（utils.py CRLF carry_cr）已修复**
 
 ## 1. metadata.py

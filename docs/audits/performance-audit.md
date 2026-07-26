@@ -1,5 +1,8 @@
 # 算法效率与代码质量优化报告
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 基于 2026-02-21 的代码快照分析
 >
 > **实施状态：P0 + P1 全部修复，P2/P3 大部分修复。详见 `sync-algorithm-audit.md` 的完整实施记录。**

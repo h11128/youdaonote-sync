@@ -9,8 +9,8 @@ User setup: [Configuration guide](../guides/configuration.md) · [README](../../
 flowchart TB
   subgraph cli [CLI / GUI]
     Bin["bin.ts"]
-    Cmds["sync / watch / login / diagnose / gui"]
-    ConfigCli["config path / doctor / migrate"]
+    Cmds["sync / watch / login / diagnose / gui / migrate"]
+    ConfigCli["config path / doctor"]
   end
 
   subgraph sot [Config SOT — one directory]

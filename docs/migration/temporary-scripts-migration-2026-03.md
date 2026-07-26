@@ -1,5 +1,8 @@
 # Temporary Scripts Migration (2026-03)
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 This note records one-off `.local-scripts` used during NOTE table incident debugging and their permanent replacements.
 
 ## Migrated to `diagnose` commands

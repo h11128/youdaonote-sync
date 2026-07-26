@@ -1,5 +1,8 @@
 # 有道云笔记私有 API 分析
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 分析日期：2026-02-14
 > 当前状态：项目已基于此分析完成完整的双向同步实现，HTTP 客户端从 requests 迁移到 httpx
 

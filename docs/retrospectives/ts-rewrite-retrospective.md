@@ -1,5 +1,8 @@
 # TypeScript 重写复盘：遗漏分析与改进方案
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 日期：2026-03-02
 > 触发事件：审查 12 个 commit（ca4e19c → c6f0a14）时发现 TS 重写相对 Python 实现存在多处算法 / 流程遗漏
 > 修复 commit：（同日完成，见 git log）

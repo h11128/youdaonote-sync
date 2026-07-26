@@ -1,5 +1,8 @@
 # 同步引擎重写分析
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 2026-03-01 | 基于代码快照 088bd42 + dry-run 实测数据
 >
 > 前提：彻底重构整个项目（非渐进改造）

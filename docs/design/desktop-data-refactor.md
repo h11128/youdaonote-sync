@@ -1,5 +1,8 @@
 # 重构设计：同步扫描缓存 + 云端格式保持
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 版本: v2.0 | 日期: 2026-02-22  
 > v1→v2 变更: 发现 `sync_metadata.db` 已缓存完整目录树但未被 scanner 复用，重新设计架构
 >

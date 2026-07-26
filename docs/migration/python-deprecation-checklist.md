@@ -1,5 +1,8 @@
 # Python → TypeScript 移植 Checklist
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 创建时间：2026-03-10
 > 目的：逐文件对照被删除的 Python 代码，确认 TS 端是否已有对应实现
 > 相关文档：`ts-python-comparison-report.md`（模块级差异）、`ts-rewrite-retrospective.md`（遗漏复盘）

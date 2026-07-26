@@ -1,5 +1,8 @@
 # 向 Git 学习：同步引擎可借鉴的设计与算法
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 分析 Git 内部机制中哪些设计理念和算法可以应用到有道云笔记同步场景，并评估每项的实用性和实现成本。
 >
 > **实施状态：Section 二中 6 项全部完成，Section 三~五中 Bloom Filter、Merkle Tree 已实现（2026-03-01）**

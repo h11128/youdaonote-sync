@@ -1,8 +1,11 @@
 # SOLID 与 Dev Practice 审查报告（TypeScript 代码库）
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 审查日期：2026-03-02  
 > 审查范围：`ts-src/src/` 全部模块  
-> 依据：jason-dev-practices.mdc、memory-rules.mdc、SOLID 原则
+> 依据：项目开发规范、SOLID 原则
 
 ---
 
@@ -122,7 +125,7 @@
 
 - 运行 `npm test`（ts-src 内）：167 个测试通过。
 - `tsc --noEmit` 与 Lint 通过。
-- 若后续新增 util 或移动代码，按 memory-rules 更新架构/目录说明。
+- 若后续新增 util 或移动代码，更新架构/目录说明。
 
 ---
 

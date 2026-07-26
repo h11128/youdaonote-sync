@@ -1,5 +1,8 @@
 # SOLID & Dev Practices 审核报告 (v2)
 
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+
+
 > 审核日期: 2026-02-16
 > 审核范围: `src/` 全部模块 + `test/` 测试覆盖
 > 前序报告: `docs/solid-audit.md` (2026-02-02，22 个问题中 20 个已修复)

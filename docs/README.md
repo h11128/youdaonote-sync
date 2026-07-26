@@ -24,7 +24,7 @@ Public docs for [youdaonote-sync](https://github.com/h11128/youdaonote-sync).
 
 ## Conventions
 
-Layout mirrors the myforge / Progress Engine taxonomy. No separate `archive/` directory — historical docs live alongside current ones in the same category, distinguished by a Historical banner at the top.
+Layout mirrors a standard docs taxonomy (`guides/`, `design/`, `rfc/`, `retrospectives/`). No separate `archive/` directory — historical docs live alongside current ones in the same category, distinguished by a Historical banner at the top.
 
 | Directory | Naming |
 |-----------|--------|

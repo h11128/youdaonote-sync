@@ -7,7 +7,7 @@ Use this folder for write-ups that still inform current practice (bugs fixed, pr
 
 ## Required sections (after a real incident / CI failure)
 
-Per project practice (`jason-dev-practices`):
+Per project practice:
 
 1. **Reflection** — Why time was burned (wrong evidence, wrong layer, incomplete “fix”).
 2. **Troubleshooting** — Symptom → how to diagnose next time (commands, log keywords, artifacts).
@@ -18,3 +18,5 @@ Per project practice (`jason-dev-practices`):
 | Doc | Topic |
 |-----|-------|
 | [2026-03-note-table-incident.md](./2026-03-note-table-incident.md) | NOTE native-table vs pipe-text render failure |
+| [ts-rewrite-retrospective.md](./ts-rewrite-retrospective.md) | Python → TypeScript rewrite lessons (historical) |
+| [2026-03-29-ai-development-retrospective.md](./2026-03-29-ai-development-retrospective.md) | AI agent diagnostic tool avoidance (historical) |
