@@ -3,7 +3,7 @@
 > 事件：Markdown 表格上传后，桌面端出现“发生了一些错误”，并伴随显示异常  
 > 范围：`md -> note json` 转换、云端回读验证、客户端验收流程、批量迁移流程  
 > 目标：解释“为什么花了很久才定位根因”，并给出跨层改进  
-> 用户命令见 [README 诊断](../README.md#常用诊断)；PR 证据栏见 [.github/PULL_REQUEST_TEMPLATE.md](../.github/PULL_REQUEST_TEMPLATE.md)
+> 用户命令见 [README 诊断](../../README.md#常用诊断)；PR 证据栏见 [.github/PULL_REQUEST_TEMPLATE.md](../../.github/PULL_REQUEST_TEMPLATE.md)
 
 ---
 
@@ -330,7 +330,7 @@ Main: merge evidence -> pick fix -> implement once
 
 对外部贡献者，以这些为准（本地私有 `.cursor/` 规则/skill **不在本仓库**，clone 后看不到）：
 
-1. ✅ PR 模板三栏证据：[`PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)
-2. ✅ 诊断命令：`check-note-tables` / `verify-note` / `migrate-note-tables` / `force-reupload`（见 [README](../README.md#常用诊断)）
+1. ✅ PR 模板三栏证据：[`PULL_REQUEST_TEMPLATE.md`](../../.github/PULL_REQUEST_TEMPLATE.md)
+2. ✅ 诊断命令：`check-note-tables` / `verify-note` / `migrate-note-tables` / `force-reupload`（见 [README](../../README.md#常用诊断)）
 3. ✅ 验收约定：结构证据 + dry-run 证据 + 桌面端抽检，缺一不可
 4. 批量迁移时：并行收集证据可以，但由主线程统一提交改动

@@ -2,7 +2,7 @@
 
 > **状态**：Phase 1–3 全部完成  
 > 创建：2026-04-08 · 更新：2026-07-26  
-> 相关代码：[`engine.ts`](../ts-src/src/engine/engine.ts) · [`guardrails.test.ts`](../ts-src/src/engine/guardrails.test.ts) · [`store.ts`](../ts-src/src/metadata/store.ts) · [`helpers-dryrun.ts`](../ts-src/src/engine/helpers-dryrun.ts)
+> 相关代码：[`engine.ts`](../../ts-src/src/engine/engine.ts) · [`guardrails.test.ts`](../../ts-src/src/engine/guardrails.test.ts) · [`store.ts`](../../ts-src/src/metadata/store.ts) · [`helpers-dryrun.ts`](../../ts-src/src/engine/helpers-dryrun.ts)
 
 ---
 
@@ -20,7 +20,7 @@
 
 ### 3.1 删除阈值拦截
 
-默认 `maxDeletesPerSync = 5`（[`config.example.json`](../config.example.json) / `config.json`）。超出时：
+默认 `maxDeletesPerSync = 5`（[`config.example.json`](../../config.example.json) / `config.json`）。超出时：
 
 - `SyncResult.status = 'suspended'`，`reason = 'delete_threshold'`
 - 打印 `=== SYNC SUSPENDED ===` 与 dry-run 预览
@@ -53,7 +53,7 @@
 
 ## 5. 使用说明
 
-- 配置：见 [README 配置](../README.md#配置) 与 [`config.example.json`](../config.example.json)
+- 配置：见 [README 配置](../../README.md#配置single-source-of-truth) 与 [`config.example.json`](../../config.example.json)
 - 预览：`npx youdaonote-sync sync --dry-run`
 - 报告：`{local_dir}/.local-reports/`
-- 环境变量：见 [`.env.example`](../.env.example)
+- 环境变量：见 [`.env.example`](../../.env.example)

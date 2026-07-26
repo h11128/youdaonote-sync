@@ -1,7 +1,7 @@
 # Cross-Project Runner Framework
 
 > **Archived.** This describes a Cursor multi-project helper, not required to install or use youdaonote-sync.  
-> For the product itself, see the root [README](../../README.md).
+> For the product itself, see the root [README](../../../README.md).
 
 A lightweight framework for invoking local project commands from any Cursor workspace via AI conversation.
 
