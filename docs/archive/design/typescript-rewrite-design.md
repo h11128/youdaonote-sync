@@ -1,10 +1,10 @@
 # TypeScript 重写：设计与实现方案
 
-> **历史设计文档（2026-03）**。Python 实现已从仓库移除；日常安装与用法以根目录 [README](../../README.md) 为准。  
-> 前置分析：[sync-engine-overhaul.md](./sync-engine-overhaul.md)  
-> SOLID / Dev Practice 审查：[solid-and-dev-practice-audit-ts.md](../audits/solid-and-dev-practice-audit-ts.md)
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).  
+> Prior analysis: [sync-engine-overhaul.md](./sync-engine-overhaul.md)  
+> SOLID / Dev Practice audit: [solid-and-dev-practice-audit-ts.md](../postmortem/solid-and-dev-practice-audit-ts.md)
 
-**TL;DR** — 三阶段管线（Scan → Classify → Execute）设计，classify 是纯函数 + 18 条决策表规则。核心活内容（FileState、Decision Table、Refine 规则、Move 检测）已提取到 [architecture.md](./architecture.md)。本文保留完整类型系统、接口定义和实现细节作历史参考。
+**TL;DR** — 三阶段管线（Scan → Classify → Execute）设计，classify 是纯函数 + 18 条决策表规则。核心活内容（FileState、Decision Table、Refine 规则、Move 检测）已提取到 [architecture.md](../../reference/architecture.md)。本文保留完整类型系统、接口定义和实现细节作历史参考。
 
 本文档保留作架构参考，其中「可交替运行 Python/TS」「tsup 打包」等表述已过时：当前入口为 `ts-src` + `tsc` 构建。
 

@@ -1,6 +1,6 @@
 # AI 开发流程反思：诊断工具的忽视与行为惯性
 
-> **历史复盘（已归档）**。不描述产品安装步骤；日常用法见 [README](../../README.md)。
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 **日期**: 2026-03-29  
 **背景**: 在诊断某笔记文件的同步冲突时，AI 忽略了项目中已有的 `diagnose` CLI，耗费大量时间手写 SQL / TS 脚本。

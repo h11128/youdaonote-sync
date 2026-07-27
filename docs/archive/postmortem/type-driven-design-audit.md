@@ -1,6 +1,6 @@
 # Type-Driven Design Audit
 
-> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 
 > Date: 2026-02-28

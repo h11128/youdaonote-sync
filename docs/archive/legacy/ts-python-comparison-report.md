@@ -1,6 +1,6 @@
 # TypeScript vs Python Module Comparison Report
 
-> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 
 Comparison of dedup, moves, and scan modules. Source of truth: Python.

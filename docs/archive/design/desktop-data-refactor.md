@@ -1,6 +1,6 @@
 # 重构设计：同步扫描缓存 + 云端格式保持
 
-> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 
 > 版本: v2.0 | 日期: 2026-02-22  

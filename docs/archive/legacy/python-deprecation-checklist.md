@@ -1,6 +1,6 @@
 # Python → TypeScript 移植 Checklist
 
-> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 
 > 创建时间：2026-03-10

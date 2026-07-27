@@ -1,6 +1,6 @@
 # SOLID 原则审查报告
 
-> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 
 > 审查范围：`src/` 全部源码（不含 `tools/`、`test/`）

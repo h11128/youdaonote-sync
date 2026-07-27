@@ -1,8 +1,7 @@
 # 架构审查报告 — 2026-03-20
 
-> **历史快照（已归档）**。文中“待修复问题”、测试数量、配置迁移状态等可能已过时。  
-> 当前用法见 [README](../../README.md)；文档索引见 [docs/README.md](../README.md)。  
-> 文中样例文件名已脱敏。
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).  
+> Point-in-time snapshot; open issues, test counts, and config migration status may be stale.
 
 基于 dry-run + 实际同步执行 + 全量代码审阅产出。
 

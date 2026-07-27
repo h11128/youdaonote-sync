@@ -1,48 +1,82 @@
 # Documentation Index
 
-Public docs for [youdaonote-sync](https://github.com/h11128/youdaonote-sync).
+> Organization follows the cross-project docs standard
+> (`/root/Projects/agent-memory/docs/design/docs-organization-standard.md`;
+> Windows: `C:\Users\h1112\.codex\agent-memory\docs\design\docs-organization-standard.md`).
+> Checklist stub: myforge `docs/docs-organization-standard.md`.
+> Constraints: ≤7 items/dir · archive mirrors active structure · depth ≤3.
 
-## Living SOT (keep current)
+## reference/ — Living SOT (keep current)
 
 | Doc | Purpose |
 |-----|---------|
-| [README](../README.md) | Install + E2E sync |
-| [guides/configuration.md](./guides/configuration.md) | Config SOT — single directory, doctor, fields |
-| [guides/youdao-api.md](./guides/youdao-api.md) | Youdao private API (auth, push/download, fileId) |
-| [design/architecture.md](./design/architecture.md) | Component / pipeline / classify Decision Table |
-| [rfc/RFC-001-deterministic-guardrails.md](./rfc/RFC-001-deterministic-guardrails.md) | Delete threshold, empty-cloud abort, audit log |
+| [architecture.md](./reference/architecture.md) | Component diagram, pipeline, classify Decision Table |
+| [youdao-api.md](./reference/youdao-api.md) | Youdao private API (auth, push/download, fileId) |
 
-## Historical (frozen at document date)
+## guides/ — How-to
+
+| Doc | Purpose |
+|-----|---------|
+| [configuration.md](./guides/configuration.md) | Config SOT — single directory, doctor, fields |
+
+## design/ — Active proposals
+
+| Doc | Status | Purpose |
+|-----|--------|---------|
+| [rfc-001-deterministic-guardrails.md](./design/rfc-001-deterministic-guardrails.md) | Implemented | Delete threshold, empty-cloud abort, audit log |
+
+## postmortem/ — Incidents still informing practice
+
+| Doc | Purpose |
+|-----|---------|
+| [2026-03-24-note-table-incident.md](./postmortem/2026-03-24-note-table-incident.md) | NOTE native-table render failure |
+
+**New postmortems** use `YYYY-MM-DD-kebab-case.md` and include:
+
+1. **Reflection** — Why time was burned (wrong evidence, wrong layer, incomplete “fix”).
+2. **Troubleshooting** — Symptom → how to diagnose next time (commands, log keywords, artifacts).
+3. **Avoidance** — Concrete guard so the class cannot recur silently (test, assert, checklist item). Name the file and proof command.
+
+## archive/ — Frozen history
 
 | Directory | Contents |
 |-----------|----------|
-| [design/](./design/) | Current architecture + superseded designs (banner-marked) |
-| [audits/](./audits/) | Point-in-time code/architecture audits |
-| [migration/](./migration/) | Python → TypeScript migration artifacts |
-| [retrospectives/](./retrospectives/) | Post-incident and post-task write-ups |
-| [notes/](./notes/) | Out-of-scope notes (agent helpers, lessons) |
-| [rfc/](./rfc/) | RFCs (status in header) |
+| [archive/design/](./archive/design/) | Superseded design docs (TS rewrite, Rust analysis, sync hardening) |
+| [archive/postmortem/](./archive/postmortem/) | Historical audits and retrospectives |
+| [archive/legacy/](./archive/legacy/) | **Repo exception:** Python → TypeScript migration artifacts (not a standard active-tree mirror) |
 
 ## Conventions
 
-Layout mirrors a standard docs taxonomy (`guides/`, `design/`, `rfc/`, `retrospectives/`). No separate `archive/` directory — historical docs live alongside current ones in the same category, distinguished by a Historical banner at the top.
+Standard directories: `reference/`, `guides/`, `design/`, `postmortem/`, `archive/`.
 
 | Directory | Naming |
 |-----------|--------|
+| `reference/` | `kebab-case.md` |
 | `guides/` | `kebab-case.md` |
-| `design/` | `kebab-case.md` |
-| `rfc/` | `RFC-NNN-kebab-case.md` (zero-padded) |
-| `retrospectives/` | `YYYY-MM-DD-kebab-case.md` |
-| `audits/` | `kebab-case.md` (usually dated in content) |
-| `migration/` | `kebab-case.md` |
-| `notes/` | `kebab-case.md` |
+| `design/` | `rfc-NNN-kebab-case.md` for RFCs; `kebab-case.md` for drafts |
+| `postmortem/` | `YYYY-MM-DD-kebab-case.md` |
+| `archive/` | Mirrors active dirs (`design/`, `postmortem/`); `legacy/` is this repo’s migration bucket; no item limit |
 
-**Rules**
+**Historical banner** (from `docs/archive/<category>/file.md`):
 
-1. SOT docs (`guides/`, `design/architecture.md`, root README) must reflect current implementation.
-2. Historical docs: keep content frozen; add a one-line banner pointing to current docs. Filenames may be renamed only to match the naming table above (e.g. retrospectives → `YYYY-MM-DD-…`). Do not rewrite body text to match today's code.
-3. New retrospectives: follow [retrospectives/README.md](./retrospectives/README.md) (Reflection / Troubleshooting / Avoidance).
-4. English filenames for new public docs; Chinese is fine inside the body.
+```md
+> **Historical (YYYY-MM).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
+```
+
+From an active dir (`docs/postmortem/`, `docs/design/`, …) use one fewer `../`.
+
+**Rules:**
+
+1. SOT docs (`reference/`, root README) must reflect current implementation.
+2. Historical docs: frozen content with banner. Move to `archive/` when no longer actively referenced.
+3. Out-of-scope notes: `.local-docs/` (gitignored).
+4. English filenames; Chinese fine in body.
+
+## Local-only (not in git)
+
+| Path | Purpose |
+|------|---------|
+| `.local-docs/` | Notes unrelated to youdaonote-sync product (e.g. cross-project Cursor runner) |
 
 ## Templates
 

@@ -7,8 +7,8 @@
 - **Issues**：[提交问题](https://github.com/h11128/youdaonote-sync/issues) · [模板](./.github/ISSUE_TEMPLATE/提-issue-请使用这个模版.md)
 - **许可**：[MIT](./LICENSE.md)
 - **配置指南**：[docs/guides/configuration.md](./docs/guides/configuration.md)
-- **有道 API**：[docs/guides/youdao-api.md](./docs/guides/youdao-api.md)
-- **架构**：[docs/design/architecture.md](./docs/design/architecture.md)
+- **有道 API**：[docs/reference/youdao-api.md](./docs/reference/youdao-api.md)
+- **架构**：[docs/reference/architecture.md](./docs/reference/architecture.md)
 - **文档索引**：[docs/README.md](./docs/README.md)
 
 ## 端到端同步流程
@@ -48,7 +48,7 @@ sequenceDiagram
   end
 ```
 
-详细阶段图见 [Architecture](./docs/design/architecture.md)。
+详细阶段图见 [Architecture](./docs/reference/architecture.md)。
 
 ## 配置：Single source of truth
 
@@ -109,7 +109,7 @@ npx youdaonote-sync gui
 npx youdaonote-sync diagnose summary
 ```
 
-护栏：空云端列表 → abort（exit 3）；删除过多 → suspend（exit 2）。见 [RFC-001](./docs/rfc/RFC-001-deterministic-guardrails.md)。
+护栏：空云端列表 → abort（exit 3）；删除过多 → suspend（exit 2）。见 [RFC-001](./docs/design/rfc-001-deterministic-guardrails.md)。
 
 ## 它能做什么
 
@@ -121,7 +121,7 @@ npx youdaonote-sync diagnose summary
 | 格式转换 | [`convert/`](./ts-src/src/convert/) |
 | 图片 | 本地或 [SM.MS](https://sm.ms/) |
 | 去重 / 移动 | [`dedup/`](./ts-src/src/dedup/) · [`moves.ts`](./ts-src/src/classify/moves.ts) |
-| 删除保护 | [RFC-001](./docs/rfc/RFC-001-deterministic-guardrails.md) |
+| 删除保护 | [RFC-001](./docs/design/rfc-001-deterministic-guardrails.md) |
 | Git / GUI / 诊断 | [`util/git.ts`](./ts-src/src/util/git.ts) · [`gui/`](./ts-src/src/gui/) · [`diagnose-cli.ts`](./ts-src/src/cli/diagnose-cli.ts) |
 
 ## 同步规则（简版）
@@ -138,7 +138,7 @@ npx youdaonote-sync diagnose verify-note --target "folder/note.md"
 npx youdaonote-sync diagnose compare-cloud-local --target "folder/note.md"
 ```
 
-复盘：[2026-03-24-note-table-incident.md](./docs/retrospectives/2026-03-24-note-table-incident.md)
+复盘：[2026-03-24-note-table-incident.md](./docs/postmortem/2026-03-24-note-table-incident.md)
 
 ## 开发
 
@@ -157,7 +157,7 @@ cd ts-src && npm test && npm run typecheck && npm run build
 | [`metadata/`](./ts-src/src/metadata/) | SQLite |
 | [`cli/`](./ts-src/src/cli/) | CLI |
 
-更多图与模块说明：[docs/design/architecture.md](./docs/design/architecture.md)
+更多图与模块说明：[docs/reference/architecture.md](./docs/reference/architecture.md)
 
 ## License
 

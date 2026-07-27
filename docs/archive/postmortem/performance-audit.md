@@ -1,6 +1,6 @@
 # 算法效率与代码质量优化报告
 
-> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 
 > 基于 2026-02-21 的代码快照分析

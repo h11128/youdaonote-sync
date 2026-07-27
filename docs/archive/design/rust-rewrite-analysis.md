@@ -1,6 +1,6 @@
 # 用 Rust 重写 youdaonote-sync 的可行性分析
 
-> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 
 > 分析日期：2026-02-21

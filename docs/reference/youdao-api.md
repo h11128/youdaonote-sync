@@ -103,5 +103,5 @@ Push, download, and related URL templates in `constants.ts` include fixed client
 
 ## See also
 
-- [Configuration guide](./configuration.md) — setup cookies and config
-- Historical analysis: [`audits/api-analysis.md`](../audits/api-analysis.md)
+- [Configuration guide](../guides/configuration.md) — setup cookies and config
+- Historical analysis: [`archive/postmortem/api-analysis.md`](../archive/postmortem/api-analysis.md)

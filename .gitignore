@@ -40,6 +40,9 @@ youdaonote-export/
 # Local debug scripts
 .local-scripts/
 
+# Local-only notes (not product docs — keep on disk, never commit)
+.local-docs/
+
 # Performance profiling
 profiles/
 

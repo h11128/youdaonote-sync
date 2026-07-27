@@ -1,6 +1,6 @@
 # Engine Rewrite Diff Report: Python vs TypeScript
 
-> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 
 Comparison of `src/sync/engine.py` (Python, source of truth) with `ts-src/src/engine.ts` (TypeScript rewrite).

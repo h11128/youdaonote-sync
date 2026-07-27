@@ -51,7 +51,7 @@ npx youdaonote-sync sync
 | `local_dir` | Yes | Absolute path to local notes root |
 | `smms_secret_token` | No | [SM.MS](https://sm.ms/home/apitoken) token; empty = download images locally |
 | `is_relative_path` | No | Prefer relative image links in Markdown |
-| `maxDeletesPerSync` | No | Default `5`; exceed → sync suspended ([RFC-001](../rfc/RFC-001-deterministic-guardrails.md)) |
+| `maxDeletesPerSync` | No | Default `5`; exceed → sync suspended ([RFC-001](../design/rfc-001-deterministic-guardrails.md)) |
 | `sync_include` | No | Glob allow-list (array of strings) |
 | `sync_exclude` | No | Glob deny-list (array of strings) |
 
@@ -106,4 +106,4 @@ Not required for the default SOT. Use only to override the directory or enable v
 - [ ] `local_dir` exists on disk
 - [ ] `sync --dry-run` completes before the first real sync
 
-See also: [Architecture](../design/architecture.md) · [Youdao API](./youdao-api.md) · [README E2E flow](../../README.md#端到端同步流程)
+See also: [Architecture](../reference/architecture.md) · [Youdao API](../reference/youdao-api.md) · [README E2E flow](../../README.md#端到端同步流程)

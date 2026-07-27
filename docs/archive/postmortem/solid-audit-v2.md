@@ -1,6 +1,6 @@
 # SOLID & Dev Practices 审核报告 (v2)
 
-> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 
 
 > 审核日期: 2026-02-16
