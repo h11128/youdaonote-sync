@@ -63,6 +63,17 @@ describe('scanLocal: basic scanning', () => {
     expect(result.has(asRelPath('attachments'))).toBe(false);
   });
 
+  it('skips *.media dirs for voice clip binaries', () => {
+    mkdirSync(join(tmpDir, '语音_x.media'));
+    writeFileSync(join(tmpDir, '语音_x.media', '000-rec.aac'), '');
+    writeFileSync(join(tmpDir, '语音_x.audio'), '{}');
+
+    const result = scanLocal(tmpDir);
+
+    expect(result.has(asRelPath('语音_x.media'))).toBe(false);
+    expect(result.has(asRelPath('语音_x.audio'))).toBe(true);
+  });
+
   it('skips .conflict. files', () => {
     writeFileSync(join(tmpDir, 'file.conflict.20240101.md'), '');
     writeFileSync(join(tmpDir, 'normal.md'), '');
@@ -116,6 +127,16 @@ describe('scanLocalParallel', () => {
 
     expect(result.has(asRelPath('keep.md'))).toBe(true);
     expect(result.has(asRelPath('secret.md'))).toBe(false);
+  });
+
+  it('skips *.media dirs like scanLocal', async () => {
+    mkdirSync(join(tmpDir, '语音_x.media'));
+    writeFileSync(join(tmpDir, '语音_x.media', '000-rec.aac'), '');
+    writeFileSync(join(tmpDir, '语音_x.audio'), '{}');
+
+    const result = await scanLocalParallel(tmpDir);
+    expect(result.has(asRelPath('语音_x.media'))).toBe(false);
+    expect(result.has(asRelPath('语音_x.audio'))).toBe(true);
   });
 });
 

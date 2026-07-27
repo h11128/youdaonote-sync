@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { YoudaoNoteApi } from './client.js';
 import type { CookieEntry } from './cookies.js';
+import { asFileId } from '../types/common.js';
 
 vi.stubGlobal('fetch', vi.fn());
 
@@ -112,6 +113,30 @@ describe('getRootId with mocked fetch', () => {
     api.loginByCookies();
 
     await expect(api.getRootId()).rejects.toThrow('Not logged in');
+  });
+});
+
+describe('getFileById convert option', () => {
+  it('defaults convert=true and accepts convert=false for audio clips', async () => {
+    writeCookiesFile();
+    const bodies: string[] = [];
+    vi.mocked(fetch).mockImplementation(((_url, init) => {
+      const body = init?.body;
+      if (typeof body === 'string') bodies.push(body);
+      else if (body instanceof URLSearchParams) bodies.push(body.toString());
+      else bodies.push('');
+      return Promise.resolve(new Response(new Uint8Array([1, 2, 3]), { status: 200 }));
+    }) as typeof fetch);
+
+    const api = new YoudaoNoteApi(cookiesPath);
+    api.loginByCookies();
+    await api.getFileById(asFileId('note-id'));
+    await api.getFileById(asFileId('clip-id'), { convert: false });
+
+    expect(bodies[0]).toContain('convert=true');
+    expect(bodies[0]).toContain('fileId=note-id');
+    expect(bodies[1]).toContain('convert=false');
+    expect(bodies[1]).toContain('fileId=clip-id');
   });
 });
 

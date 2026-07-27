@@ -5,6 +5,7 @@ import { asEpochSeconds, asRelPath, type RelPath } from '../types/common.js';
 import { normalizeSep, mapCloudName, compileFilter } from './name.js';
 import { requireNonEmpty } from '../util/preconditions.js';
 import { logger } from '../util/logger.js';
+import { isAudioMediaDirName } from '../util/audio-paths.js';
 export { patternToRegex } from './name.js';
 
 const LOCAL_ARTIFACT_DIRS = new Set(['images', 'attachments']);
@@ -16,7 +17,7 @@ function shouldSkipEntry(entry: Dirent): boolean {
 }
 
 function isArtifactDir(name: string): boolean {
-  return LOCAL_ARTIFACT_DIRS.has(name);
+  return LOCAL_ARTIFACT_DIRS.has(name) || isAudioMediaDirName(name);
 }
 
 function isConflictFile(name: string): boolean {

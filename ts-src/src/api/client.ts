@@ -4,10 +4,11 @@ import { loadCookies, loadFromDesktop, saveCookies } from './cookies.js';
 import type { DirId, FileId } from '../types/common.js';
 import type { DirInfoByIdResponse } from '../types/dir.js';
 import { type NoteDomain } from '../types/common.js';
-import { ROOT_ID_URL, FILE_URL, LIST_RECENT_URL, tpl, BASE_HEADERS } from './constants.js';
+import { ROOT_ID_URL, tpl, BASE_HEADERS } from './constants.js';
 import { safeJson } from './request.js';
 import { fetchDirList } from './dir.js';
 import * as fileApi from './file-api.js';
+import * as fetchFile from './fetch-file.js';
 import { retryWithBackoff } from './retry.js';
 
 export class YoudaoNoteApi {
@@ -222,21 +223,8 @@ export class YoudaoNoteApi {
     return fetchDirList({ httpGet: (u) => this.httpGet(u), getCstk: () => cstk }, dirId);
   }
 
-  async getFileById(fileId: FileId): Promise<ArrayBuffer> {
-    if (!fileId) throw new Error('fileId must not be empty');
-    this.requireAuth();
-    const cstk = this.cstk;
-    if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
-    const params = new URLSearchParams({
-      fileId,
-      version: '-1',
-      convert: 'true',
-      editorType: '1',
-      cstk,
-    });
-    const url = tpl(FILE_URL, { cstk });
-    const resp = await this.httpPost(url, params);
-    return resp.arrayBuffer();
+  async getFileById(fileId: FileId, opts?: { convert?: boolean }): Promise<ArrayBuffer> {
+    return fetchFile.getFileById(this.asFileApiContext(), fileId, opts);
   }
 
   async pushFile(opts: {
@@ -270,10 +258,6 @@ export class YoudaoNoteApi {
     return fileApi.renameFile(this.asFileApiContext(), fileId, newName, domain);
   }
 
-  /**
-   * Fetch recently modified files (ordered by modify time, descending).
-   * API maximum is 30 items per call.
-   */
   async pushBinaryFile(opts: {
     fileId: FileId;
     parentId: DirId;
@@ -287,29 +271,11 @@ export class YoudaoNoteApi {
   }
 
   async getFileInfo(fileId: FileId): Promise<Record<string, unknown>> {
-    if (!fileId) throw new Error('fileId must not be empty');
-    this.requireAuth();
-    const cstk = this.cstk;
-    if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
-    const url =
-      `https://note.youdao.com/yws/api/personal/file/${fileId}` +
-      `?method=getById&keyfrom=web&cstk=${cstk}`;
-    const params = new URLSearchParams({ cstk });
-    return safeJson(await this.httpPost(url, params));
+    return fetchFile.getFileInfo(this.asFileApiContext(), fileId);
   }
 
   async listRecent(limit = 30): Promise<Record<string, unknown>[]> {
-    this.requireAuth();
-    const cstk = this.cstk;
-    if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
-    const url = tpl(LIST_RECENT_URL, { cstk });
-    const params = new URLSearchParams({
-      offset: '0',
-      limit: String(Math.min(limit, 30)),
-    });
-    const resp = await this.httpPost(url, params);
-    const json = await safeJson(resp);
-    return Array.isArray(json) ? json : [];
+    return fetchFile.listRecent(this.asFileApiContext(), limit);
   }
 
   getCookieHeader(): string {
@@ -320,9 +286,8 @@ export class YoudaoNoteApi {
     return {
       httpPost: (url, body) => this.httpPost(url, body),
       getCstk: () => {
-        const cstk = this.cstk;
-        if (!cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
-        return cstk;
+        if (!this.cstk) throw new Error(YoudaoNoteApi.NOT_LOGGED_IN_MSG);
+        return this.cstk;
       },
       requireAuth: () => {
         this.requireAuth();

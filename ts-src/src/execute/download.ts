@@ -1,11 +1,4 @@
-import {
-  writeFileSync,
-  mkdirSync,
-  utimesSync,
-  renameSync,
-  unlinkSync,
-  readFileSync,
-} from 'node:fs';
+import { writeFileSync, mkdirSync, utimesSync, unlinkSync, readFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import type { YoudaoNoteApi } from '../api/client.js';
 import { NoteDomain } from '../types/common.js';
@@ -24,15 +17,24 @@ import { htmlBytesToMarkdown } from '../convert/html-to-md.js';
 import { requireNonEmpty } from '../util/preconditions.js';
 
 import { readFileMtime } from '../util/utils.js';
+import { logger } from '../util/logger.js';
+import { renameReplace } from '../util/atomic-replace.js';
 import { migrateImages } from './images.js';
+import { downloadAudioRecords, isAudioNoteJson } from './audio.js';
 import type { ExecuteContext, SyncStats } from './types.js';
 
 export type FileType = 'markdown' | 'xml' | 'json' | 'html' | 'binary';
 
 /**
  * Detect the content type of a downloaded note by inspecting the first bytes.
+ *
+ * Voice notes (`.audio`) are JSON with `recordList`, not rich-note JSON.
+ * They must stay `binary` so we do not run json-to-md (which yields empty).
  */
 export function detectFileType(data: Uint8Array, ext: string): FileType {
+  if (ext === '.audio') return 'binary';
+  // Only parse as voice-note JSON when the prefix already shows recordList.
+  if (isAudioNoteJson(data)) return 'binary';
   const prefix = Buffer.from(data.slice(0, 50)).toString('utf-8').trimStart();
   if (prefix.startsWith('<?xml')) return 'xml';
   if (prefix.startsWith('{"')) return 'json';
@@ -73,12 +75,8 @@ export interface DownloadResult {
 /**
  * Download a single file from the cloud and save it locally.
  *
- * Steps:
- * 1. Download raw bytes via API
- * 2. Detect content type (markdown/xml/json/binary)
- * 3. Convert to markdown if needed
- * 4. Write to local path
- * 5. Set file modification time
+ * Steps: download → detect type → convert if needed → atomic write →
+ * set mtime → for voice notes, download clips into sibling `*.media/`.
  */
 export async function downloadFile(
   api: YoudaoNoteApi,
@@ -91,26 +89,38 @@ export async function downloadFile(
 ): Promise<DownloadResult> {
   requireNonEmpty('fileId', fileId);
   requireNonEmpty('localPath', localPath);
-  const rawData = await api.getFileById(fileId);
-  const data = new Uint8Array(rawData);
-
+  const data = new Uint8Array(await api.getFileById(fileId));
   const ext = extname(localPath).toLowerCase();
   const fileType = detectFileType(data, ext);
   const markdown = convertToMarkdown(data, fileType);
   assertNoRawStructuredContent(ext, markdown, fileType);
 
+  writeDownloadAtomically(localPath, markdown, data);
+  applyCloudMtime(localPath, opts?.cloudMtime);
+  await tryDownloadVoiceClips(localPath, ext, data, api);
+
+  const contentBytes = markdown !== null ? new TextEncoder().encode(markdown) : data;
+  return {
+    localPath,
+    fileType,
+    contentHash: opts?.hashFn?.(contentBytes, localPath) ?? null,
+    rawContentHash: opts?.hashFn?.(data, localPath) ?? null,
+    rawData: data,
+  };
+}
+
+function writeDownloadAtomically(
+  localPath: string,
+  markdown: string | null,
+  data: Uint8Array,
+): void {
   const dir = dirname(localPath);
   mkdirSync(dir, { recursive: true });
-
-  // Atomic write: tmp file → rename, so interrupted downloads don't leave partial files
   const tmpPath = join(dir, `.dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp`);
   try {
-    if (markdown !== null) {
-      writeFileSync(tmpPath, markdown, 'utf-8');
-    } else {
-      writeFileSync(tmpPath, data);
-    }
-    renameSync(tmpPath, localPath);
+    if (markdown !== null) writeFileSync(tmpPath, markdown, 'utf-8');
+    else writeFileSync(tmpPath, data);
+    renameReplace(tmpPath, localPath);
   } catch (err) {
     try {
       unlinkSync(tmpPath);
@@ -119,21 +129,29 @@ export async function downloadFile(
     }
     throw err;
   }
+}
 
-  if (opts?.cloudMtime && opts.cloudMtime > 0) {
-    try {
-      const mtime = opts.cloudMtime;
-      utimesSync(localPath, mtime, mtime);
-    } catch {
-      /* ignore timing errors */
-    }
+function applyCloudMtime(localPath: string, cloudMtime?: number): void {
+  if (!cloudMtime || cloudMtime <= 0) return;
+  try {
+    utimesSync(localPath, cloudMtime, cloudMtime);
+  } catch {
+    /* ignore timing errors */
   }
+}
 
-  const contentBytes = markdown !== null ? new TextEncoder().encode(markdown) : data;
-  const contentHash = opts?.hashFn?.(contentBytes, localPath) ?? null;
-  const rawContentHash = opts?.hashFn?.(data, localPath) ?? null;
-
-  return { localPath, fileType, contentHash, rawContentHash, rawData: data };
+async function tryDownloadVoiceClips(
+  localPath: string,
+  ext: string,
+  data: Uint8Array,
+  api: YoudaoNoteApi,
+): Promise<void> {
+  if (ext !== '.audio' && !isAudioNoteJson(data)) return;
+  try {
+    await downloadAudioRecords(localPath, api, { data });
+  } catch (e: unknown) {
+    logger.warn(`[audio] downloadAudioRecords failed for ${localPath}: ${String(e)}`);
+  }
 }
 
 /**

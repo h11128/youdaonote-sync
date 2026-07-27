@@ -47,11 +47,19 @@ POST https://note.youdao.com/yws/api/personal/sync?method=download
 
 | Param | Type | Required | Notes |
 |-------|------|----------|-------|
-| fileId | string | Yes | Note ID |
+| fileId | string | Yes | Note ID **or** voice `recordID` (clip binary) |
 | version | int | Yes | `-1` = latest |
-| convert | bool | No | Format conversion flag |
+| convert | bool | No | Format conversion flag; use `false` for `.audio` clip binaries |
 | read | bool | No | Used for Markdown |
 | cstk | string | Yes | CSRF token |
+
+### Voice notes (`.audio`)
+
+A `.audio` “note” is **JSON metadata** (`version`, `recordList[]` with `recordID` / ASR text / `recordSize`), not the waveform.
+
+- Downloading the note id returns that JSON.
+- Each clip is a separate download: same `method=download` with `fileId=<recordID>` and `convert=false` → AAC/ADTS (or ogg) bytes.
+- Sync writes metadata to `*.audio` and clips to sibling `*.media/` (skipped by local scan like `attachments/`).
 
 ### Get file info
 

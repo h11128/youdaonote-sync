@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { detectFileType, convertToMarkdown, assertNoRawStructuredContent } from './download.js';
+import { describe, expect, it, vi } from 'vitest';
+import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  detectFileType,
+  convertToMarkdown,
+  assertNoRawStructuredContent,
+  downloadFile,
+} from './download.js';
+import { audioMediaDir } from './audio.js';
+import type { YoudaoNoteApi } from '../api/client.js';
+import { asFileId } from '../types/common.js';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -31,6 +42,12 @@ describe('detectFileType', () => {
 
     { name: 'binary .png', data: PNG_BYTES, ext: '.png', expected: 'binary' },
     { name: 'empty .note', data: EMPTY, ext: '.note', expected: 'binary' },
+    {
+      name: 'audio note JSON .audio → binary (preserve metadata)',
+      data: enc('{"version":"2.0","recordList":[{"recordID":"abc","recordSize":1}]}'),
+      ext: '.audio',
+      expected: 'binary',
+    },
 
     {
       name: 'HTML with whitespace .note',
@@ -94,5 +111,62 @@ describe('assertNoRawStructuredContent', () => {
     expect(() => {
       assertNoRawStructuredContent('.md', '<?xml version="1.0"?>', 'markdown');
     }).toThrow(/sanity check failed.*XML/);
+  });
+});
+
+describe('downloadFile voice notes', () => {
+  it('saves .audio JSON and downloads clips via getFileById(convert:false)', async () => {
+    const dir = join(tmpdir(), `yd-dl-audio-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const localPath = join(dir, 'voice.audio');
+    const noteJson = JSON.stringify({
+      version: '2.0',
+      recordList: [
+        { recordID: 'clipaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', recordSize: 4 },
+        { recordID: 'clipbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', recordSize: 4 },
+      ],
+    });
+    const aacHdr = new Uint8Array([0xff, 0xf1, 0x50, 0x80]);
+    const getFileById = vi.fn((id: string, opts?: { convert?: boolean }) => {
+      if (id === 'note-audio-1') {
+        expect(opts?.convert).toBeUndefined();
+        return Promise.resolve(enc(noteJson).buffer);
+      }
+      expect(opts).toEqual({ convert: false });
+      return Promise.resolve(new Uint8Array(aacHdr).buffer);
+    });
+    const api = { getFileById } as unknown as YoudaoNoteApi;
+
+    const result = await downloadFile(api, asFileId('note-audio-1'), localPath);
+    expect(result.fileType).toBe('binary');
+    expect(readFileSync(localPath, 'utf-8')).toBe(noteJson);
+    expect(readFileSync(localPath).length).toBeGreaterThan(0);
+
+    const clips = readdirSync(audioMediaDir(localPath)).sort();
+    expect(clips).toHaveLength(2);
+    expect(clips[0]).toMatch(/^000-clipaaa.*\.aac$/);
+    expect(getFileById).toHaveBeenCalledTimes(3);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('does not json-to-md empty an audio note (regression)', async () => {
+    const dir = join(tmpdir(), `yd-dl-empty-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const localPath = join(dir, 'voice.audio');
+    const noteJson =
+      '{"version":"2.0","recordList":[{"recordID":"onlyonerecordidxxxxxxxxxxxxx","recordSize":4}]}';
+    const getFileById = vi.fn((id: string) => {
+      if (id === 'note-1') return Promise.resolve(enc(noteJson).buffer);
+      return Promise.resolve(new Uint8Array([0xff, 0xf1, 0x50, 0x80]).buffer);
+    });
+    const api = { getFileById } as unknown as YoudaoNoteApi;
+
+    await downloadFile(api, asFileId('note-1'), localPath);
+    // Old bug: json-to-md on rich-note schema → empty string → 0-byte file
+    expect(readFileSync(localPath).length).toBe(noteJson.length);
+    expect(readdirSync(audioMediaDir(localPath))).toHaveLength(1);
+
+    rmSync(dir, { recursive: true, force: true });
   });
 });
