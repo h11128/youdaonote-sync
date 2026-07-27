@@ -28,8 +28,8 @@ Implementation: [`ts-src/src/util/config-dir.ts`](../../ts-src/src/util/config-d
 
 Templates in the **repo** (not runtime):
 
-- [`config.example.json`](../../config.example.json)
-- [`.env.example`](../../.env.example) — optional; only for `YOUDAONOTE_CONFIG_DIR` / `YOUDAONOTE_VERBOSE`
+- [`config.example.json`](../../examples/config.example.json)
+- [`.env.example`](../../examples/.env.example) — optional; only for `YOUDAONOTE_CONFIG_DIR` / `YOUDAONOTE_VERBOSE`
 
 ## First-time setup
 
@@ -37,7 +37,7 @@ Templates in the **repo** (not runtime):
 cd ts-src
 npm install && npm run build
 npx youdaonote-sync config path
-# Copy config.example.json → <SOT>/config.json and set local_dir
+# Copy examples/config.example.json → <SOT>/config.json and set local_dir
 npx youdaonote-sync login
 npx youdaonote-sync config doctor
 npx youdaonote-sync sync --dry-run

@@ -20,7 +20,7 @@
 
 ### 3.1 删除阈值拦截
 
-默认 `maxDeletesPerSync = 5`（[`config.example.json`](../../config.example.json) / `config.json`）。超出时：
+默认 `maxDeletesPerSync = 5`（[`config.example.json`](../../examples/config.example.json) / `config.json`）。超出时：
 
 - `SyncResult.status = 'suspended'`，`reason = 'delete_threshold'`
 - 打印 `=== SYNC SUSPENDED ===` 与 dry-run 预览
@@ -53,7 +53,7 @@
 
 ## 5. 使用说明
 
-- 配置：见 [README 配置](../../README.md#配置single-source-of-truth) 与 [`config.example.json`](../../config.example.json)
+- 配置：见 [README 配置](../../README.md#配置single-source-of-truth) 与 [`config.example.json`](../../examples/config.example.json)
 - 预览：`npx youdaonote-sync sync --dry-run`
 - 报告：`{local_dir}/.local-reports/`
-- 环境变量：见 [`.env.example`](../../.env.example)
+- 环境变量：见 [`.env.example`](../../examples/.env.example)

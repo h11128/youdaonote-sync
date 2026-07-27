@@ -72,8 +72,8 @@ flowchart TD
 
 | 仓库模板（可提交） | 本机 SOT（不可提交） |
 |--------------------|----------------------|
-| [`config.example.json`](./config.example.json) | `{SOT}/config.json` |
-| [`.env.example`](./.env.example) | 可选 `.env` |
+| [`examples/config.example.json`](./examples/config.example.json) | `{SOT}/config.json` |
+| [`examples/.env.example`](./examples/.env.example) | 可选 `.env` |
 | — | `{SOT}/cookies.json`、`sync_metadata.db` |
 
 ```bash
@@ -89,7 +89,7 @@ cd youdaonote-sync/ts-src
 npm install && npm run build
 
 npx youdaonote-sync config path
-# 复制 ../config.example.json → <SOT>/config.json，填写 local_dir
+# 复制 ../examples/config.example.json → <SOT>/config.json，填写 local_dir
 
 npx youdaonote-sync login
 npx youdaonote-sync sync --dry-run

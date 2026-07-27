@@ -34,7 +34,8 @@ export interface ConfigSotReport {
  *    - Linux/Mac: ~/.config/youdaonote-sync
  *
  * Repo-local `config/` is legacy only — never the runtime SOT when a platform
- * dir exists. Templates live in the repo as config.example.json / .env.example.
+ * dir exists. Templates live in the repo as examples/config.example.json and
+ * examples/.env.example.
  */
 export function getConfigDir(): string {
   const fromEnv = process.env.YOUDAONOTE_CONFIG_DIR?.trim();
@@ -105,7 +106,7 @@ function formatSotMessage(r: Omit<ConfigSotReport, 'message'>): string {
   if (!r.hasSotConfig) {
     return [
       `No ${CONFIG_JSON} in SOT: ${r.configDir}`,
-      `Copy config.example.json → ${join(r.configDir, CONFIG_JSON)} and set local_dir.`,
+      `Copy examples/config.example.json → ${join(r.configDir, CONFIG_JSON)} and set local_dir.`,
       `Then: npx youdaonote-sync login`,
     ].join('\n');
   }
