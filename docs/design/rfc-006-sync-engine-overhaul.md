@@ -183,7 +183,7 @@ FileState:
 
 | 文档 | 与本分析的关系 |
 |------|-------------|
-| [rfc-002-rust-rewrite-analysis.md](../archive/design/rfc-002-rust-rewrite-analysis.md) | Rust 重写不可行的详细论证（AI 写 Rust 效率低、58% bug 是逻辑问题）。TypeScript 避免了 Rust 的问题 |
+| [rfc-002-rust-rewrite-analysis.md](./rfc-002-rust-rewrite-analysis.md) | Rust 重写不可行的详细论证（AI 写 Rust 效率低、58% bug 是逻辑问题）。TypeScript 避免了 Rust 的问题 |
 | [2026-02-28-type-driven-design-audit.md](../archive/postmortem/2026-02-28-type-driven-design-audit.md) | TypedDict + magic-key 是当前类型安全最大短板。TypeScript 的 interface + readonly 从根源解决 |
-| [rfc-005-git-lessons-and-algorithms.md](../archive/design/rfc-005-git-lessons-and-algorithms.md) | content hash + Merkle tree 已实现但只用于辅助。新架构将 content hash 作为核心决策驱动 |
+| [rfc-005-git-lessons-and-algorithms.md](./rfc-005-git-lessons-and-algorithms.md) | content hash + Merkle tree 已实现但只用于辅助。新架构将 content hash 作为核心决策驱动 |
 | [2026-02-21-sync-algorithm-audit.md](../archive/postmortem/2026-02-21-sync-algorithm-audit.md) | 算法优化已完成但决策模型未变。新架构用状态机替代 mtime 优先的 decide_action |
