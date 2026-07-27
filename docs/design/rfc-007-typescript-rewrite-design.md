@@ -1,7 +1,7 @@
 # TypeScript 重写：设计与实现方案
 
 > **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).  
-> Prior analysis: [sync-engine-overhaul.md](./sync-engine-overhaul.md)  
+> Prior analysis: [rfc-006-sync-engine-overhaul.md](./rfc-006-sync-engine-overhaul.md)  
 > SOLID / Dev Practice audit: [2026-03-02-solid-and-dev-practice-audit-ts.md](../archive/postmortem/2026-03-02-solid-and-dev-practice-audit-ts.md)
 
 **TL;DR** — 三阶段管线（Scan → Classify → Execute）设计，classify 是纯函数 + 18 条决策表规则。核心活内容（FileState、Decision Table、Refine 规则、Move 检测）已提取到 [architecture.md](../reference/architecture.md)。本文保留完整类型系统、接口定义和实现细节作历史参考。

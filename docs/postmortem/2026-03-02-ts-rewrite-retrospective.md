@@ -49,7 +49,7 @@
 
 ### 2.1 设计阶段：没有功能移植清单
 
-`typescript-rewrite-design.md` 花了 524 行定义架构、类型、Decision Table，但 **没有一个章节对照 Python engine 列出所有功能点和每一项的处置方案（移植 / 推迟 / 丢弃）**。
+`rfc-007-typescript-rewrite-design.md` 花了 524 行定义架构、类型、Decision Table，但 **没有一个章节对照 Python engine 列出所有功能点和每一项的处置方案（移植 / 推迟 / 丢弃）**。
 
 Refine 规则的数据结构在设计文档第 277-298 行被完整定义了，但"谁来调用 refine、在什么时机调用"只字未提。这导致实现者可以合理地认为"refine 模块写好了就行，后面会接"——但"后面"没有人跟踪。
 
@@ -747,8 +747,8 @@ Python 在文件名+祖先深度匹配后，还检查内容 hash：hash 不同�
 
 项目有两份设计文档明确定义了 move 检测的目标架构：
 
-- **sync-engine-overhaul.md §五 第 159 行**："moves (content hash matching) ~200行 | 纯 hash 匹配，不依赖文件名"
-- **typescript-rewrite-design.md §3.5**：`detectMoves` 签名接收 `hash: ContentHash | null`，注释写明"纯 hash 匹配，不依赖文件名"
+- **rfc-006-sync-engine-overhaul.md §五 第 159 行**："moves (content hash matching) ~200行 | 纯 hash 匹配，不依赖文件名"
+- **rfc-007-typescript-rewrite-design.md §3.5**：`detectMoves` 签名接收 `hash: ContentHash | null`，注释写明"纯 hash 匹配，不依赖文件名"
 
 但 `moves.ts` 的注释直接写着 "Three-phase move detection **(matches Python moves.py)**"——实现选择了移植 Python 的复杂三阶段方法，而非设计文档定义的纯 hash 方案。Python 的 move 检测正是设计文档指出需要被替换的（overhaul.md 第 16 行："移动检测依赖文件名相似度，改名太大就失效"）。
 
@@ -784,7 +784,7 @@ for (const [path, state] of classified) {
 | 本地不存在 | meta.contentHash（历史快照） | 文件已删除/移动，只有上次同步时的记录 |
 | 两者都无 | null | 无法做 hash 匹配 |
 
-设计文档 `typescript-rewrite-design.md` 第 39 行写明 "content hash 作为核心决策驱动"。hash 的来源（实时 vs 历史）是实现细节，核心原则是：**每个参与 move 检测的路径都应该有 hash**。
+设计文档 `rfc-007-typescript-rewrite-design.md` 第 39 行写明 "content hash 作为核心决策驱动"。hash 的来源（实时 vs 历史）是实现细节，核心原则是：**每个参与 move 检测的路径都应该有 hash**。
 
 ### 13.5 第二个缺失：cross-side 匹配
 
