@@ -19,35 +19,46 @@
 |-----|---------|
 | [configuration.md](./guides/configuration.md) | Config SOT — single directory, doctor, fields |
 
-## design/ — RFCs only (`rfc-NNN-kebab-case.md`, ≤7, sorted by number)
+## design/ — Newer RFCs (chrono order, ≤7)
+
+RFC numbers follow document date (oldest = 001). Active `design/` keeps the **newest** RFCs so the folder lists contiguous recent numbers.
 
 | # | Doc | Status | Purpose |
 |---|-----|--------|---------|
-| 001 | [rfc-001-deterministic-guardrails.md](./design/rfc-001-deterministic-guardrails.md) | Implemented | Delete threshold, empty-cloud abort, audit log |
-| 002 | [rfc-002-rust-rewrite-analysis.md](./design/rfc-002-rust-rewrite-analysis.md) | Historical | Rust rewrite feasibility |
-| 003 | [rfc-003-sync-hardening-plan.md](./design/rfc-003-sync-hardening-plan.md) | Implemented | Completed hardening features |
-| 004 | [rfc-004-desktop-data-refactor.md](./design/rfc-004-desktop-data-refactor.md) | Historical | Desktop data / scan cache |
-| 005 | [rfc-005-git-lessons-and-algorithms.md](./design/rfc-005-git-lessons-and-algorithms.md) | Historical | Git-inspired sync algorithms |
-| 006 | [rfc-006-sync-engine-overhaul.md](./design/rfc-006-sync-engine-overhaul.md) | Historical | Pre-rewrite engine analysis |
-| 007 | [rfc-007-typescript-rewrite-design.md](./design/rfc-007-typescript-rewrite-design.md) | Historical | TypeScript rewrite design (living bits in architecture) |
+| 005 | [rfc-005-sync-engine-overhaul.md](./design/rfc-005-sync-engine-overhaul.md) | Historical | Pre-rewrite engine analysis (2026-03-01) |
+| 006 | [rfc-006-typescript-rewrite-design.md](./design/rfc-006-typescript-rewrite-design.md) | Historical | TypeScript rewrite design (2026-03-01) |
+| 007 | [rfc-007-deterministic-guardrails.md](./design/rfc-007-deterministic-guardrails.md) | Implemented | Sync guardrails (2026-04-08) |
 
 ## postmortem/ — Still informing practice (`YYYY-MM-DD-kebab-case.md`, ≤7)
 
 | Doc | Purpose |
 |-----|---------|
-| [2026-03-02-ts-rewrite-retrospective.md](./postmortem/2026-03-02-ts-rewrite-retrospective.md) | TS rewrite gaps (refine/merge/heal, hash, guardrails) |
-| [2026-03-20-architecture-review.md](./postmortem/2026-03-20-architecture-review.md) | Dry-run + code architecture review snapshot |
+| [2026-03-02-ts-rewrite-retrospective.md](./postmortem/2026-03-02-ts-rewrite-retrospective.md) | TS rewrite gaps |
+| [2026-03-20-architecture-review.md](./postmortem/2026-03-20-architecture-review.md) | Architecture review snapshot |
 | [2026-03-24-note-table-incident.md](./postmortem/2026-03-24-note-table-incident.md) | NOTE native-table render failure |
-| [2026-03-29-ai-development-retrospective.md](./postmortem/2026-03-29-ai-development-retrospective.md) | Diagnose-tool avoidance / agent process |
+| [2026-03-29-ai-development-retrospective.md](./postmortem/2026-03-29-ai-development-retrospective.md) | Diagnose-tool avoidance |
 
 **New postmortems** include Reflection / Troubleshooting / Avoidance.
 
-## archive/ — Frozen history
+## archive/ — Older history (chrono)
 
 | Directory | Contents |
 |-----------|----------|
+| [archive/design/](./archive/design/) | Older RFCs 001–004 (see map below) |
 | [archive/postmortem/](./archive/postmortem/) | Point-in-time audits (`YYYY-MM-DD-kebab-case.md`) |
 | [archive/legacy/](./archive/legacy/) | **Repo exception:** Python → TypeScript migration artifacts |
+
+### Full RFC map (chronological)
+
+| # | Location | Doc date | Topic |
+|---|----------|----------|-------|
+| 001 | [archive/design/](./archive/design/rfc-001-rust-rewrite-analysis.md) | 2026-02-21 | Rust rewrite feasibility |
+| 002 | [archive/design/](./archive/design/rfc-002-sync-hardening-plan.md) | 2026-02-21 | Sync hardening |
+| 003 | [archive/design/](./archive/design/rfc-003-desktop-data-refactor.md) | 2026-02-22 | Desktop data / scan cache |
+| 004 | [archive/design/](./archive/design/rfc-004-git-lessons-and-algorithms.md) | 2026-02-21 | Git-inspired sync algorithms |
+| 005 | [design/](./design/rfc-005-sync-engine-overhaul.md) | 2026-03-01 | Engine overhaul analysis |
+| 006 | [design/](./design/rfc-006-typescript-rewrite-design.md) | 2026-03-01 | TypeScript rewrite design |
+| 007 | [design/](./design/rfc-007-deterministic-guardrails.md) | 2026-04-08 | Deterministic guardrails |
 
 ## Conventions
 
@@ -55,29 +66,16 @@
 |-----------|--------|
 | `reference/` | `kebab-case.md` |
 | `guides/` | `kebab-case.md` |
-| `design/` | **`rfc-NNN-kebab-case.md` only** (zero-padded; list/sort by number) |
+| `design/` **and** `archive/design/` | **`rfc-NNN-kebab-case.md` only** (numbers = chrono order) |
 | `postmortem/` **and** `archive/postmortem/` | **`YYYY-MM-DD-kebab-case.md` only** |
 | `archive/legacy/` | `YYYY-MM-DD-kebab-case.md` when date known |
-
-**Historical banner** (from `docs/archive/<category>/file.md`):
-
-```md
-> **Historical (YYYY-MM).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
-```
-
-From an active dir (`docs/postmortem/`, `docs/design/`, …):
-
-```md
-> **Historical (YYYY-MM).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
-```
 
 **Rules:**
 
 1. SOT docs (`reference/`, root README) must reflect current implementation.
-2. Every design doc is an RFC (`rfc-NNN-…`). Keep all current RFCs under `design/` so numbers stay contiguous in the folder listing. New design work gets the next free number; if count would exceed 7, archive the oldest Historical RFC first.
-3. Historical docs: frozen content with banner.
+2. RFC numbers increase with document date. Older RFCs move to `archive/design/`; newer stay in `design/` so the active folder lists contiguous recent numbers.
+3. New design work gets the next free number; if `design/` would exceed 7, archive the oldest Historical RFC there first.
 4. Out-of-scope notes: `.local-docs/` (gitignored).
-5. English filenames; Chinese fine in body.
 
 ## Local-only (not in git)
 

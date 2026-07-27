@@ -51,7 +51,7 @@ npx youdaonote-sync sync
 | `local_dir` | Yes | Absolute path to local notes root |
 | `smms_secret_token` | No | [SM.MS](https://sm.ms/home/apitoken) token; empty = download images locally |
 | `is_relative_path` | No | Prefer relative image links in Markdown |
-| `maxDeletesPerSync` | No | Default `5`; exceed → sync suspended ([RFC-001](../design/rfc-001-deterministic-guardrails.md)) |
+| `maxDeletesPerSync` | No | Default `5`; exceed → sync suspended ([RFC-007](../design/rfc-007-deterministic-guardrails.md)) |
 | `sync_include` | No | Glob allow-list (array of strings) |
 | `sync_exclude` | No | Glob deny-list (array of strings) |
 

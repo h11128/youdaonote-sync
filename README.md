@@ -109,7 +109,7 @@ npx youdaonote-sync gui
 npx youdaonote-sync diagnose summary
 ```
 
-护栏：空云端列表 → abort（exit 3）；删除过多 → suspend（exit 2）。见 [RFC-001](./docs/design/rfc-001-deterministic-guardrails.md)。
+护栏：空云端列表 → abort（exit 3）；删除过多 → suspend（exit 2）。见 [RFC-007](./docs/design/rfc-007-deterministic-guardrails.md)。
 
 ## 它能做什么
 
@@ -121,7 +121,7 @@ npx youdaonote-sync diagnose summary
 | 格式转换 | [`convert/`](./ts-src/src/convert/) |
 | 图片 | 本地或 [SM.MS](https://sm.ms/) |
 | 去重 / 移动 | [`dedup/`](./ts-src/src/dedup/) · [`moves.ts`](./ts-src/src/classify/moves.ts) |
-| 删除保护 | [RFC-001](./docs/design/rfc-001-deterministic-guardrails.md) |
+| 删除保护 | [RFC-007](./docs/design/rfc-007-deterministic-guardrails.md) |
 | Git / GUI / 诊断 | [`util/git.ts`](./ts-src/src/util/git.ts) · [`gui/`](./ts-src/src/gui/) · [`diagnose-cli.ts`](./ts-src/src/cli/diagnose-cli.ts) |
 
 ## 同步规则（简版）

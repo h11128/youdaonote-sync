@@ -124,7 +124,7 @@ flowchart TD
 | Engine | [`ts-src/src/engine/engine.ts`](../../ts-src/src/engine/engine.ts) |
 | Classify | [`ts-src/src/classify/`](../../ts-src/src/classify/) |
 | Execute | [`ts-src/src/execute/`](../../ts-src/src/execute/) |
-| Guardrails RFC | [`RFC-001`](../design/rfc-001-deterministic-guardrails.md) |
+| Guardrails RFC | [`RFC-007`](../design/rfc-007-deterministic-guardrails.md) |
 
 ## Classify logic
 
@@ -189,8 +189,8 @@ Runs after classify, before execute. Four phases ([`moves.ts`](../../ts-src/src/
 
 Hash source: local disk hash, with metadata `contentHash` as fallback when the local file is gone.
 
-Source: [`ts-src/src/classify/`](../../ts-src/src/classify/) · Design details: [`RFC-007`](../design/rfc-007-typescript-rewrite-design.md)
+Source: [`ts-src/src/classify/`](../../ts-src/src/classify/) · Design details: [`RFC-006`](../design/rfc-006-typescript-rewrite-design.md)
 
 ---
 
-Historical design notes (may be stale): [`RFC-007`](../design/rfc-007-typescript-rewrite-design.md) · [`archive/postmortem/`](../archive/postmortem/).
+Historical design notes (may be stale): [`RFC-006`](../design/rfc-006-typescript-rewrite-design.md) · [`archive/postmortem/`](../archive/postmortem/).
