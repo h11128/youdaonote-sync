@@ -1,6 +1,6 @@
 # 架构审查报告 — 2026-03-20
 
-> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).  
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).  
 > Point-in-time snapshot; open issues, test counts, and config migration status may be stale.
 
 基于 dry-run + 实际同步执行 + 全量代码审阅产出。

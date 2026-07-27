@@ -19,17 +19,23 @@
 |-----|---------|
 | [configuration.md](./guides/configuration.md) | Config SOT — single directory, doctor, fields |
 
-## design/ — Active proposals
+## design/ — Active / still-referenced designs (≤7)
 
 | Doc | Status | Purpose |
 |-----|--------|---------|
 | [rfc-001-deterministic-guardrails.md](./design/rfc-001-deterministic-guardrails.md) | Implemented | Delete threshold, empty-cloud abort, audit log |
+| [typescript-rewrite-design.md](./design/typescript-rewrite-design.md) | Historical | Full type system / Decision Table detail (living bits in architecture) |
+| [sync-engine-overhaul.md](./design/sync-engine-overhaul.md) | Historical | Pre-rewrite engine analysis |
+| [sync-hardening-plan.md](./design/sync-hardening-plan.md) | Historical | Completed hardening features |
 
-## postmortem/ — Incidents still informing practice
+## postmortem/ — Still informing practice (≤7)
 
 | Doc | Purpose |
 |-----|---------|
+| [2026-03-02-ts-rewrite-retrospective.md](./postmortem/2026-03-02-ts-rewrite-retrospective.md) | TS rewrite gaps (refine/merge/heal, hash, guardrails) |
+| [2026-03-20-architecture-review.md](./postmortem/2026-03-20-architecture-review.md) | Dry-run + code architecture review snapshot |
 | [2026-03-24-note-table-incident.md](./postmortem/2026-03-24-note-table-incident.md) | NOTE native-table render failure |
+| [2026-03-29-ai-development-retrospective.md](./postmortem/2026-03-29-ai-development-retrospective.md) | Diagnose-tool avoidance / agent process |
 
 **New postmortems** use `YYYY-MM-DD-kebab-case.md` and include:
 
@@ -41,21 +47,21 @@
 
 | Directory | Contents |
 |-----------|----------|
-| [archive/design/](./archive/design/) | Superseded design docs (TS rewrite, Rust analysis, sync hardening) |
-| [archive/postmortem/](./archive/postmortem/) | Historical audits and retrospectives |
-| [archive/legacy/](./archive/legacy/) | **Repo exception:** Python → TypeScript migration artifacts (not a standard active-tree mirror) |
+| [archive/design/](./archive/design/) | Superseded design notes (Rust analysis, desktop-data, git-lessons) |
+| [archive/postmortem/](./archive/postmortem/) | Point-in-time audits (`YYYY-MM-DD-kebab-case.md`) |
+| [archive/legacy/](./archive/legacy/) | **Repo exception:** Python → TypeScript migration artifacts |
 
 ## Conventions
-
-Standard directories: `reference/`, `guides/`, `design/`, `postmortem/`, `archive/`.
 
 | Directory | Naming |
 |-----------|--------|
 | `reference/` | `kebab-case.md` |
 | `guides/` | `kebab-case.md` |
-| `design/` | `rfc-NNN-kebab-case.md` for RFCs; `kebab-case.md` for drafts |
-| `postmortem/` | `YYYY-MM-DD-kebab-case.md` |
-| `archive/` | Mirrors active dirs (`design/`, `postmortem/`); `legacy/` is this repo’s migration bucket; no item limit |
+| `design/` | RFCs: `rfc-NNN-kebab-case.md`; drafts: `kebab-case.md` |
+| `postmortem/` | **`YYYY-MM-DD-kebab-case.md` only** |
+| `archive/postmortem/` | same as postmortem (`YYYY-MM-DD-…`) |
+| `archive/design/` | `kebab-case.md` |
+| `archive/legacy/` | `YYYY-MM-DD-kebab-case.md` when date known |
 
 **Historical banner** (from `docs/archive/<category>/file.md`):
 
@@ -63,12 +69,16 @@ Standard directories: `reference/`, `guides/`, `design/`, `postmortem/`, `archiv
 > **Historical (YYYY-MM).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
 ```
 
-From an active dir (`docs/postmortem/`, `docs/design/`, …) use one fewer `../`.
+From an active dir (`docs/postmortem/`, `docs/design/`, …):
+
+```md
+> **Historical (YYYY-MM).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
+```
 
 **Rules:**
 
 1. SOT docs (`reference/`, root README) must reflect current implementation.
-2. Historical docs: frozen content with banner. Move to `archive/` when no longer actively referenced.
+2. Historical docs: frozen content with banner. Keep in active `design/` / `postmortem/` only while still referenced or informing practice; otherwise `archive/`.
 3. Out-of-scope notes: `.local-docs/` (gitignored).
 4. English filenames; Chinese fine in body.
 
@@ -76,7 +86,7 @@ From an active dir (`docs/postmortem/`, `docs/design/`, …) use one fewer `../`
 
 | Path | Purpose |
 |------|---------|
-| `.local-docs/` | Notes unrelated to youdaonote-sync product (e.g. cross-project Cursor runner) |
+| `.local-docs/` | Notes unrelated to youdaonote-sync product |
 
 ## Templates
 

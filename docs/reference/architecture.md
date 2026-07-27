@@ -189,8 +189,8 @@ Runs after classify, before execute. Four phases ([`moves.ts`](../../ts-src/src/
 
 Hash source: local disk hash, with metadata `contentHash` as fallback when the local file is gone.
 
-Source: [`ts-src/src/classify/`](../../ts-src/src/classify/) · Design details: [`typescript-rewrite-design.md`](../archive/design/typescript-rewrite-design.md)
+Source: [`ts-src/src/classify/`](../../ts-src/src/classify/) · Design details: [`typescript-rewrite-design.md`](../design/typescript-rewrite-design.md)
 
 ---
 
-Historical design notes (may be stale): [`typescript-rewrite-design.md`](../archive/design/typescript-rewrite-design.md) · [`archive/postmortem/`](../archive/postmortem/).
+Historical design notes (may be stale): [`typescript-rewrite-design.md`](../design/typescript-rewrite-design.md) · [`archive/postmortem/`](../archive/postmortem/).

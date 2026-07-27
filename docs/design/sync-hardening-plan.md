@@ -1,6 +1,6 @@
 # 同步引擎加固计划
 
-> **Historical (2026-03).** For current usage see the root [README](../../../README.md); docs index at [docs/README.md](../../README.md).
+> **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).
 
 
 > 基于与 Git 模型的对比分析，针对数据安全、正确性、网络健壮性三个维度的 5 项改进。
