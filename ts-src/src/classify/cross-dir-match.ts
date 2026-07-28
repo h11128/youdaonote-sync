@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 import { asRelPath, type ContentHash, type RelPath } from '../types/common.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { FileState } from '../types/state.js';
-import { sanitizeFilename } from '../util/path.js';
+import { sanitizeFilename, normalizeSep } from '../util/path.js';
 import { commonAncestorDepth } from './moves.js';
 
 interface ClassifiedEntry {
@@ -75,6 +75,16 @@ function applyHashMatches(ctx: CrossDirMatchContext): void {
   }
 }
 
+function isRootLevel(path: RelPath): boolean {
+  return !normalizeSep(path).includes('/');
+}
+
+/**
+ * Pick the best new-path candidate by shared ancestor depth.
+ * Depth ≥ 1 is always accepted. Depth 0 is allowed only when a root-level
+ * path is involved and the normalized name has exactly one unused candidate
+ * (so root → subdir moves work without pairing unrelated dir-a ↔ dir-b names).
+ */
 function findBestPathByName(
   dp: RelPath,
   candidates: RelPath[],
@@ -82,15 +92,20 @@ function findBestPathByName(
 ): RelPath | null {
   let bestPath: RelPath | null = null;
   let bestDepth = -1;
+  let unusedCount = 0;
   for (const np of candidates) {
     if (result.has(np)) continue;
+    unusedCount++;
     const depth = commonAncestorDepth(dp, np);
     if (depth > bestDepth) {
       bestDepth = depth;
       bestPath = np;
     }
   }
-  return bestDepth >= 1 ? bestPath : null;
+  if (!bestPath) return null;
+  if (bestDepth >= 1) return bestPath;
+  const rootInvolved = isRootLevel(dp) || isRootLevel(bestPath);
+  return rootInvolved && unusedCount === 1 ? bestPath : null;
 }
 
 function canPairDifferentContent(

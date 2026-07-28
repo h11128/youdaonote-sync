@@ -146,7 +146,7 @@ The classify stage is a **pure function** (zero I/O). It reads two snapshots + m
 | `cloudDeleted` | Cloud removed a previously-synced file | skip (or deleteLocal) |
 | `localDeletedCloudModified` | Local deleted + cloud changed | download |
 | `cloudDeletedLocalModified` | Cloud deleted + local changed | upload |
-| `moved` | Path changed but hash same | move |
+| `moved` | Path changed (same hash, or unique filename + ancestor/root gate) | move |
 | `gone` | Neither side has it | skip |
 
 ### Decision Table (first-match)
@@ -184,10 +184,10 @@ Runs after classify, before execute. Four phases ([`moves.ts`](../../ts-src/src/
 
 1. **fileId** — metadata `fileId` ↔ cloud ID
 2. **Same-dir name** — sanitized filenames match in the same directory
-3. **Cross-directory (same side)** — content hash + filename among `cloudDeleted`↔`cloudNew` and `localDeleted`↔`localNew`
+3. **Cross-directory (same side)** — content hash, then filename among `cloudDeleted`↔`cloudNew` and `localDeleted`↔`localNew`. Filename match: ancestor depth ≥1 always; depth 0 only when a **root-level** path is involved and that name has exactly one unused candidate (so root↔subdir moves are detected without pairing unrelated `dir-a`↔`dir-b` names).
 4. **Cross-side** — `cloudNew`↔`localNew` hash/filename (simultaneous rename on both sides)
 
-Hash source: local disk hash, with metadata `contentHash` as fallback when the local file is gone.
+Hash source: local disk hash, with metadata `contentHash` as fallback when the local file is gone. Filename matching can still pair when hashes differ if the deleted path has a `fileId` in metadata.
 
 Source: [`ts-src/src/classify/`](../../ts-src/src/classify/) · Design details: [`RFC-006`](../design/rfc-006-typescript-rewrite-design.md)
 

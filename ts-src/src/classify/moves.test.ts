@@ -126,8 +126,8 @@ describe('detectMoves phase 2 filename normalization', () => {
 
     const result = detectMoves(classified);
 
-    // Phase 2 won't match (different dirs), but phase 3 filename matching
-    // requires ancestor depth >= 1, which fails for dir-a vs dir-b
+    // Phase 2 won't match (different dirs). Phase 3B allows depth 0 only when a
+    // root-level path is involved; unrelated non-root dirs stay unpaired.
     expect(result.size).toBe(0);
   });
 });
@@ -189,6 +189,103 @@ describe('detectMoves phase 3B cross-directory', () => {
       oldPath: asRelPath('project/sub/old/doc.md'),
     });
     expect(result.has(asRelPath('other/dir/doc.md'))).toBe(false);
+  });
+});
+
+describe('detectMoves phase 3B root-level depth-0', () => {
+  it('matches root → subdir when unique name and hashes differ', () => {
+    const classified = classifiedMap([
+      ['语音_x.audio', entry('localDeleted', 'hash-stale')],
+      ['存档记录/语音/空壳/语音_x.audio', entry('localNew', 'hash-real')],
+    ]);
+    // Different hashes require fileId on the deleted path (canPairDifferentContent).
+    const meta = {
+      getFileInfo: (p: RelPath) =>
+        p === asRelPath('语音_x.audio') ? { fileId: 'fid-voice-x' } : null,
+    };
+
+    const result = detectMoves(classified, meta as never);
+
+    expect(result.get(asRelPath('存档记录/语音/空壳/语音_x.audio'))).toEqual({
+      kind: 'moved',
+      oldPath: asRelPath('语音_x.audio'),
+    });
+    expect(result.get(asRelPath('语音_x.audio'))).toEqual({ kind: 'gone' });
+  });
+
+  it('matches root → subdir when unique name and hashes are null', () => {
+    const classified = classifiedMap([
+      ['语音_y.audio', entry('localDeleted', null)],
+      ['存档记录/语音/空壳/语音_y.audio', entry('localNew', null)],
+    ]);
+
+    const result = detectMoves(classified);
+
+    expect(result.get(asRelPath('存档记录/语音/空壳/语音_y.audio'))).toEqual({
+      kind: 'moved',
+      oldPath: asRelPath('语音_y.audio'),
+    });
+    expect(result.get(asRelPath('语音_y.audio'))).toEqual({ kind: 'gone' });
+  });
+
+  it('does not match root → subdir when name has multiple new candidates', () => {
+    const classified = classifiedMap([
+      ['语音_z.audio', entry('localDeleted', null)],
+      ['存档记录/语音/空壳/语音_z.audio', entry('localNew', null)],
+      ['当前事项/语音_z.audio', entry('localNew', null)],
+    ]);
+
+    const result = detectMoves(classified);
+
+    expect(result.size).toBe(0);
+  });
+
+  it('matches subdir → root when unique name', () => {
+    const classified = classifiedMap([
+      ['存档记录/语音/空壳/语音_r.audio', entry('localDeleted', null)],
+      ['语音_r.audio', entry('localNew', null)],
+    ]);
+
+    const result = detectMoves(classified);
+
+    expect(result.get(asRelPath('语音_r.audio'))).toEqual({
+      kind: 'moved',
+      oldPath: asRelPath('存档记录/语音/空壳/语音_r.audio'),
+    });
+    expect(result.get(asRelPath('存档记录/语音/空壳/语音_r.audio'))).toEqual({
+      kind: 'gone',
+    });
+  });
+
+  it('after hash pairs one same-name file, root can still pair leftover unique candidate', () => {
+    const classified = classifiedMap([
+      ['a/doc.md', entry('localDeleted', 'hash-shared')],
+      ['doc.md', entry('localDeleted', null)],
+      ['b/doc.md', entry('localNew', 'hash-shared')],
+      ['archive/doc.md', entry('localNew', null)],
+    ]);
+
+    const result = detectMoves(classified);
+
+    expect(result.get(asRelPath('b/doc.md'))).toEqual({
+      kind: 'moved',
+      oldPath: asRelPath('a/doc.md'),
+    });
+    expect(result.get(asRelPath('archive/doc.md'))).toEqual({
+      kind: 'moved',
+      oldPath: asRelPath('doc.md'),
+    });
+  });
+
+  it('does not match root → subdir when hashes differ and no fileId', () => {
+    const classified = classifiedMap([
+      ['语音_nofid.audio', entry('localDeleted', 'hash-a')],
+      ['存档记录/语音/空壳/语音_nofid.audio', entry('localNew', 'hash-b')],
+    ]);
+
+    const result = detectMoves(classified);
+
+    expect(result.size).toBe(0);
   });
 });
 

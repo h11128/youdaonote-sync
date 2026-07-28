@@ -41,7 +41,8 @@ interface MoveDetectionContext {
  * Phase 1: file_id matching — metadata file_id → cloud ID lookup
  * Phase 2: Filename normalization — same dir, sanitized names match
  * Phase 3: Cross-directory — content hash + filename + common ancestor depth
- *          (same-side: cloudDeleted↔cloudNew, localDeleted↔localNew)
+ *          (same-side: cloudDeleted↔cloudNew, localDeleted↔localNew;
+ *          depth ≥1 always; depth 0 only for root + unique unused name)
  * Phase 4: Cross-side — cloudNew↔localNew hash/filename matching
  *          (handles simultaneous rename on both sides)
  *
@@ -198,8 +199,9 @@ function matchByNormalizedName(
  * Phase 3: Cross-directory matching.
  *
  * Step A: Hash match (strong signal) — same hash in deleted+new
- * Step B: Filename match (weak signal) — same normalized name + shared ancestor depth ≥1
- *         Skips GENERIC_NAMES to avoid false positives.
+ * Step B: Filename match (weak signal) — same normalized name; depth ≥1 always
+ *         accepted; depth 0 only when a root-level path is involved and that
+ *         name has exactly one unused candidate. Skips GENERIC_NAMES.
  */
 function detectCrossDirectory(ctx: MoveDetectionContext): void {
   const {
