@@ -9,6 +9,7 @@ import { scanCloud } from '../scan/cloud.js';
 import { scanLocalParallel } from '../scan/local.js';
 import { classifyAll } from '../classify/classify.js';
 import { detectMoves } from '../classify/moves.js';
+import { resolvePrimaryMoveHash } from '../classify/move-hashes.js';
 import { calibrateMetadata } from '../classify/calibrate.js';
 import { emptyStats } from '../execute/executor.js';
 import type { SyncStats } from '../execute/executor.js';
@@ -361,12 +362,20 @@ export class SyncEngine {
   private applyMoveDetection(
     classified: Map<RelPath, FileState>,
     localHashes: Map<RelPath, ContentHash | null>,
-    metaSnap: ReadonlyMap<RelPath, { contentHash?: ContentHash | null }>,
+    metaSnap: ReadonlyMap<
+      RelPath,
+      { contentHash?: ContentHash | null; cloudContentHash?: ContentHash | null }
+    >,
     cloudSnap: Map<RelPath, CloudFile>,
   ): number {
     const classifiedWithHash = new Map<RelPath, { state: FileState; hash: ContentHash | null }>();
     for (const [path, state] of classified) {
-      const hash = localHashes.get(path) ?? metaSnap.get(path)?.contentHash ?? null;
+      const rec = metaSnap.get(path);
+      const hash = resolvePrimaryMoveHash(
+        localHashes.get(path),
+        rec?.contentHash,
+        rec?.cloudContentHash,
+      );
       classifiedWithHash.set(path, { state, hash });
     }
     let count = 0;

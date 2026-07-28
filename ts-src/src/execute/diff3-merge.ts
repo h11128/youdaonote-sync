@@ -14,6 +14,7 @@ import type { CloudFile } from '../types/scan.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
 import { detectFileType, convertToMarkdown } from './download.js';
 import { threeWayMerge } from '../algo/merge.js';
+import { isUnusableContentHash } from '../algo/content-hash.js';
 import { getFileContentFromGit } from '../util/git.js';
 import { readFileMtime } from '../util/utils.js';
 import { logger } from '../util/logger.js';
@@ -22,6 +23,16 @@ import type { SyncLogMetadata } from '../types/state.js';
 const MERGEABLE_EXTS = new Set(['.md', '.txt']);
 
 export type MergeResult = 'merged' | 'deferred' | false;
+
+function hashMergedText(
+  hashFn: ((data: Uint8Array, path: string) => ContentHash | null) | undefined,
+  text: string,
+  localPath: string,
+): ContentHash | null {
+  if (!hashFn) return null;
+  const h = hashFn(new TextEncoder().encode(text), localPath);
+  return isUnusableContentHash(h) ? null : h;
+}
 
 export interface Diff3Context {
   api: YoudaoNoteApi;
@@ -86,9 +97,7 @@ export async function tryDiff3Merge(
   if (result.hasConflicts) return false;
 
   writeFileSync(localPath, result.mergedText, 'utf-8');
-  const contentHash = ctx.hashFn
-    ? ctx.hashFn(new TextEncoder().encode(result.mergedText), localPath)
-    : null;
+  const contentHash = hashMergedText(ctx.hashFn, result.mergedText, localPath);
   if (contentHash)
     meta.saveBaseContent(relPath, Buffer.from(result.mergedText, 'utf-8'), contentHash);
 

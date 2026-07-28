@@ -13,6 +13,7 @@ import { tryDiff3Merge, type MergeResult } from './diff3-merge.js';
 import { handleMove } from './move-handler.js';
 import { pLimit } from '../util/concurrency.js';
 import { readFileMtime } from '../util/utils.js';
+import { isUnusableContentHash } from '../algo/content-hash.js';
 import { emptyStats, type ExecuteContext, type SyncStats } from './types.js';
 import { logger } from '../util/logger.js';
 
@@ -238,7 +239,8 @@ async function handleUpload(o: {
   const { api, meta, rootDirId } = ctx;
   // Read once, reuse for hash + upload
   const fileBuffer = readFileSync(localPath);
-  const uploadHash = ctx.hashFn != null ? ctx.hashFn(fileBuffer, localPath) : null;
+  const rawUploadHash = ctx.hashFn != null ? ctx.hashFn(fileBuffer, localPath) : null;
+  const uploadHash = isUnusableContentHash(rawUploadHash) ? null : rawUploadHash;
   if (uploadHash) {
     const existing = meta.findCloudFileByHash(uploadHash, relPath);
     if (existing) {

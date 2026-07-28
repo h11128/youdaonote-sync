@@ -15,6 +15,7 @@ import {
   type RelPath,
 } from '../types/common.js';
 import type { MetadataRecord } from '../types/metadata.js';
+import { isUnusableContentHash } from '../algo/content-hash.js';
 
 function calibrateDir(meta: MetadataStore, relPath: RelPath, cloudFile: CloudFile): boolean {
   if (meta.getDirId(relPath) || !cloudFile.id) return false;
@@ -60,7 +61,7 @@ interface CalibrateFileCase2Opts {
 function calibrateFileCase2(opts: CalibrateFileCase2Opts): boolean {
   const { meta, relPath, cloudFile, local, localHashes } = opts;
   const hash = localHashes.get(relPath) ?? null;
-  if (!hash) return false;
+  if (!hash || isUnusableContentHash(hash)) return false;
 
   meta.setFileInfo(relPath, {
     fileId: cloudFile.id as FileId,

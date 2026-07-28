@@ -46,8 +46,8 @@ interface MoveDetectionContext {
  * Phase 4: Cross-side — cloudNew↔localNew hash/filename matching
  *          (handles simultaneous rename on both sides)
  *
- * Hash source: localHash (from disk) with metadata contentHash as fallback
- * for paths where the local file no longer exists.
+ * Hash source: localHash (from disk); metadata contentHash then cloudContentHash
+ * as fallbacks when the local file is gone. Empty-file hashes are ignored.
  */
 export function detectMoves(
   classified: ReadonlyMap<RelPath, ClassifiedEntry>,

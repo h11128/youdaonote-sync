@@ -289,6 +289,43 @@ describe('detectMoves phase 3B root-level depth-0', () => {
   });
 });
 
+describe('detectMoves phase 3A hash with cloudContentHash fallback', () => {
+  it('pairs localDeleted→localNew using meta cloudContentHash when contentHash is empty', () => {
+    const real = 'ccb818ed3fa0c4a29fbec6fe88e0f2a2';
+    const classified = classifiedMap([
+      // primary hash empty (historical empty-shell contentHash)
+      ['语音_empty.audio', entry('localDeleted', '99aa06d3014798d86001c324468d497f')],
+      ['存档记录/语音/空壳/语音_empty.audio', entry('localNew', real)],
+    ]);
+    const meta = {
+      getFileInfo: (p: RelPath) =>
+        p === asRelPath('语音_empty.audio')
+          ? {
+              contentHash: asContentHash('99aa06d3014798d86001c324468d497f'),
+              cloudContentHash: asContentHash(real),
+              fileId: 'fid-empty-voice',
+            }
+          : null,
+    };
+
+    const result = detectMoves(classified, meta as never);
+
+    expect(result.get(asRelPath('存档记录/语音/空壳/语音_empty.audio'))).toEqual({
+      kind: 'moved',
+      oldPath: asRelPath('语音_empty.audio'),
+    });
+  });
+
+  it('does not pair unrelated files that only share the empty-file hash', () => {
+    const classified = classifiedMap([
+      ['old/x.audio', entry('localDeleted', '99aa06d3014798d86001c324468d497f')],
+      ['new/y.audio', entry('localNew', '99aa06d3014798d86001c324468d497f')],
+    ]);
+
+    expect(detectMoves(classified).size).toBe(0);
+  });
+});
+
 describe('detectMoves phase 4 cross-side matching', () => {
   it('matches cloudNew + localNew with same hash (simultaneous rename)', () => {
     const classified = classifiedMap([

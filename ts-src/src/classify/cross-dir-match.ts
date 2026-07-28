@@ -4,6 +4,7 @@ import type { MetadataStore } from '../metadata/store.js';
 import type { FileState } from '../types/state.js';
 import { sanitizeFilename, normalizeSep } from '../util/path.js';
 import { commonAncestorDepth } from './moves.js';
+import { collectDeletedMoveHashes, isUnusableMoveHash } from './move-hashes.js';
 
 interface ClassifiedEntry {
   readonly state: FileState;
@@ -42,37 +43,48 @@ function pushToMap<K, V>(map: Map<K, V[]>, key: K, value: V): void {
   }
 }
 
-function applyHashMatches(ctx: CrossDirMatchContext): void {
-  const { deletedPaths, newPaths, classified, result } = ctx;
-
-  const deletedByHash = new Map<ContentHash, RelPath[]>();
-  const newByHash = new Map<ContentHash, RelPath[]>();
-
-  for (const dp of deletedPaths) {
-    const hash = classified.get(dp)?.hash;
-    if (!hash) continue;
-    pushToMap(deletedByHash, hash, dp);
-  }
-  for (const np of newPaths) {
-    const hash = classified.get(np)?.hash;
-    if (!hash) continue;
-    pushToMap(newByHash, hash, np);
-  }
-
+function pairByHash(opts: {
+  deletedByHash: Map<ContentHash, RelPath[]>;
+  newByHash: Map<ContentHash, RelPath[]>;
+  deletedPaths: Set<RelPath>;
+  newPaths: Set<RelPath>;
+  result: Map<RelPath, FileState>;
+}): void {
+  const { deletedByHash, newByHash, deletedPaths, newPaths, result } = opts;
   for (const [hash, dps] of deletedByHash) {
     const nps = newByHash.get(hash);
     if (!nps) continue;
-    const pairCount = Math.min(dps.length, nps.length);
-    for (let i = 0; i < pairCount; i++) {
-      const oldPath = dps[i];
-      const newPath = nps[i];
-      if (oldPath === undefined || newPath === undefined) continue;
+    for (const oldPath of dps) {
+      if (!deletedPaths.has(oldPath)) continue;
+      const newPath = nps.find((np) => newPaths.has(np));
+      if (newPath === undefined) continue;
       result.set(newPath, { kind: 'moved', oldPath: asRelPath(oldPath) });
       result.set(oldPath, { kind: 'gone' });
       deletedPaths.delete(oldPath);
       newPaths.delete(newPath);
     }
   }
+}
+
+function applyHashMatches(ctx: CrossDirMatchContext): void {
+  const { deletedPaths, newPaths, classified, meta, result } = ctx;
+
+  const deletedByHash = new Map<ContentHash, RelPath[]>();
+  const newByHash = new Map<ContentHash, RelPath[]>();
+
+  for (const dp of deletedPaths) {
+    const primary = classified.get(dp)?.hash ?? null;
+    for (const hash of collectDeletedMoveHashes(dp, primary, meta)) {
+      pushToMap(deletedByHash, hash, dp);
+    }
+  }
+  for (const np of newPaths) {
+    const hash = classified.get(np)?.hash;
+    if (!hash || isUnusableMoveHash(hash)) continue;
+    pushToMap(newByHash, hash, np);
+  }
+
+  pairByHash({ deletedByHash, newByHash, deletedPaths, newPaths, result });
 }
 
 function isRootLevel(path: RelPath): boolean {

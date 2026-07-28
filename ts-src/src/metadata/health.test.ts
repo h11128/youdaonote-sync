@@ -242,4 +242,25 @@ describe('healPostHash', () => {
     expect(stats.hashBackfill).toBe(1);
     expect(meta.getContentHash(asRelPath('precomputed.md'))).toBe('precomputed-hash-value');
   });
+
+  it('replaces empty-file contentHash placeholder with real local hash', () => {
+    const p = join(LOCAL, 'emptyhash.md');
+    writeFileSync(p, 'real content');
+    const actualMtime = Math.floor(statSync(p).mtimeMs / 1000);
+    const emptyHash = asContentHash('99aa06d3014798d86001c324468d497f');
+
+    meta.setFileInfo(asRelPath('emptyhash.md'), {
+      fileId: asFileId('f-empty'),
+      cloudMtime: asEpochSeconds(100),
+      localMtime: asEpochSeconds(actualMtime),
+      contentHash: emptyHash,
+    });
+
+    const real = asContentHash('real-local-hash');
+    const hashes = new Map<RelPath, ContentHash | null>([[asRelPath('emptyhash.md'), real]]);
+    const stats = healPostHash(meta, LOCAL, hashes, true);
+
+    expect(stats.hashBackfill).toBe(1);
+    expect(meta.getContentHash(asRelPath('emptyhash.md'))).toBe('real-local-hash');
+  });
 });

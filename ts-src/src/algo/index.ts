@@ -20,3 +20,4 @@ export {
   computeHashesConcurrent,
 } from './hash.js';
 export type { HashFileEntry, HashCacheLookup, HashConcurrentResult } from './hash.js';
+export { EMPTY_CONTENT_HASH, isUnusableContentHash } from './content-hash.js';

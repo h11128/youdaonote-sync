@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { type ContentHash, type RelPath, asEpochSeconds } from '../types/common.js';
 import type { MetadataStore } from './store.js';
 import { computeContentHashFromFile } from '../algo/hash.js';
+import { isUnusableContentHash } from '../algo/content-hash.js';
 import { logger } from '../util/logger.js';
 
 export enum VerifyIssueType {
@@ -222,28 +223,21 @@ function healHashBackfill(opts: HealPassOpts): void {
   const { meta, localDir, stats, autoFix, localHashes } = opts;
   for (const [path, record] of meta.getAllFiles()) {
     const full = join(localDir, path);
-    if (!existsSync(full)) continue;
-    if (record.contentHash || !record.fileId || !record.localMtime) continue;
-
-    const actualMtime = Math.floor(statSync(full).mtimeMs / 1000);
-    if (actualMtime !== record.localMtime) continue;
+    if (!existsSync(full) || !record.fileId || !record.localMtime) continue;
+    if (Math.floor(statSync(full).mtimeMs / 1000) !== record.localMtime) continue;
 
     const actualHash = localHashes?.get(path) ?? computeContentHashFromFile(full);
-    if (actualHash) {
-      stats.hashBackfill++;
-      if (autoFix) meta.updateContentHash(path, actualHash);
-    }
+    if (!actualHash || isUnusableContentHash(actualHash)) continue;
+    // Missing hash, or empty-file placeholder left by empty voice-shell downloads.
+    if (record.contentHash && !isUnusableContentHash(record.contentHash)) continue;
+
+    stats.hashBackfill++;
+    if (autoFix) meta.updateContentHash(path, actualHash);
   }
 }
 
 /**
- * Lightweight self-healing pass run before each sync.
- *
- * Detects and optionally repairs:
- * 1. local_mtime drift (os mtime differs but content_hash unchanged → update mtime)
- * 2. orphan records (no local file, no file_id → delete)
- * 3. cloud_mtime = 0 (legacy migration leftover → log warning)
- * 4. content_hash missing (has file_id + local_mtime but no hash → backfill)
+ * Pre-sync heal: mtime drift, orphans, zero cloud_mtime, missing/empty content_hash.
  */
 export function heal(meta: MetadataStore, localDir: string, autoFix = false): HealStats {
   if (!localDir || typeof localDir !== 'string') {

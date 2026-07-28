@@ -16,6 +16,7 @@ import type { ExecuteContext, SyncStats } from './types.js';
 
 import { readFileMtime } from '../util/utils.js';
 import { logger } from '../util/logger.js';
+import { isUnusableContentHash } from '../algo/content-hash.js';
 
 /**
  * Create a conflict backup of a file.
@@ -83,11 +84,12 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
   if (cloudFile?.id) ulOpts.existingFileId = cloudFile.id as FileId;
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
   const result = await uploadFile(ulOpts);
+  const hashed = ctx.hashFn && fileBuffer ? ctx.hashFn(fileBuffer, localPath) : null;
   meta.recordSync(relPath, {
     fileId: result.fileId,
     cloudMtime: result.cloudMtime,
     localMtime: asEpochSeconds(readFileMtime(localPath)),
-    contentHash: ctx.hashFn && fileBuffer ? ctx.hashFn(fileBuffer, localPath) : null,
+    contentHash: isUnusableContentHash(hashed) ? null : hashed,
     action: 'conflict-upload',
     direction: 'push',
     ...logMeta,

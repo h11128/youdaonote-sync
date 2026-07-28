@@ -169,4 +169,23 @@ describe('downloadFile voice notes', () => {
 
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it('stores null contentHash for empty download bytes', async () => {
+    const dir = join(tmpdir(), `yd-dl-zerobytes-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const localPath = join(dir, 'empty.bin');
+    const api = {
+      getFileById: vi.fn(() => Promise.resolve(new ArrayBuffer(0))),
+    } as unknown as YoudaoNoteApi;
+    const emptyHash = '99aa06d3014798d86001c324468d497f';
+    const hashFn = vi.fn(() => emptyHash as never);
+
+    const result = await downloadFile(api, asFileId('empty-1'), localPath, { hashFn });
+
+    expect(result.contentHash).toBeNull();
+    expect(result.rawContentHash).toBeNull();
+    expect(hashFn).not.toHaveBeenCalled();
+
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

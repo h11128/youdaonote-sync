@@ -15,6 +15,7 @@ import { xmlBytesToMarkdown } from '../convert/xml-to-md.js';
 import { jsonBytesToMarkdown } from '../convert/json-to-md.js';
 import { htmlBytesToMarkdown } from '../convert/html-to-md.js';
 import { requireNonEmpty } from '../util/preconditions.js';
+import { isUnusableContentHash } from '../algo/content-hash.js';
 
 import { readFileMtime } from '../util/utils.js';
 import { logger } from '../util/logger.js';
@@ -100,11 +101,17 @@ export async function downloadFile(
   await tryDownloadVoiceClips(localPath, ext, data, api);
 
   const contentBytes = markdown !== null ? new TextEncoder().encode(markdown) : data;
+  const hashFn = opts?.hashFn;
+  const rawHash = (bytes: Uint8Array): ContentHash | null => {
+    if (!hashFn || bytes.length === 0) return null;
+    const h = hashFn(bytes, localPath);
+    return isUnusableContentHash(h) ? null : h;
+  };
   return {
     localPath,
     fileType,
-    contentHash: opts?.hashFn?.(contentBytes, localPath) ?? null,
-    rawContentHash: opts?.hashFn?.(data, localPath) ?? null,
+    contentHash: rawHash(contentBytes),
+    rawContentHash: rawHash(data),
     rawData: data,
   };
 }
