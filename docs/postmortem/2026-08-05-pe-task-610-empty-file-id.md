@@ -1,9 +1,9 @@
 # PE #610 — False empty file_id / upload recovery
 
 - **Date**: 2026-08-05
-- **Status**: done
+- **Status**: done (+ harden follow-up #613)
 - **Trigger**: scheduled-sync log + `diagnose cache` showed perpetual `localNew` / empty `file_id` after “successful” uploads; intermittent 20108 / 211
-- **Commit**: `765477d`
+- **Commits**: `765477d` (primary fix); harden in follow-up commit with #613
 
 ## Summary
 
@@ -18,13 +18,36 @@
 
 Intentionally **not** restored: hash-collision skip-upload (that left empty `file_id` forever).
 
+## Why these bugs clustered (principle failures)
+
+1. **No metadata lifecycle invariants.** `files` / `dirs` / `sync_log` roles were implicit. Agents and code treated “clear stale cloud id” as safe without stating *when* local still owns the path.
+2. **Snapshot timing not modeled in tests.** Full-scan cleanup used pre-execute `cloudSnap`; unit tests never simulated “upload then cleanup with same session snaps.”
+3. **Optimization without linking.** Hash-collision skip-upload avoided an API call but skipped writing `file_id` — a silent contract break.
+4. **API error codes treated as fatal.** 20108/211 are recoverable Youdao states; missing recovery made intermittent failures look like permanent localNew.
+5. **`recordSync` dual-writes.** Logging and `files` upsert share one API; delete/dir callers easily resurrect or pollute rows.
+6. **Observability gap.** `diagnose cache` counted empty `file_id` but did not flag “empty + local exists” as the dangerous class.
+
+## Harness gaps → actions
+
+| Gap | Component | Action |
+|---|---|---|
+| No written invariants | SopDoc | `docs/reference/sync-metadata-invariants.md` (+ local `.cursor/rules` projection) |
+| No exclude-before-save regression | Test | `cloud-scan-phase.test.ts` |
+| Stale `cloud_mtime` on cache upsert | Code + test | `cacheCloudFileInfo` updates mtime; store test |
+| Dir `recordSync` → empty `file_id` files | Code | `appendSyncLog` for directory actions |
+| Diagnose silent on dangerous empties | Diagnose | warn `empty file_id but local` |
+| Upload can record empty id | Assert | `requireNonEmpty` after upload |
+
+Living checklist: [sync-metadata-invariants](../reference/sync-metadata-invariants.md).
+
 ## Verification
 
-- Unit: `push-errors`, `calibrate`, `upload`, `guardrails`
+- Unit: `push-errors`, `calibrate`, `upload`, `guardrails`, `store` cloud_mtime, `diagnose` empty-local warn, `cloud-scan-phase` exclude-before-save
 - Engine: `engine.test`, `e2e.test`
-- [code-reviewer](5796d399-19f3-4685-aea7-611697820410): approved (0 Critical / 0 Warning)
+- Review: primary fix approved; harden reviewed in follow-up
 
-## Follow-ups (ops, not code)
+## Follow-ups
 
-- Next real scheduled sync should drain empty-`file_id` localNew via re-link / 20108 recovery
-- Optional: purge gone metadata for renamed `AI模型比较.md` path if still listed in cache
+- Ops: next scheduled sync should drain residual empty-`file_id` localNew
+- Optional: purge gone metadata for renamed `AI模型比较.md`
+- PE #613: harden invariants (this follow-up)

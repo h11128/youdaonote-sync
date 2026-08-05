@@ -225,3 +225,61 @@ describe('uploadFile: duplicate-name recovery', () => {
     expect(api.pushFile).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('uploadFile: nested push recovery', () => {
+  const env = setupTestEnv();
+
+  it('after 211, recovers HTTP 200 body duplicateFileId by pushing to dup id', async () => {
+    const localPath = join(env.localDir, 'nested.md');
+    writeFileSync(localPath, '# nested');
+
+    const api = makeMockApi();
+    vi.mocked(api.pushFile)
+      .mockRejectedValueOnce(
+        new Error('HTTP 500: {"error":"211","message":"Message[VERSION_CONFLICT]"}'),
+      )
+      .mockResolvedValueOnce({
+        duplicateFileId: 'WEB-dup',
+        fileEntry: { id: 'WEB-dup', name: 'nested.md', dir: false },
+      })
+      .mockResolvedValueOnce({
+        entry: { id: 'WEB-dup', modifyTimeForSort: 7777 },
+      });
+
+    const result = await uploadFile({
+      api,
+      meta: env.meta,
+      localPath,
+      relPath: asRelPath('nested.md'),
+      rootDirId: asDirId('root'),
+      existingFileId: asFileId('stale-id'),
+    });
+
+    expect(result.fileId).toBe('WEB-dup');
+    expect(api.pushFile).toHaveBeenCalledTimes(3);
+    const last = (api.pushFile as ReturnType<typeof vi.fn>).mock.calls[2]![0];
+    expect(last.fileId).toBe('WEB-dup');
+    expect(last.isCreate).toBe(false);
+  });
+
+  it('stops after repeated VERSION_CONFLICT retries', async () => {
+    const localPath = join(env.localDir, 'loop.md');
+    writeFileSync(localPath, '# loop');
+
+    const api = makeMockApi();
+    vi.mocked(api.pushFile).mockRejectedValue(
+      new Error('HTTP 500: {"error":"211","message":"Message[VERSION_CONFLICT]"}'),
+    );
+
+    await expect(
+      uploadFile({
+        api,
+        meta: env.meta,
+        localPath,
+        relPath: asRelPath('loop.md'),
+        rootDirId: asDirId('root'),
+        existingFileId: asFileId('loop-id'),
+      }),
+    ).rejects.toThrow(/push recovery exceeded/);
+  });
+});

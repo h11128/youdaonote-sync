@@ -1,11 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import { YoudaoNoteApi } from '../api/client.js';
-import {
-  parseYoudaoPushError,
-  YOUDAO_DUPLICATE_NAME,
-  YOUDAO_VERSION_CONFLICT,
-} from '../api/push-errors.js';
+import { parseYoudaoPushError, YOUDAO_DUPLICATE_NAME } from '../api/push-errors.js';
 import type { DirId, EpochSeconds, FileId, ContentHash, RelPath } from '../types/common.js';
 import { joinRelPath } from '../types/common.js';
 import { NoteDomain } from '../types/common.js';
@@ -13,6 +9,7 @@ import type { MetadataStore } from '../metadata/store.js';
 import { markdownToNoteJson } from '../convert/md-to-note.js';
 import { normalizeSep } from '../scan/name.js';
 import { requireNonEmpty } from '../util/preconditions.js';
+import { pushWithRecovery } from './upload-push.js';
 
 const TEXT_EXTS = new Set([
   '.md',
@@ -159,79 +156,6 @@ function extractCloudMtime(result: Record<string, unknown>): EpochSeconds {
   return (typeof mtimeVal === 'number' ? mtimeVal : Math.floor(Date.now() / 1000)) as EpochSeconds;
 }
 
-type PushOnceOpts =
-  | {
-      api: YoudaoNoteApi;
-      fileId: FileId;
-      parentId: DirId;
-      name: string;
-      isCreate: boolean;
-      binary: true;
-      fileData: Uint8Array;
-    }
-  | {
-      api: YoudaoNoteApi;
-      fileId: FileId;
-      parentId: DirId;
-      name: string;
-      isCreate: boolean;
-      binary: false;
-      domain: NoteDomain;
-      bodyString: string;
-    };
-
-async function pushOnce(opts: PushOnceOpts): Promise<Record<string, unknown>> {
-  if (opts.binary) {
-    return opts.api.pushBinaryFile({
-      fileId: opts.fileId,
-      parentId: opts.parentId,
-      name: opts.name,
-      fileData: opts.fileData,
-      isCreate: opts.isCreate,
-    });
-  }
-  return opts.api.pushFile({
-    fileId: opts.fileId,
-    parentId: opts.parentId,
-    name: opts.name,
-    domain: opts.domain,
-    bodyString: opts.bodyString,
-    isCreate: opts.isCreate,
-  });
-}
-
-/**
- * Push with recovery for duplicate-name (20108) and version-conflict (211).
- * HTTP 500 bodies and HTTP 200 error fields are both handled.
- */
-async function pushWithRecovery(
-  opts: PushOnceOpts,
-): Promise<{ fileId: FileId; result: Record<string, unknown> }> {
-  try {
-    const result = await pushOnce(opts);
-    const dupFromBody =
-      typeof result.duplicateFileId === 'string' ? result.duplicateFileId : undefined;
-    if (dupFromBody && opts.isCreate) {
-      return await pushWithRecovery({ ...opts, fileId: dupFromBody as FileId, isCreate: false });
-    }
-    return { fileId: opts.fileId, result };
-  } catch (err: unknown) {
-    const info = parseYoudaoPushError(err);
-    if (info?.code === YOUDAO_DUPLICATE_NAME && info.duplicateFileId && opts.isCreate) {
-      return await pushWithRecovery({
-        ...opts,
-        fileId: info.duplicateFileId as FileId,
-        isCreate: false,
-      });
-    }
-    if (info?.code === YOUDAO_VERSION_CONFLICT && !opts.isCreate) {
-      const result = await pushOnce({ ...opts, isCreate: false });
-      return { fileId: opts.fileId, result };
-    }
-    throw err;
-  }
-}
-
 /**
  * Upload a single local file to the cloud.
  */
@@ -266,6 +190,7 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
       binary: true,
       fileData: new Uint8Array(rawBuf),
     });
+    requireNonEmpty('upload.fileId', resolvedId);
     return { fileId: resolvedId, cloudMtime: extractCloudMtime(result), parentId };
   }
 
@@ -284,5 +209,6 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
     domain,
     bodyString,
   });
+  requireNonEmpty('upload.fileId', resolvedId);
   return { fileId: resolvedId, cloudMtime: extractCloudMtime(result), parentId };
 }

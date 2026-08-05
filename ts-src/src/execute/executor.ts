@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { FileState, SyncAction, SyncLogMetadata } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
 import type { DirId, FileId, NoteDomain, RelPath, SyncDirection } from '../types/common.js';
-import { asEpochSeconds, joinRelPath } from '../types/common.js';
+import { joinRelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { handleDownload } from './download.js';
 import { ensureParentDir } from './upload.js';
@@ -184,10 +184,8 @@ async function executeDir(
     mkdirSync(join(ctx.localDir, relPath), { recursive: true });
     stats.downloaded++;
     if (logMeta) {
-      ctx.meta.recordSync(relPath, {
-        fileId: '' as FileId,
-        cloudMtime: asEpochSeconds(0),
-        localMtime: asEpochSeconds(0),
+      // Dirs must not upsert into `files` (empty file_id rows pollute cache stats).
+      ctx.meta.appendSyncLog(relPath, {
         action: 'download',
         direction: 'pull',
         ...logMeta,
@@ -203,10 +201,7 @@ async function executeDir(
     });
     stats.uploaded++;
     if (logMeta) {
-      ctx.meta.recordSync(relPath, {
-        fileId: '' as FileId,
-        cloudMtime: asEpochSeconds(0),
-        localMtime: asEpochSeconds(0),
+      ctx.meta.appendSyncLog(relPath, {
         action: 'upload',
         direction: 'push',
         ...logMeta,

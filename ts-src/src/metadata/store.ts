@@ -19,6 +19,12 @@ import * as storeState from './store-state.js';
 import * as storeFiles from './store-files.js';
 import * as storeHashCache from './store-hash-cache.js';
 
+const ERR_EMPTY_LOCAL_PATH = 'localPath must not be empty';
+
+function requireLocalPath(localPath: RelPath): void {
+  if (!localPath) throw new Error(ERR_EMPTY_LOCAL_PATH);
+}
+
 /**
  * SQLite-backed metadata store for sync state.
  *
@@ -85,7 +91,7 @@ export class MetadataStore {
       cloudContentHash?: ContentHash | null;
     },
   ): void {
-    if (!localPath) throw new Error('localPath must not be empty');
+    requireLocalPath(localPath);
     storeFiles.upsertFile(this.db, this.normalizePath(localPath), opts);
   }
 
@@ -110,7 +116,7 @@ export class MetadataStore {
       guardrailChecks?: string | null;
     },
   ): void {
-    if (!localPath) throw new Error('localPath must not be empty');
+    requireLocalPath(localPath);
     const now = asEpochSeconds(Math.floor(Date.now() / 1000));
     const path = this.normalizePath(localPath);
 
@@ -138,6 +144,39 @@ export class MetadataStore {
     txn();
   }
 
+  /**
+   * Append a sync_log row without upserting `files`.
+   * Use for directory actions — dirs live in `dirs`, not `files`.
+   */
+  appendSyncLog(
+    localPath: RelPath,
+    opts: {
+      action: string;
+      direction?: string;
+      cloudId?: string | null;
+      detail?: string;
+      decisionReason?: string | null;
+      policyVersion?: string | null;
+      guardrailChecks?: string | null;
+    },
+  ): void {
+    requireLocalPath(localPath);
+    const now = asEpochSeconds(Math.floor(Date.now() / 1000));
+    storeState.insertSyncLog(this.db, {
+      timestamp: now,
+      path: this.normalizePath(localPath),
+      action: opts.action,
+      direction: opts.direction ?? null,
+      oldHash: null,
+      newHash: null,
+      cloudId: opts.cloudId ?? null,
+      detail: opts.detail ?? null,
+      decisionReason: opts.decisionReason ?? null,
+      policyVersion: opts.policyVersion ?? null,
+      guardrailChecks: opts.guardrailChecks ?? null,
+    });
+  }
+
   cacheCloudFileInfo(
     localPath: RelPath,
     opts: {
@@ -148,7 +187,7 @@ export class MetadataStore {
       createTime?: EpochSeconds | null;
     },
   ): void {
-    if (!localPath) throw new Error('localPath must not be empty');
+    requireLocalPath(localPath);
     storeFiles.cacheCloudFileInfo(this.db, this.normalizePath(localPath), opts);
   }
 

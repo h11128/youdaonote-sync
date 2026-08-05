@@ -194,3 +194,5 @@ Source: [`ts-src/src/classify/`](../../ts-src/src/classify/) · Design details: 
 ---
 
 Historical design notes (may be stale): [`RFC-006`](../design/rfc-006-typescript-rewrite-design.md) · [`archive/postmortem/`](../archive/postmortem/).
+
+Sync metadata lifecycle invariants (empty `file_id`, cleanup, exclude/save order): [`sync-metadata-invariants.md`](./sync-metadata-invariants.md).

@@ -218,6 +218,31 @@ describe('cmdCache', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Total files:           2'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('With file_id:          1'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Without file_id:       1'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('empty file_id but local: 0'));
+  });
+
+  it('warns when empty file_id rows still have a local file', () => {
+    const metaPath = join(tempDir, 'meta-empty-local.db');
+    const filePath = join(tempDir, 'broken.md');
+    writeFileSync(filePath, 'content');
+
+    const meta = new MetadataStore(metaPath);
+    meta.setFileInfo(asRelPath('broken.md'), {
+      fileId: asFileId(''),
+      cloudMtime: asEpochSeconds(0),
+      localMtime: asEpochSeconds(300),
+    });
+    meta.close();
+
+    const logSpy = vi.spyOn(console, 'log');
+    cmdCache({
+      cookiesPath: '',
+      metadataPath: metaPath,
+      localDir: tempDir,
+    });
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('empty file_id but local: 1'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('WARNING:'));
   });
 
   it('counts file_id but not local', () => {

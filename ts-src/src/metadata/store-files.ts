@@ -119,6 +119,7 @@ export function cacheCloudFileInfo(
       'VALUES (?, ?, ?, 0, ?, ?, ?) ' +
       'ON CONFLICT(path) DO UPDATE SET ' +
       '  file_id = excluded.file_id,' +
+      '  cloud_mtime = excluded.cloud_mtime,' +
       '  parent_id = COALESCE(excluded.parent_id, files.parent_id),' +
       '  domain = COALESCE(excluded.domain, files.domain),' +
       '  create_time = CASE WHEN excluded.create_time IS NOT NULL AND excluded.create_time > 0 THEN excluded.create_time ELSE files.create_time END',

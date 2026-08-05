@@ -1,10 +1,10 @@
 /**
- * Additional diagnose subcommands: cache, rebuild, duplicates, check-content.
- * Extracted to satisfy max-lines and complexity limits.
+ * Additional diagnose subcommands: rebuild, duplicates, check-content.
+ * Cache lives in diagnose-cache.ts (line budget).
  */
 
 import { dirname, join } from 'node:path';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { SyncEngine } from '../engine/engine.js';
 import { asDirId, asEpochSeconds, asFileId, type RelPath } from '../types/common.js';
@@ -14,6 +14,8 @@ import { MetadataStore } from '../metadata/store.js';
 import { computeContentHashFromFile, initXxhash } from '../algo/hash.js';
 import type { DiagnoseConfig } from './diagnose.js';
 
+export { cmdCache } from './diagnose-cache.js';
+
 function createEngineForRebuild(cfg: DiagnoseConfig): SyncEngine {
   return new SyncEngine({
     cookiesPath: cfg.cookiesPath,
@@ -21,39 +23,6 @@ function createEngineForRebuild(cfg: DiagnoseConfig): SyncEngine {
     localDir: cfg.localDir,
     dryRun: true,
   });
-}
-
-export function cmdCache(cfg: DiagnoseConfig): void {
-  const meta = new MetadataStore(cfg.metadataPath);
-  const files = meta.getAllFiles();
-  const dirs = meta.getAllDirs();
-
-  let withFileId = 0;
-  let withoutFileId = 0;
-  let fileIdButCloudMtimeZero = 0;
-  let fileIdButNotLocal = 0;
-
-  for (const [path, rec] of files) {
-    const hasId = rec.fileId !== '';
-    if (hasId) {
-      withFileId++;
-      if (rec.cloudMtime === 0) fileIdButCloudMtimeZero++;
-      if (!existsSync(join(cfg.localDir, path))) fileIdButNotLocal++;
-    } else {
-      withoutFileId++;
-    }
-  }
-
-  console.log('='.repeat(60));
-  console.log('  Metadata cache summary');
-  console.log('='.repeat(60));
-  console.log(`  Total files:           ${files.size}`);
-  console.log(`  With file_id:          ${withFileId}`);
-  console.log(`  Without file_id:       ${withoutFileId}`);
-  console.log(`  file_id but cloud_mtime=0: ${fileIdButCloudMtimeZero}`);
-  console.log(`  file_id but not local: ${fileIdButNotLocal}`);
-  console.log(`  Total directories:     ${dirs.size}`);
-  meta.close();
 }
 
 interface RebuildStats {

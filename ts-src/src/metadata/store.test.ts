@@ -215,6 +215,34 @@ function cloudCacheTests(getStore: () => MetadataStore): void {
       expect(info!.localMtime).toBe(0);
       expect(info!.cloudMtime).toBe(5000);
     });
+
+    it('cacheCloudFileInfo updates cloud_mtime on conflict', () => {
+      const store = getStore();
+      store.cacheCloudFileInfo(asRelPath('cached.md'), {
+        fileId: asFileId('f-old'),
+        cloudMtime: asEpochSeconds(1000),
+      });
+      store.cacheCloudFileInfo(asRelPath('cached.md'), {
+        fileId: asFileId('f-new'),
+        cloudMtime: asEpochSeconds(2000),
+      });
+      const info = store.getFileInfo(asRelPath('cached.md'));
+      expect(info!.fileId).toBe('f-new');
+      expect(info!.cloudMtime).toBe(2000);
+    });
+
+    it('appendSyncLog writes sync_log without creating files rows', () => {
+      const store = getStore();
+      store.appendSyncLog(asRelPath('photos'), {
+        action: 'download',
+        direction: 'pull',
+        cloudId: 'dir-1',
+      });
+      expect(store.getFileInfo(asRelPath('photos'))).toBeNull();
+      const logs = store.getSyncLog({ path: asRelPath('photos') });
+      expect(logs.length).toBe(1);
+      expect(logs[0]!.action).toBe('download');
+    });
   });
 }
 
