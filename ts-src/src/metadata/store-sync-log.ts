@@ -3,14 +3,7 @@ import { asEpochSeconds, asRelPath, type EpochSeconds, type RelPath } from '../t
 
 export type NormalizePath = (localPath: RelPath) => string;
 
-/**
- * sync_log table. Single responsibility: sync log read/write.
- */
-export function getSyncLog(
-  db: Database.Database,
-  opts: { limit?: number; path?: RelPath } | undefined,
-  normalizePath: NormalizePath,
-): {
+export interface SyncLogEntry {
   id: number;
   timestamp: EpochSeconds;
   path: RelPath;
@@ -23,7 +16,16 @@ export function getSyncLog(
   decisionReason: string | null;
   policyVersion: string | null;
   guardrailChecks: string | null;
-}[] {
+}
+
+/**
+ * sync_log table. Single responsibility: sync log read/write.
+ */
+export function getSyncLog(
+  db: Database.Database,
+  opts: { limit?: number; path?: RelPath } | undefined,
+  normalizePath: NormalizePath,
+): SyncLogEntry[] {
   let sql =
     'SELECT id, timestamp, path, action, direction, old_hash, new_hash, cloud_id, detail, decision_reason, policy_version, guardrail_checks FROM sync_log';
   const params: unknown[] = [];

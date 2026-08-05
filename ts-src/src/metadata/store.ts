@@ -2,7 +2,6 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
-  asEpochSeconds,
   asRelPath,
   type ContentHash,
   type DirId,
@@ -18,6 +17,12 @@ import * as storeDirs from './store-dirs.js';
 import * as storeState from './store-state.js';
 import * as storeFiles from './store-files.js';
 import * as storeHashCache from './store-hash-cache.js';
+import {
+  appendSyncLog as writeAppendSyncLog,
+  recordSync as writeRecordSync,
+} from './store-sync-write.js';
+import type { AppendSyncLogOpts, RecordSyncOpts } from './store-sync-write.js';
+import type { SyncLogEntry } from './store-sync-log.js';
 
 const ERR_EMPTY_LOCAL_PATH = 'localPath must not be empty';
 
@@ -57,13 +62,9 @@ export class MetadataStore {
     this.db.close();
   }
 
-  // ========== Path normalization ==========
-
   private normalizePath(localPath: RelPath): RelPath {
     return asRelPath(normalizeSep(localPath));
   }
-
-  // ========== File methods (delegate to store-files) ==========
 
   getFileId(localPath: RelPath): FileId | null {
     return storeFiles.getFileId(this.db, this.normalizePath(localPath));
@@ -95,86 +96,15 @@ export class MetadataStore {
     storeFiles.upsertFile(this.db, this.normalizePath(localPath), opts);
   }
 
-  recordSync(
-    localPath: RelPath,
-    opts: {
-      fileId: FileId;
-      cloudMtime: EpochSeconds;
-      localMtime: EpochSeconds;
-      parentId?: DirId | null;
-      domain?: NoteDomain | null;
-      contentHash?: ContentHash | null;
-      cloudContentHash?: ContentHash | null;
-      originalDomain?: NoteDomain | null;
-      createTime?: EpochSeconds | null;
-      action?: string;
-      direction?: string;
-      oldHash?: ContentHash | null;
-      detail?: string;
-      decisionReason?: string | null;
-      policyVersion?: string | null;
-      guardrailChecks?: string | null;
-    },
-  ): void {
+  recordSync(localPath: RelPath, opts: RecordSyncOpts): void {
     requireLocalPath(localPath);
-    const now = asEpochSeconds(Math.floor(Date.now() / 1000));
-    const path = this.normalizePath(localPath);
-
-    const txn = this.db.transaction(() => {
-      storeFiles.upsertFile(this.db, path, { ...opts, lastSyncAt: now });
-      if (opts.originalDomain != null) {
-        storeFiles.updateOriginalDomain(this.db, path, opts.originalDomain);
-      }
-      if (opts.action) {
-        storeState.insertSyncLog(this.db, {
-          timestamp: now,
-          path,
-          action: opts.action,
-          direction: opts.direction ?? null,
-          oldHash: opts.oldHash ?? null,
-          newHash: opts.contentHash ?? null,
-          cloudId: opts.fileId,
-          detail: opts.detail ?? null,
-          decisionReason: opts.decisionReason ?? null,
-          policyVersion: opts.policyVersion ?? null,
-          guardrailChecks: opts.guardrailChecks ?? null,
-        });
-      }
-    });
-    txn();
+    writeRecordSync(this.db, this.normalizePath(localPath), opts);
   }
 
-  /**
-   * Append a sync_log row without upserting `files`.
-   * Use for directory actions — dirs live in `dirs`, not `files`.
-   */
-  appendSyncLog(
-    localPath: RelPath,
-    opts: {
-      action: string;
-      direction?: string;
-      cloudId?: string | null;
-      detail?: string;
-      decisionReason?: string | null;
-      policyVersion?: string | null;
-      guardrailChecks?: string | null;
-    },
-  ): void {
+  /** Append sync_log without upserting `files` (dirs live in `dirs`). */
+  appendSyncLog(localPath: RelPath, opts: AppendSyncLogOpts): void {
     requireLocalPath(localPath);
-    const now = asEpochSeconds(Math.floor(Date.now() / 1000));
-    storeState.insertSyncLog(this.db, {
-      timestamp: now,
-      path: this.normalizePath(localPath),
-      action: opts.action,
-      direction: opts.direction ?? null,
-      oldHash: null,
-      newHash: null,
-      cloudId: opts.cloudId ?? null,
-      detail: opts.detail ?? null,
-      decisionReason: opts.decisionReason ?? null,
-      policyVersion: opts.policyVersion ?? null,
-      guardrailChecks: opts.guardrailChecks ?? null,
-    });
+    writeAppendSyncLog(this.db, this.normalizePath(localPath), opts);
   }
 
   cacheCloudFileInfo(
@@ -207,8 +137,6 @@ export class MetadataStore {
     return storeFiles.getCloudFileSummaries(this.db);
   }
 
-  // ========== Directory methods (delegate to store-dirs) ==========
-
   getDirId(localPath: RelPath): DirId | null {
     return storeDirs.getDirId(this.db, this.normalizePath(localPath));
   }
@@ -224,8 +152,6 @@ export class MetadataStore {
   getAllDirs(): Map<RelPath, { dirId: DirId; parentId: DirId | null }> {
     return storeDirs.getAllDirs(this.db);
   }
-
-  // ========== Lookup methods ==========
 
   findByFileId(fileId: FileId): RelPath | null {
     return storeFiles.findByFileId(this.db, fileId);
@@ -243,8 +169,6 @@ export class MetadataStore {
     return storeDirs.findByDirId(this.db, dirId);
   }
 
-  // ========== Content hash ==========
-
   updateContentHash(localPath: RelPath, contentHash: ContentHash): void {
     storeFiles.updateContentHash(this.db, this.normalizePath(localPath), contentHash);
   }
@@ -256,8 +180,6 @@ export class MetadataStore {
   setCloudContentHash(localPath: RelPath, cloudHash: ContentHash): void {
     storeFiles.setCloudContentHash(this.db, this.normalizePath(localPath), cloudHash);
   }
-
-  // ========== Hash cache ==========
 
   getCachedHash(path: RelPath, mtime: EpochSeconds, size: number): ContentHash | null {
     return storeHashCache.getCachedHash(this.db, this.normalizePath(path), mtime, size);
@@ -281,8 +203,6 @@ export class MetadataStore {
     });
   }
 
-  // ========== Sync state & log & file_base (delegate to store-state) ==========
-
   getState(key: string): string | null {
     return storeState.getState(this.db, key);
   }
@@ -295,20 +215,7 @@ export class MetadataStore {
     return storeState.getStateInt(this.db, key, defaultValue);
   }
 
-  getSyncLog(opts?: { limit?: number; path?: RelPath }): {
-    id: number;
-    timestamp: EpochSeconds;
-    path: RelPath;
-    action: string;
-    direction: string | null;
-    oldHash: string | null;
-    newHash: string | null;
-    cloudId: string | null;
-    detail: string | null;
-    decisionReason: string | null;
-    policyVersion: string | null;
-    guardrailChecks: string | null;
-  }[] {
+  getSyncLog(opts?: { limit?: number; path?: RelPath }): SyncLogEntry[] {
     return storeState.getSyncLog(this.db, opts, (p) => this.normalizePath(p));
   }
 
@@ -336,12 +243,6 @@ export class MetadataStore {
     return storeState.getAllFileRefs(this.db);
   }
 
-  // ========== Batch operations ==========
-
-  /**
-   * Run multiple operations in a single SQLite transaction.
-   * All writes inside `fn` are committed atomically on success, or rolled back on error.
-   */
   batch<T>(fn: () => T): T {
     return this.db.transaction(fn)();
   }
@@ -352,8 +253,6 @@ export class MetadataStore {
       this.db.pragma('wal_checkpoint(PASSIVE)');
     }
   }
-
-  // ========== Health operations (gc / heal internals) ==========
 
   getStaleFilePaths(cutoffTs: EpochSeconds): RelPath[] {
     return storeFiles.getStaleFilePaths(this.db, cutoffTs);

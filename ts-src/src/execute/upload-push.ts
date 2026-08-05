@@ -54,7 +54,11 @@ async function pushOnce(opts: PushOnceOpts): Promise<Record<string, unknown>> {
 
 function resolvedPushFileId(result: Record<string, unknown>, fallback: FileId): FileId {
   const fe = (result.fileEntry ?? result.entry) as Record<string, unknown> | undefined;
-  return typeof fe?.id === 'string' && fe.id ? (fe.id as FileId) : fallback;
+  if (fe && Object.prototype.hasOwnProperty.call(fe, 'id')) {
+    // Explicit empty id from API is a hard failure — do not fall back to a guessed id.
+    return typeof fe.id === 'string' && fe.id ? (fe.id as FileId) : ('' as FileId);
+  }
+  return fallback;
 }
 
 function duplicateIdOf(result: Record<string, unknown>): string | undefined {

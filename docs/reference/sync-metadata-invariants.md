@@ -32,6 +32,8 @@ These rules exist because scheduled sync once wiped `file_id` after a successful
 ## Proof commands
 
 ```bash
-cd ts-src && npx vitest run src/engine/engine.test.ts src/classify/calibrate.test.ts src/execute/upload.test.ts src/metadata/store.test.ts src/tools/diagnose.test.ts src/engine/cloud-scan-phase.test.ts
+cd ts-src && npx vitest run src/engine/e2e-metadata-invariants.test.ts
 npm run diagnose -- cache
 ```
+
+These are SyncEngine pipeline e2e tests (real MetadataStore + local files + mock API), not isolated store unit checks.
