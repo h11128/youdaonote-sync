@@ -24,18 +24,30 @@ describe('SyncEngine Guardrails', () => {
     vi.restoreAllMocks();
   });
 
-  it('aborts sync if cloud returns empty list but local has files', async () => {
+  it('aborts sync if cloud returns empty list but local has many cloud-linked files', async () => {
     const mockApi = {
       loginByCookies: () => null,
       getRootId: () => Promise.resolve(asDirId('root')),
       getDirInfoById: () => Promise.resolve({ entries: [] } as DirInfoByIdResponse),
+      listRecent: () => Promise.resolve([]),
     } as unknown as YoudaoNoteApi;
+
+    const linked = new Map();
+    for (let i = 0; i < 8; i++) {
+      linked.set(asRelPath(`tracked${i}.md`), {
+        fileId: `id${i}`,
+        cloudMtime: asEpochSeconds(100),
+        localMtime: asEpochSeconds(100),
+        lastSyncAt: asEpochSeconds(100),
+      });
+    }
 
     const mockMeta = {
       getState: () => null,
       setState: () => {},
       getStateInt: () => 0,
-      getAllFiles: () => new Map(),
+      getAllFiles: () => linked,
+      getFileInfo: () => null,
       save: () => {},
       batch: (fn: any) => fn(),
       getCachedHashesBulk: () => new Map(),
@@ -56,6 +68,7 @@ describe('SyncEngine Guardrails', () => {
       dryRun: false,
       api: mockApi,
       meta: mockMeta,
+      maxDeletesPerSync: 5,
     });
 
     const { writeFileSync } = await import('node:fs');
@@ -66,9 +79,7 @@ describe('SyncEngine Guardrails', () => {
     expect(result.stats.downloaded).toBe(0);
     expect(result.status).toBe('aborted');
     expect(result.reason).toBe('empty_cloud_response');
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('Cloud returned empty list but local has files'),
-    );
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('Cloud returned empty list'));
   });
 
   it('aborts sync if delete threshold is exceeded', async () => {

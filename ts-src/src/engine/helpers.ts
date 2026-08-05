@@ -181,12 +181,17 @@ export function applyRefinementIfChanged(
 }
 
 /**
- * Clean up metadata for files that no longer exist in cloud.
- * Clears the file_id so they won't be treated as cloud-linked.
+ * After a *full* cloud scan, unlink metadata for paths that disappeared from
+ * the cloud and have no local file (clear file_id; row may remain until GC).
+ *
+ * Critical: do NOT touch paths that still exist locally. Newly uploaded files
+ * are absent from the pre-execute cloudSnap; clearing their file_id caused
+ * perpetual localNew / empty-fileId churn in scheduled sync.
  */
 export function cleanupStalePaths(
   meta: MetadataStore,
   cloudSnap: ReadonlyMap<RelPath, CloudFile>,
+  localSnap: ReadonlyMap<RelPath, LocalFile>,
 ): void {
   const activeCloudPaths = new Set<RelPath>();
   for (const [path, cf] of cloudSnap) {
@@ -196,6 +201,7 @@ export function cleanupStalePaths(
   if (stalePaths.length === 0) return;
   meta.batch(() => {
     for (const path of stalePaths) {
+      if (localSnap.has(path)) continue;
       meta.clearCloudId(path);
     }
   });

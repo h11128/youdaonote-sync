@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import { YoudaoNoteApi } from '../api/client.js';
+import {
+  parseYoudaoPushError,
+  YOUDAO_DUPLICATE_NAME,
+  YOUDAO_VERSION_CONFLICT,
+} from '../api/push-errors.js';
 import type { DirId, EpochSeconds, FileId, ContentHash, RelPath } from '../types/common.js';
 import { joinRelPath } from '../types/common.js';
 import { NoteDomain } from '../types/common.js';
@@ -41,6 +46,7 @@ const TEXT_EXTS = new Set([
 export interface UploadResult {
   readonly fileId: FileId;
   readonly cloudMtime: EpochSeconds;
+  readonly parentId: DirId;
 }
 
 export interface EnsureParentDirOpts {
@@ -51,12 +57,14 @@ export interface EnsureParentDirOpts {
   inflight?: Map<string, Promise<DirId>> | undefined;
 }
 
+function entryId(result: Record<string, unknown>): string {
+  const fe = (result.fileEntry ?? result.entry) as Record<string, unknown> | undefined;
+  return typeof fe?.id === 'string' ? fe.id : '';
+}
+
 /**
  * Ensure all parent directories exist in the cloud, creating them as needed.
  * Returns the DirId of the immediate parent directory.
- *
- * When `inflight` is provided, deduplicates concurrent createDir calls
- * for the same path within the same sync session.
  */
 export async function ensureParentDir(o: EnsureParentDirOpts): Promise<DirId> {
   const { api, meta, relPath, rootDirId, inflight } = o;
@@ -83,17 +91,7 @@ export async function ensureParentDir(o: EnsureParentDirOpts): Promise<DirId> {
       }
     }
 
-    const createPromise = (async () => {
-      const result = await api.createDir(parentId, part);
-      const fe = result.fileEntry as Record<string, unknown> | undefined;
-      const newId = (fe?.id ?? '') as DirId;
-      if (newId) {
-        meta.setDirInfo(currentPath, newId, parentId);
-        return newId;
-      }
-      return parentId;
-    })();
-
+    const createPromise = createOrReuseDir({ api, meta, currentPath, parentId, part });
     inflight?.set(currentPath, createPromise);
     try {
       parentId = await createPromise;
@@ -103,6 +101,36 @@ export async function ensureParentDir(o: EnsureParentDirOpts): Promise<DirId> {
   }
 
   return parentId;
+}
+
+interface CreateOrReuseDirOpts {
+  api: YoudaoNoteApi;
+  meta: MetadataStore;
+  currentPath: RelPath | '';
+  parentId: DirId;
+  part: string;
+}
+
+async function createOrReuseDir(o: CreateOrReuseDirOpts): Promise<DirId> {
+  const { api, meta, currentPath, parentId, part } = o;
+  try {
+    const result = await api.createDir(parentId, part);
+    const newId = (entryId(result) ||
+      (typeof result.duplicateFileId === 'string' ? result.duplicateFileId : '')) as DirId;
+    if (!newId) {
+      throw new Error(`createDir(${currentPath}) returned no directory id`);
+    }
+    meta.setDirInfo(currentPath as RelPath, newId, parentId);
+    return newId;
+  } catch (err: unknown) {
+    const info = parseYoudaoPushError(err);
+    if (info?.code === YOUDAO_DUPLICATE_NAME && info.duplicateFileId) {
+      const dupId = info.duplicateFileId as DirId;
+      meta.setDirInfo(currentPath as RelPath, dupId, parentId);
+      return dupId;
+    }
+    throw err;
+  }
 }
 
 export interface UploadFileOpts {
@@ -131,13 +159,81 @@ function extractCloudMtime(result: Record<string, unknown>): EpochSeconds {
   return (typeof mtimeVal === 'number' ? mtimeVal : Math.floor(Date.now() / 1000)) as EpochSeconds;
 }
 
+type PushOnceOpts =
+  | {
+      api: YoudaoNoteApi;
+      fileId: FileId;
+      parentId: DirId;
+      name: string;
+      isCreate: boolean;
+      binary: true;
+      fileData: Uint8Array;
+    }
+  | {
+      api: YoudaoNoteApi;
+      fileId: FileId;
+      parentId: DirId;
+      name: string;
+      isCreate: boolean;
+      binary: false;
+      domain: NoteDomain;
+      bodyString: string;
+    };
+
+async function pushOnce(opts: PushOnceOpts): Promise<Record<string, unknown>> {
+  if (opts.binary) {
+    return opts.api.pushBinaryFile({
+      fileId: opts.fileId,
+      parentId: opts.parentId,
+      name: opts.name,
+      fileData: opts.fileData,
+      isCreate: opts.isCreate,
+    });
+  }
+  return opts.api.pushFile({
+    fileId: opts.fileId,
+    parentId: opts.parentId,
+    name: opts.name,
+    domain: opts.domain,
+    bodyString: opts.bodyString,
+    isCreate: opts.isCreate,
+  });
+}
+
+/**
+ * Push with recovery for duplicate-name (20108) and version-conflict (211).
+ * HTTP 500 bodies and HTTP 200 error fields are both handled.
+ */
+async function pushWithRecovery(
+  opts: PushOnceOpts,
+): Promise<{ fileId: FileId; result: Record<string, unknown> }> {
+  try {
+    const result = await pushOnce(opts);
+    const dupFromBody =
+      typeof result.duplicateFileId === 'string' ? result.duplicateFileId : undefined;
+    if (dupFromBody && opts.isCreate) {
+      return await pushWithRecovery({ ...opts, fileId: dupFromBody as FileId, isCreate: false });
+    }
+    return { fileId: opts.fileId, result };
+  } catch (err: unknown) {
+    const info = parseYoudaoPushError(err);
+    if (info?.code === YOUDAO_DUPLICATE_NAME && info.duplicateFileId && opts.isCreate) {
+      return await pushWithRecovery({
+        ...opts,
+        fileId: info.duplicateFileId as FileId,
+        isCreate: false,
+      });
+    }
+    if (info?.code === YOUDAO_VERSION_CONFLICT && !opts.isCreate) {
+      const result = await pushOnce({ ...opts, isCreate: false });
+      return { fileId: opts.fileId, result };
+    }
+    throw err;
+  }
+}
+
 /**
  * Upload a single local file to the cloud.
- *
- * - .md files: upload as Markdown (domain=1)
- * - .note/.clip: convert md→JSON then upload (domain=0)
- * - Binary files (PDF, images, etc.): upload via multipart/form-data
- * - Other text files: upload as Markdown domain
  */
 export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
   requireNonEmpty('localPath', opts.localPath);
@@ -161,14 +257,16 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
   const rawBuf = opts.preReadBuffer ?? readFileSync(localPath);
 
   if (!isTextFile(ext)) {
-    const result = await api.pushBinaryFile({
+    const { fileId: resolvedId, result } = await pushWithRecovery({
+      api,
       fileId,
       parentId,
       name,
-      fileData: new Uint8Array(rawBuf),
       isCreate,
+      binary: true,
+      fileData: new Uint8Array(rawBuf),
     });
-    return { fileId, cloudMtime: extractCloudMtime(result) };
+    return { fileId: resolvedId, cloudMtime: extractCloudMtime(result), parentId };
   }
 
   const content = rawBuf.toString('utf-8');
@@ -176,6 +274,15 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
   const domain = needsNote ? NoteDomain.NOTE : NoteDomain.MARKDOWN;
   const bodyString = needsNote ? markdownToNoteJson(content) : content;
 
-  const result = await api.pushFile({ fileId, parentId, name, domain, bodyString, isCreate });
-  return { fileId, cloudMtime: extractCloudMtime(result) };
+  const { fileId: resolvedId, result } = await pushWithRecovery({
+    api,
+    fileId,
+    parentId,
+    name,
+    isCreate,
+    binary: false,
+    domain,
+    bodyString,
+  });
+  return { fileId: resolvedId, cloudMtime: extractCloudMtime(result), parentId };
 }

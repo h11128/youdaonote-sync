@@ -1,35 +1,30 @@
 import { asDirId, type ContentHash, type DirId, type RelPath } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { FileState, SyncLogMetadata } from '../types/state.js';
-import { stateToAction } from '../types/state.js';
 import { YoudaoNoteApi } from '../api/client.js';
 import { MetadataStore } from '../metadata/store.js';
 import { healPreScan, healPostHash } from '../metadata/health.js';
-import { scanCloud } from '../scan/cloud.js';
-import { scanLocalParallel } from '../scan/local.js';
-import { classifyAll } from '../classify/classify.js';
-import { detectMoves } from '../classify/moves.js';
-import { resolvePrimaryMoveHash } from '../classify/move-hashes.js';
-import { calibrateMetadata } from '../classify/calibrate.js';
 import { emptyStats } from '../execute/executor.js';
 import type { SyncStats } from '../execute/executor.js';
-import {
-  filterCloudSnap,
-  filterByDirection,
-  filterMapByExclude,
-  markExcludedAsGone,
-} from './helpers.js';
+import { filterByDirection } from './helpers.js';
 import { diagnoseDryrun, dryRunStats } from './helpers-dryrun.js';
-import { refineAllConflicts } from './refine.js';
-import { computeContentHashFromBytes, computeHashesConcurrent, initXxhash } from '../algo/hash.js';
-import type { HashFileEntry } from '../algo/hash.js';
+import { initXxhash } from '../algo/hash.js';
 import { SyncLock } from '../util/lock.js';
-import { discardOrphanDuplicates } from '../dedup/index.js';
 import { logger } from '../util/logger.js';
-import { tryCachedCloudScan, saveScanVersion, fetchCurrentVersion } from '../scan/cloud-cache.js';
+import { runCloudScanPhase } from './cloud-scan-phase.js';
+import { runLocalScanPhase } from './local-scan-phase.js';
+import { runClassifyAndRefine } from './classify-phase.js';
+import {
+  collectDeleteOverrides,
+  collectPendingDeletes,
+  countCloudLinkedFiles,
+  stampGuardrailChecks,
+  suspendForDeleteThreshold,
+} from './guardrail-helpers.js';
 import { runExecuteSync, runPostSyncCleanup } from './execute.js';
 export type { SyncDirection } from '../types/common.js';
 export type { SyncEngineConfig } from '../types/engine-config.js';
+export { collectDeleteOverrides, stampGuardrailChecks } from './guardrail-helpers.js';
 import type { SyncEngineConfig } from '../types/engine-config.js';
 import type { SyncProfiler } from '../perf/profiler.js';
 
@@ -59,8 +54,6 @@ export class SyncEngine {
     this.api = config.api ?? new YoudaoNoteApi(config.cookiesPath);
     this.meta = config.meta ?? new MetadataStore(config.metadataPath);
     this.p = config.profiler;
-
-    // Restore persisted rootDirId to avoid a ~1s API call
     this.initRootIdCache();
   }
 
@@ -81,7 +74,6 @@ export class SyncEngine {
     await initXxhash();
     this.p?.endPhase();
 
-    // 0. Login
     this.p?.beginPhase('loginByCookies');
     const loginErr = this.api.loginByCookies();
     this.p?.endPhase();
@@ -91,7 +83,7 @@ export class SyncEngine {
     if (!this.config.dryRun && !lock.acquire()) {
       logger.error('Cannot acquire sync lock — another sync process is running');
       return {
-        stats: emptyStats(),
+        stats: Object.freeze(emptyStats()),
         classified: new Map() as Map<RelPath, FileState>,
         status: 'aborted',
         reason: 'lock_held',
@@ -117,17 +109,23 @@ export class SyncEngine {
     const { cloudSnap, localSnap, localHashes, rootDirId, didFullScan } =
       await this.obtainSnapshots(localDir);
 
-    // Guardrail: Empty cloud response protection
+    const maxDeletes = this.config.maxDeletesPerSync ?? 5;
+    // Abort empty-cloud only when many linked rows would look cloud-deleted.
+    // Smaller linked counts fall through to the delete-threshold guardrail.
     if (cloudSnap.size === 0 && localSnap.size > 0) {
-      logger.error(
-        'Cloud returned empty list but local has files — aborting sync to prevent mass deletion',
-      );
-      return {
-        stats: emptyStats(),
-        classified: new Map() as Map<RelPath, FileState>,
-        status: 'aborted',
-        reason: 'empty_cloud_response',
-      };
+      const linked = countCloudLinkedFiles(this.meta);
+      if (linked > maxDeletes) {
+        logger.error(
+          `Cloud returned empty list but metadata has ${linked} cloud-linked files ` +
+            `(limit ${maxDeletes}) — aborting sync to prevent mass deletion`,
+        );
+        return {
+          stats: Object.freeze(emptyStats()),
+          classified: new Map() as Map<RelPath, FileState>,
+          status: 'aborted',
+          reason: 'empty_cloud_response',
+        };
+      }
     }
 
     if (!dryRun) {
@@ -146,44 +144,17 @@ export class SyncEngine {
       ? collectDeleteOverrides(classified)
       : undefined;
 
-    // Guardrail: Delete threshold check
-    const maxDeletes = this.config.maxDeletesPerSync ?? 5;
-    const pendingDeletes: RelPath[] = [];
-    for (const [path, state] of classified) {
-      const action = deleteOverrides?.get(path) ?? stateToAction(state);
-      if (action === 'deleteCloud' || action === 'deleteLocal') {
-        pendingDeletes.push(path);
-      }
-    }
-
+    const pendingDeletes = collectPendingDeletes(classified, deleteOverrides);
     if (pendingDeletes.length > maxDeletes) {
-      const reason = 'delete_threshold';
-      logger.warn(
-        `Threshold exceeded: ${pendingDeletes.length} deletes, limit ${maxDeletes}. ` +
-          `Sync suspended to prevent accidental mass deletion.`,
-      );
-      logger.warn(`=== SYNC SUSPENDED (${reason}) ===`);
-      logger.warn(
-        `Pending deletes: ${pendingDeletes.length} (limit ${maxDeletes}). Review the preview below.`,
-      );
-      const reportPath = diagnoseDryrun(classified, this.meta, {
-        reportBaseDir: localDir,
+      return suspendForDeleteThreshold({
+        classified,
+        meta: this.meta,
+        localDir,
         localHashes,
         deleteOverrides,
-        suspendReason: reason,
-        suspendDetail: `${pendingDeletes.length} deletes exceed maxDeletesPerSync=${maxDeletes}`,
+        pendingDeletes,
+        maxDeletes,
       });
-      logger.info(
-        `If these deletes are intentional, increase 'maxDeletesPerSync' in config.json ` +
-          `or re-run with --dry-run after reviewing the report.`,
-      );
-      return {
-        stats: emptyStats(),
-        classified,
-        status: 'suspended',
-        reason,
-        ...(reportPath !== undefined ? { reportPath } : {}),
-      };
     }
 
     stampGuardrailChecks(metadata, {
@@ -238,158 +209,59 @@ export class SyncEngine {
     return { cloudSnap, localSnap, localHashes, rootDirId, didFullScan };
   }
 
-  private buildScanOpts(): { include?: string[]; exclude?: string[] } {
-    const opts: { include?: string[]; exclude?: string[] } = {};
-    if (this.config.syncInclude) opts.include = this.config.syncInclude;
-    if (this.config.syncExclude) opts.exclude = this.config.syncExclude;
-    return opts;
-  }
-
-  private async scanCloudPhase(rootDirId: DirId): Promise<{
-    cloudSnap: Map<RelPath, CloudFile>;
-    didFullScan: boolean;
-  }> {
-    this.p?.beginPhase('cloudScan');
-    const cached = await tryCachedCloudScan({
+  /** Overridable in tests. */
+  private scanCloudPhase(
+    rootDirId: DirId,
+  ): Promise<{ cloudSnap: Map<RelPath, CloudFile>; didFullScan: boolean }> {
+    return runCloudScanPhase({
       api: this.api,
       meta: this.meta,
+      rootDirId,
       skipDesktopSeed: !!this.config.api,
-      cacheTtlSeconds: this.config.dryRun ? 0 : undefined,
+      dryRun: !!this.config.dryRun,
+      syncInclude: this.config.syncInclude,
+      syncExclude: this.config.syncExclude,
+      profiler: this.p,
     });
-    let cloudSnap: Map<RelPath, CloudFile>;
-    let didFullScan = false;
-    if (cached) {
-      cloudSnap = cached;
-      this.p?.endPhase(`${cloudSnap.size} entries (cached)`);
-    } else {
-      cloudSnap = await scanCloud(this.api, rootDirId);
-      saveScanVersion(this.meta, cloudSnap, await fetchCurrentVersion(this.api));
-      didFullScan = true;
-      this.p?.endPhase(`${cloudSnap.size} entries (full)`);
-    }
-
-    this.p?.beginPhase('filterCloudSnap');
-    this.applyCloudFilters(cloudSnap);
-    this.p?.endPhase(`→ ${cloudSnap.size} after filter`);
-    return { cloudSnap, didFullScan };
   }
 
-  private applyCloudFilters(cloudSnap: Map<RelPath, CloudFile>): void {
-    const scanOpts = this.buildScanOpts();
-    if (scanOpts.include?.length || scanOpts.exclude?.length) {
-      filterCloudSnap(cloudSnap, scanOpts);
-    }
-    for (const [path] of [...cloudSnap]) {
-      if ((path.split('/').pop() ?? '').includes('.conflict.')) cloudSnap.delete(path);
-    }
-  }
-
-  private async scanLocalPhase(
+  /** Overridable in tests. */
+  private scanLocalPhase(
     localDir: string,
     cloudSnap: Map<RelPath, CloudFile>,
   ): Promise<{
     localSnap: Map<RelPath, LocalFile>;
     localHashes: Map<RelPath, ContentHash | null>;
   }> {
-    this.p?.beginPhase('scanLocalParallel');
-    const localSnap = await scanLocalParallel(localDir, '', this.buildScanOpts());
-    this.p?.endPhase(`${localSnap.size} entries`);
-
-    this.p?.beginPhase('calibrateMetadata');
-    const localHashes = new Map<RelPath, ContentHash | null>();
-    const calibrated = calibrateMetadata(this.meta, cloudSnap, localSnap, localHashes);
-    this.p?.endPhase(`${calibrated} calibrated, ${localHashes.size} hashes inline`);
-
-    this.p?.beginPhase('computeHashesConcurrent');
-    const toHash: HashFileEntry[] = [];
-    for (const [relPath, local] of localSnap) {
-      if (!local.isDir && !localHashes.has(relPath)) {
-        toHash.push({
-          relPath,
-          absPath: local.path,
-          mtime: local.mtime,
-          size: local.size,
-        });
-      }
-    }
-    const hashResult = await computeHashesConcurrent(toHash, localHashes, { cache: this.meta });
-    this.p?.endPhase(`${hashResult.cacheHits} cached, ${hashResult.computed} computed`);
-
-    return { localSnap, localHashes };
+    return runLocalScanPhase({
+      meta: this.meta,
+      localDir,
+      cloudSnap,
+      syncInclude: this.config.syncInclude,
+      syncExclude: this.config.syncExclude,
+      profiler: this.p,
+    });
   }
 
-  private async classifyAndRefine(
+  private classifyAndRefine(
     cloudSnap: Map<RelPath, CloudFile>,
     localSnap: Map<RelPath, LocalFile>,
     localHashes: Map<RelPath, ContentHash | null>,
   ): Promise<{ classified: Map<RelPath, FileState>; metadata: Map<RelPath, SyncLogMetadata> }> {
-    this.p?.beginPhase('classifyAll');
-    const pathFilters = {
-      ...(this.config.syncInclude !== undefined ? { include: this.config.syncInclude } : {}),
-      ...(this.config.syncExclude !== undefined ? { exclude: this.config.syncExclude } : {}),
-    };
-    const metaSnap = filterMapByExclude(this.meta.getAllFiles(), pathFilters);
-    const { classified, metadata } = classifyAll(cloudSnap, localSnap, metaSnap, localHashes);
-    markExcludedAsGone(classified, pathFilters);
-    this.p?.endPhase(`${classified.size} entries`);
-
-    this.p?.beginPhase('detectMoves');
-    const moveCount = this.applyMoveDetection(classified, localHashes, metaSnap, cloudSnap);
-    this.p?.endPhase(`${moveCount} moves`);
-
-    this.p?.beginPhase('discardOrphanDuplicates');
-    let orphanCount = 0;
-    for (const orphanPath of discardOrphanDuplicates(cloudSnap, localSnap, localHashes)) {
-      classified.set(orphanPath, { kind: 'gone' });
-      orphanCount++;
-    }
-    this.p?.endPhase(`${orphanCount} discarded`);
-
-    this.p?.beginPhase('refineAllConflicts');
-    await refineAllConflicts({
-      classified,
-      cloudSnap,
-      localHashes,
-      hashFn: this.config.hashFn ?? computeContentHashFromBytes,
-      meta: this.meta,
+    return runClassifyAndRefine({
       api: this.api,
+      meta: this.meta,
+      cloudSnap,
+      localSnap,
+      localHashes,
+      syncInclude: this.config.syncInclude,
+      syncExclude: this.config.syncExclude,
+      hashFn: this.config.hashFn,
+      profiler: this.p,
     });
-    this.p?.endPhase();
-
-    return { classified, metadata };
   }
 
-  private applyMoveDetection(
-    classified: Map<RelPath, FileState>,
-    localHashes: Map<RelPath, ContentHash | null>,
-    metaSnap: ReadonlyMap<
-      RelPath,
-      { contentHash?: ContentHash | null; cloudContentHash?: ContentHash | null }
-    >,
-    cloudSnap: Map<RelPath, CloudFile>,
-  ): number {
-    const classifiedWithHash = new Map<RelPath, { state: FileState; hash: ContentHash | null }>();
-    for (const [path, state] of classified) {
-      const rec = metaSnap.get(path);
-      const hash = resolvePrimaryMoveHash(
-        localHashes.get(path),
-        rec?.contentHash,
-        rec?.cloudContentHash,
-      );
-      classifiedWithHash.set(path, { state, hash });
-    }
-    let count = 0;
-    for (const [path, movedState] of detectMoves(classifiedWithHash, this.meta, cloudSnap)) {
-      classified.set(path, movedState);
-      count++;
-    }
-    return count;
-  }
-
-  /**
-   * Collect sync items without executing — for dry-run and external tools.
-   * Returns the classified map and snapshots.
-   */
+  /** Collect sync items without executing — for dry-run and external tools. */
   async collectItems(): Promise<{
     classified: Map<RelPath, FileState>;
     cloudSnap: Map<RelPath, CloudFile>;
@@ -414,30 +286,4 @@ export class SyncEngine {
   close(): void {
     this.meta.close();
   }
-}
-
-/** Stamp guardrail check JSON onto every path's sync-log metadata before execute. */
-export function stampGuardrailChecks(
-  metadata: Map<RelPath, SyncLogMetadata>,
-  checks: Record<string, unknown>,
-): void {
-  const json = JSON.stringify(checks);
-  for (const [path, meta] of metadata) {
-    metadata.set(path, { ...meta, guardrailChecks: json });
-  }
-}
-
-/**
- * Build a set of paths that should be treated as delete actions.
- * Used when propagateDeletes is enabled.
- */
-export function collectDeleteOverrides(
-  classified: ReadonlyMap<RelPath, FileState>,
-): Map<RelPath, 'deleteCloud' | 'deleteLocal'> {
-  const overrides = new Map<RelPath, 'deleteCloud' | 'deleteLocal'>();
-  for (const [path, state] of classified) {
-    if (state.kind === 'localDeleted') overrides.set(path, 'deleteCloud');
-    else if (state.kind === 'cloudDeleted') overrides.set(path, 'deleteLocal');
-  }
-  return overrides;
 }

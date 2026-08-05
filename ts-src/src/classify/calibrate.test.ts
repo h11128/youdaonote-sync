@@ -101,7 +101,9 @@ describe('calibrateMetadata: file calibration', () => {
     const info = meta.getFileInfo(asRelPath('existing.md'));
     expect(info!.cloudMtime).toBe(800);
   });
+});
 
+describe('calibrateMetadata: skip and re-link', () => {
   it('skips files that already have contentHash and lastSyncAt', () => {
     meta.setFileInfo(asRelPath('synced.md'), {
       fileId: 'f-s' as FileId,
@@ -123,6 +125,34 @@ describe('calibrateMetadata: file calibration', () => {
 
     const count = calibrateMetadata(meta, cloud, local, new Map());
     expect(count).toBe(0);
+  });
+
+  it('re-links empty file_id rows that still have lastSyncAt (false-upload survivors)', () => {
+    const filePath = join(TMP, 'broken.md');
+    writeFileSync(filePath, 'hello world');
+    meta.setFileInfo(asRelPath('broken.md'), {
+      fileId: '' as FileId,
+      cloudMtime: asEpochSeconds(50),
+      localMtime: asEpochSeconds(50),
+    });
+    meta.batch(() => {
+      meta.updateContentHash(asRelPath('broken.md'), 'stale-hash' as ContentHash);
+      meta.markSynced(asRelPath('broken.md'));
+    });
+
+    const preHash = 'fresh-hash' as ContentHash;
+    const localHashes = new Map<RelPath, ContentHash | null>([[asRelPath('broken.md'), preHash]]);
+    const cloud = new Map<RelPath, CloudFile>([
+      [asRelPath('broken.md'), makeCloudFile({ id: 'cf-fixed' as FileId, name: 'broken.md' })],
+    ]);
+    const local = new Map<RelPath, LocalFile>([
+      [asRelPath('broken.md'), makeLocalFile({ path: filePath })],
+    ]);
+
+    const count = calibrateMetadata(meta, cloud, local, localHashes);
+    expect(count).toBeGreaterThan(0);
+    const info = meta.getFileInfo(asRelPath('broken.md'));
+    expect(info!.fileId).toBe('cf-fixed');
   });
 });
 

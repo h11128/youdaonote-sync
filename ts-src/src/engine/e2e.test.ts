@@ -456,18 +456,22 @@ describe('E2E: stale metadata cleanup', () => {
   it('cleans up stale metadata after full scan', async () => {
     const meta = new MetadataStore(metaPath);
 
-    // Metadata has a file that no longer exists in cloud
+    // Metadata has a file that no longer exists in cloud; local is also gone.
+    // (If local still existed we must KEEP file_id so classify can emit cloudDeleted.)
     meta.setFileInfo(asRelPath('deleted-from-cloud.md'), {
       fileId: 'f-stale' as FileId,
       cloudMtime: asEpochSeconds(1000),
       localMtime: asEpochSeconds(1000),
       lastSyncAt: asEpochSeconds(1000),
     });
-    writeFileSync(join(localDir, 'deleted-from-cloud.md'), 'still local');
     meta.save();
 
-    // Cloud is empty → full scan
-    const mockApi = buildMockApi([], new Map());
+    // Cloud is empty → full scan. Seed one unrelated cloud file so empty-cloud
+    // abort does not fire (we still have cloud-linked metadata).
+    const mockApi = buildMockApi(
+      [makeCloudEntry('f-keep', 'keep.md', 1000)],
+      new Map([['f-keep', 'x']]),
+    );
 
     const engine = new SyncEngine({
       cookiesPath: '',
@@ -480,7 +484,7 @@ describe('E2E: stale metadata cleanup', () => {
 
     await engine.sync();
 
-    // file_id should be cleared (stale cleanup)
+    // file_id should be cleared (stale cleanup for paths with no local file)
     const record = meta.getFileInfo(asRelPath('deleted-from-cloud.md'));
     if (record) {
       expect(record.fileId).toBeFalsy();

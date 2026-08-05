@@ -69,7 +69,7 @@ export async function runPostSyncCleanup(
   meta: MetadataStore,
 ): Promise<void> {
   const { cloudSnap, localSnap, localHashes, stats, didFullScan } = opts;
-  if (didFullScan) cleanupStalePaths(meta, cloudSnap);
+  if (didFullScan) cleanupStalePaths(meta, cloudSnap, localSnap);
   const purged = purgeExcludedMetadata(meta, {
     ...(config.syncInclude !== undefined ? { include: config.syncInclude } : {}),
     ...(config.syncExclude !== undefined ? { exclude: config.syncExclude } : {}),

@@ -165,3 +165,63 @@ describe('uploadFile: binary routing', () => {
     expect(api.pushFile).not.toHaveBeenCalled();
   });
 });
+
+describe('uploadFile: duplicate-name recovery', () => {
+  const env = setupTestEnv();
+
+  it('retries as save when create hits HTTP 500 duplicate 20108', async () => {
+    const localPath = join(env.localDir, 'dup.md');
+    writeFileSync(localPath, '# dup');
+
+    const api = makeMockApi();
+    vi.mocked(api.pushFile)
+      .mockRejectedValueOnce(
+        new Error(
+          'HTTP 500: {"error":"20108","duplicateFileId":"WEB-existing","message":"Message[CLIENT : DUPLICATE_FILE_NAME]"}',
+        ),
+      )
+      .mockResolvedValueOnce({
+        entry: { id: 'WEB-existing', modifyTimeForSort: 1234 },
+      });
+
+    const result = await uploadFile({
+      api,
+      meta: env.meta,
+      localPath,
+      relPath: asRelPath('dup.md'),
+      rootDirId: asDirId('root'),
+    });
+
+    expect(result.fileId).toBe('WEB-existing');
+    expect(api.pushFile).toHaveBeenCalledTimes(2);
+    const second = (api.pushFile as ReturnType<typeof vi.fn>).mock.calls[1]![0];
+    expect(second.fileId).toBe('WEB-existing');
+    expect(second.isCreate).toBe(false);
+  });
+
+  it('retries once on VERSION_CONFLICT 211 for updates', async () => {
+    const localPath = join(env.localDir, 'conflict.md');
+    writeFileSync(localPath, '# conflict');
+
+    const api = makeMockApi();
+    vi.mocked(api.pushFile)
+      .mockRejectedValueOnce(
+        new Error('HTTP 500: {"error":"211","message":"Message[VERSION_CONFLICT]"}'),
+      )
+      .mockResolvedValueOnce({
+        entry: { id: 'existing-123', modifyTimeForSort: 5555 },
+      });
+
+    const result = await uploadFile({
+      api,
+      meta: env.meta,
+      localPath,
+      relPath: asRelPath('conflict.md'),
+      rootDirId: asDirId('root'),
+      existingFileId: asFileId('existing-123'),
+    });
+
+    expect(result.fileId).toBe('existing-123');
+    expect(api.pushFile).toHaveBeenCalledTimes(2);
+  });
+});

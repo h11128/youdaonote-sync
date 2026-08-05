@@ -1,6 +1,7 @@
 import type { DirId, FileId } from '../types/common.js';
 import { NoteDomain } from '../types/common.js';
 import { PUSH_URL, DELETE_URL, tpl } from './constants.js';
+import { assertPushResultOk, resolveDuplicateFileId } from './push-errors.js';
 import { safeJson } from './request.js';
 import { requireNonEmpty } from '../util/preconditions.js';
 
@@ -12,6 +13,73 @@ export interface FileApiContext {
   httpPost(url: string, body?: URLSearchParams | FormData): Promise<Response>;
   getCstk(): string;
   requireAuth(): void;
+}
+
+function finishPushResult(result: Record<string, unknown>, name: string): Record<string, unknown> {
+  const dupId = resolveDuplicateFileId(result);
+  if (dupId) {
+    return { fileEntry: { id: dupId, name, dir: false }, duplicateFileId: dupId };
+  }
+  assertPushResultOk(result);
+  if (result.entry && !result.fileEntry) {
+    result.fileEntry = result.entry;
+  }
+  return result;
+}
+
+function applyCreateOrSaveFields(
+  target: { set(k: string, v: string): void },
+  opts: { name: string; isCreate?: boolean | undefined; createTime: number },
+): void {
+  if (opts.isCreate) {
+    target.set('name', opts.name);
+    target.set('dir', 'false');
+    target.set('createTime', String(opts.createTime));
+    target.set('req_from', 'create');
+  } else {
+    target.set('req_from', 'save');
+  }
+}
+
+function buildPushFileParams(
+  ctx: FileApiContext,
+  opts: {
+    fileId: FileId;
+    parentId: DirId;
+    name: string;
+    domain: NoteDomain;
+    bodyString: string;
+    createTime?: number;
+    modifyTime?: number;
+    isCreate?: boolean;
+  },
+): URLSearchParams {
+  const now = Math.floor(Date.now() / 1000);
+  const ct = opts.createTime ?? now;
+  const mt = opts.modifyTime ?? now;
+  const params = new URLSearchParams({
+    fileId: opts.fileId,
+    parentId: opts.parentId,
+    domain: String(opts.domain),
+    rootVersion: '-1',
+    sessionId: '',
+    modifyTime: String(mt),
+    bodyString: opts.bodyString,
+    transactionId: opts.fileId,
+    transactionTime: String(mt),
+    cstk: ctx.getCstk(),
+  });
+  applyCreateOrSaveFields(params, { name: opts.name, isCreate: opts.isCreate, createTime: ct });
+  if (opts.domain === NoteDomain.MARKDOWN) {
+    params.set('tags', '');
+    params.set('resources', ';');
+  } else {
+    params.set('editorVersion', '1714445486000');
+    params.set('orgEditorType', '1');
+    params.set('summary', opts.bodyString.slice(0, 50));
+    params.set('tags', '');
+  }
+  return params;
 }
 
 export async function pushFile(
@@ -28,44 +96,9 @@ export async function pushFile(
   },
 ): Promise<Record<string, unknown>> {
   ctx.requireAuth();
-  const now = Math.floor(Date.now() / 1000);
-  const ct = opts.createTime ?? now;
-  const mt = opts.modifyTime ?? now;
-
-  const params = new URLSearchParams({
-    fileId: opts.fileId,
-    parentId: opts.parentId,
-    domain: String(opts.domain),
-    rootVersion: '-1',
-    sessionId: '',
-    modifyTime: String(mt),
-    bodyString: opts.bodyString,
-    transactionId: opts.fileId,
-    transactionTime: String(mt),
-    cstk: ctx.getCstk(),
-  });
-
-  if (opts.isCreate) {
-    params.set('name', opts.name);
-    params.set('dir', 'false');
-    params.set('createTime', String(ct));
-    params.set('req_from', 'create');
-  } else {
-    params.set('req_from', 'save');
-  }
-
-  if (opts.domain === NoteDomain.MARKDOWN) {
-    params.set('tags', '');
-    params.set('resources', ';');
-  } else {
-    params.set('editorVersion', '1714445486000');
-    params.set('orgEditorType', '1');
-    params.set('summary', opts.bodyString.slice(0, 50));
-    params.set('tags', '');
-  }
-
   const url = tpl(PUSH_URL, { cstk: ctx.getCstk() });
-  return safeJson(await ctx.httpPost(url, params));
+  const params = buildPushFileParams(ctx, opts);
+  return finishPushResult(await safeJson(await ctx.httpPost(url, params)), opts.name);
 }
 
 export async function createDir(
@@ -99,12 +132,11 @@ export async function createDir(
   const url = tpl(PUSH_URL, { cstk: ctx.getCstk() });
   const result = await safeJson(await ctx.httpPost(url, params));
 
-  if (result.error === '20108') {
-    const dupId = result.duplicateFileId as string | undefined;
-    if (dupId) {
-      return { fileEntry: { id: dupId, name, dir: true } };
-    }
+  const dupId = resolveDuplicateFileId(result);
+  if (dupId) {
+    return { fileEntry: { id: dupId, name, dir: true }, duplicateFileId: dupId };
   }
+  assertPushResultOk(result);
 
   if (result.entry && !result.fileEntry) {
     result.fileEntry = result.entry;
@@ -232,20 +264,12 @@ export async function pushBinaryFile(
   form.set('cstk', ctx.getCstk());
   form.set('tags', '');
   form.set('resources', ';');
-
-  if (opts.isCreate) {
-    form.set('name', opts.name);
-    form.set('dir', 'false');
-    form.set('createTime', String(ct));
-    form.set('req_from', 'create');
-  } else {
-    form.set('req_from', 'save');
-  }
+  applyCreateOrSaveFields(form, { name: opts.name, isCreate: opts.isCreate, createTime: ct });
 
   const mime = guessMime(opts.name);
   const blob = new Blob([opts.fileData], { type: mime });
   form.set('file', blob, opts.name);
 
   const url = tpl(PUSH_URL, { cstk: ctx.getCstk() });
-  return safeJson(await ctx.httpPost(url, form));
+  return finishPushResult(await safeJson(await ctx.httpPost(url, form)), opts.name);
 }

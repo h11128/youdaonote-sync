@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { SyncEngine, collectDeleteOverrides } from './engine.js';
 import {
@@ -10,6 +10,7 @@ import {
   matchesExclude,
   filterMapByExclude,
   purgeExcludedMetadata,
+  cleanupStalePaths,
 } from './helpers.js';
 import { MetadataStore } from '../metadata/store.js';
 import type { YoudaoNoteApi } from '../api/client.js';
@@ -37,6 +38,8 @@ describe('SyncEngine', () => {
       getDirInfoById: () => Promise.resolve({ entries: [] } as DirInfoByIdResponse),
     } as unknown as YoudaoNoteApi;
 
+    const notesDir = join(tmpDir, 'notes');
+    mkdirSync(notesDir, { recursive: true });
     const metaPath = join(tmpDir, 'meta.db');
     const { MetadataStore } = await import('../metadata/store.js');
     const meta = new MetadataStore(metaPath);
@@ -44,7 +47,7 @@ describe('SyncEngine', () => {
     const engine = new SyncEngine({
       cookiesPath: '',
       metadataPath: metaPath,
-      localDir: tmpDir,
+      localDir: notesDir,
       dryRun: true,
       api: mockApi,
       meta,
@@ -226,6 +229,58 @@ describe('purgeExcludedMetadata', () => {
       expect(purged).toBe(1);
       expect(meta.getFileInfo(asRelPath('有道云笔记.md'))).toBeNull();
       expect(meta.getFileInfo(asRelPath('notes/ok.md'))).not.toBeNull();
+    } finally {
+      meta.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('cleanupStalePaths', () => {
+  it('keeps file_id when local file still exists (just-uploaded case)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stale-keep-'));
+    const meta = new MetadataStore(join(dir, 'meta.db'));
+    try {
+      meta.setFileInfo(asRelPath('new-upload.md'), {
+        fileId: asFileId('f-new'),
+        cloudMtime: asEpochSeconds(10),
+        localMtime: asEpochSeconds(10),
+      });
+      const cloudSnap = new Map(); // pre-execute snap does not include the upload
+      const localSnap = new Map([
+        [
+          asRelPath('new-upload.md'),
+          {
+            path: join(dir, 'new-upload.md'),
+            mtime: asEpochSeconds(10),
+            size: 1,
+            isDir: false,
+          },
+        ],
+      ]);
+
+      cleanupStalePaths(meta, cloudSnap, localSnap);
+
+      expect(meta.getFileInfo(asRelPath('new-upload.md'))?.fileId).toBe('f-new');
+    } finally {
+      meta.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('removes cloud linkage when path is absent from both cloud and local', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stale-drop-'));
+    const meta = new MetadataStore(join(dir, 'meta.db'));
+    try {
+      meta.setFileInfo(asRelPath('ghost.md'), {
+        fileId: asFileId('f-ghost'),
+        cloudMtime: asEpochSeconds(10),
+        localMtime: asEpochSeconds(10),
+      });
+
+      cleanupStalePaths(meta, new Map(), new Map());
+
+      expect(meta.getFileInfo(asRelPath('ghost.md'))?.fileId).toBeFalsy();
     } finally {
       meta.close();
       rmSync(dir, { recursive: true, force: true });

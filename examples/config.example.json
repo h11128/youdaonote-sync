@@ -4,5 +4,12 @@
   "is_relative_path": true,
   "maxDeletesPerSync": 5,
   "sync_include": [],
-  "sync_exclude": ["**/*.log", "**/.trash/**", "**/.local-reports/**"]
+  "sync_exclude": [
+    "**/*.log",
+    "**/*.db",
+    "**/*.sqlite",
+    "**/*.sqlite3",
+    "**/.trash/**",
+    "**/.local-reports/**"
+  ]
 }

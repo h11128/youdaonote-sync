@@ -47,6 +47,9 @@ function calibrateFileCase1(
 
 function shouldSkipCalibration(existing: MetadataRecord | undefined): boolean {
   if (!existing) return false;
+  // Incomplete rows (empty file_id after a false upload / stale clear) must
+  // stay eligible so Case2 can re-link when the cloud path exists.
+  if (!existing.fileId) return false;
   return (existing.contentHash ?? null) !== null || existing.lastSyncAt > 0;
 }
 
