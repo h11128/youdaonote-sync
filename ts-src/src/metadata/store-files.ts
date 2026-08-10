@@ -285,9 +285,5 @@ export function getStaleCloudPaths(
   return rows.filter((r) => !activePaths.has(asRelPath(r.path))).map((r) => asRelPath(r.path));
 }
 
-/**
- * Clear the cloud file_id for a path (mark as local-only record).
- */
-export function clearCloudId(db: Database.Database, path: RelPath): void {
-  db.prepare("UPDATE files SET file_id = '' WHERE path = ?").run(path);
-}
+// clearCloudId removed (2026-08-09): soft-clear left empty-file_id zombies.
+// Use removeFileInfo / cleanupStalePaths / purgeNonSyncableFileRows instead.

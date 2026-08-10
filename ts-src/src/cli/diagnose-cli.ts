@@ -142,10 +142,9 @@ function addMaintenanceDiagnoseCommands(
   diagnose
     .command('cache')
     .description('Report metadata cache stats (file_id / local existence)')
-    .action(() => {
-      void import('../tools/diagnose.js').then(({ cmdCache }) => {
-        cmdCache(diagnoseCfg(getConfigDir, loadConfig));
-      });
+    .action(async () => {
+      const { cmdCache } = await import('../tools/diagnose.js');
+      cmdCache(diagnoseCfg(getConfigDir, loadConfig));
     });
 
   diagnose

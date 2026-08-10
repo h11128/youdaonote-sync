@@ -13,6 +13,7 @@ import { executeAll } from '../execute/executor.js';
 import type { SyncStats, ExecuteContext } from '../execute/executor.js';
 import { fallbackDeleteOldFiles } from '../execute/move-handler.js';
 import { buildDedupInputs, cleanupStalePaths, purgeExcludedMetadata } from './helpers.js';
+import { purgeNonSyncableFileRows } from './purge-nonsyncable.js';
 import { computeContentHashFromBytes } from '../algo/hash.js';
 import { autoDedup } from '../dedup/index.js';
 import { gitAutoCommit } from '../util/git.js';
@@ -69,6 +70,11 @@ export async function runPostSyncCleanup(
   meta: MetadataStore,
 ): Promise<void> {
   const { cloudSnap, localSnap, localHashes, stats, didFullScan } = opts;
+  // Every sync: drop artifact/.note/dir rows that must never live in `files`.
+  const nonsync = purgeNonSyncableFileRows(meta, config.localDir);
+  if (nonsync > 0) {
+    logger.info(`Purged ${nonsync} non-syncable files-table row(s)`);
+  }
   if (didFullScan) {
     const inactive = cleanupStalePaths(meta, cloudSnap, localSnap);
     if (inactive > 0) {

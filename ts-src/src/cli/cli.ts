@@ -106,6 +106,10 @@ function reportSyncResult(result: Awaited<ReturnType<SyncEngine['sync']>>, elaps
       console.log(`  ✗ [${f.action}] ${f.path}: ${f.error}`);
     }
   }
+  // Fail closed: file-level errors must surface to scheduled Task LastResult / PE log probe.
+  if (s.errors > 0 || s.failedFiles.length > 0) {
+    process.exitCode = 1;
+  }
 }
 
 function runWatchAction(opts: { interval: string; git?: boolean }): void {
@@ -161,8 +165,8 @@ function registerSyncCommands(program: Command): void {
     .option('--pull', 'Only pull cloud changes to local')
     .option('--no-dedup', 'Disable automatic deduplication')
     .option('--propagate-deletes', 'Propagate delete operations (with local trash)')
-    .action((opts: SyncActionOpts) => {
-      void runSyncAction(opts);
+    .action(async (opts: SyncActionOpts) => {
+      await runSyncAction(opts);
     });
 
   program

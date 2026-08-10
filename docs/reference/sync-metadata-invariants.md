@@ -9,7 +9,9 @@ These rules exist because scheduled sync once wiped `file_id` after a successful
 ## MUST
 
 1. **`files.file_id` after successful upload/link must be non-empty.** Assert before `recordSync`. Never "skip upload because hash matched" without writing `file_id`.
-2. **`cleanupStalePaths` removes `files` rows absent from both cloudSnap and localSnap *as files*.** Pre-execute cloudSnap omits just-uploaded paths — local file presence is the guard. Do not `clearCloudId` and leave empty-`file_id` zombies (images/`.note`/dir rows). Directories belong in `dirs`, not `files`.
+2. **`cleanupStalePaths` removes `files` rows absent from both cloudSnap and localSnap *as files*.** Pre-execute cloudSnap omits just-uploaded paths — local file presence is the guard. Do not soft-clear `file_id` (API `clearCloudId` removed). Directories belong in `dirs`, not `files`.
+2b. **Every sync** runs `purgeNonSyncableFileRows` for `images/` / `attachments/` / `.note`/`.clip` / on-disk dirs in `files` — even when the cloud scan is incremental.
+2c. **CLI exits non-zero when `stats.errors > 0` or `failedFiles.length > 0`.** Scheduled Task + PE log monitor depend on fail-closed exit codes. `bin.ts` uses `parseAsync` so async sync/diagnose actions cannot drop `process.exitCode`.
 3. **Exclude/include filters run before `saveScanVersion`.** Saving an unfiltered snap re-injects excluded paths into metadata every full scan.
 4. **Delete: `recordSync` then `removeFileInfo`.** `recordSync` upserts `files`; remove after the log write or deletes resurrect.
 5. **Directory actions must not upsert `files` with empty `file_id`.** Use `appendSyncLog` (dirs live in `dirs`).

@@ -3,4 +3,5 @@ import { loadSyncEnv } from './util/load-env.js';
 import { createCli } from './cli/cli.js';
 
 loadSyncEnv();
-createCli().parse();
+// parseAsync so commander waits on async actions (sync / diagnose cache exitCodes).
+void createCli().parseAsync(process.argv);

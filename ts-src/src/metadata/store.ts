@@ -278,10 +278,6 @@ export class MetadataStore {
     return storeFiles.getStaleCloudPaths(this.db, activePaths);
   }
 
-  clearCloudId(localPath: RelPath): void {
-    storeFiles.clearCloudId(this.db, this.normalizePath(localPath));
-  }
-
   /**
    * @internal Exposed for test fixtures only. Production code must use
    * typed methods above — never raw SQL through this accessor.

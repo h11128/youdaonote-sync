@@ -1,8 +1,8 @@
 # Postmortem: PE false Youdao alert + 2532 empty file_id zombies
 
 - **Date**: 2026-08-09
-- **Tasks**: PE #734 (monitor), #735 (empty file_id drain)
-- **Commits**: youdaonote-sync `1924695`; myforge `e06da385`
+- **Tasks**: PE #734/#738 (monitor), #735/#737 (empty file_id), #740 (robust fail-closed)
+- **Commits**: youdaonote-sync `1924695` / `d12588a` + #740; myforge `e06da385` / `2621d8f6` + #740
 - **Symptom**: PE showed `YoudaoNoteSync 同步失败: Log file not found` while scheduled sync was healthy; `diagnose cache` showed 2532 empty `file_id` rows
 
 ## Conclusion
@@ -45,9 +45,12 @@ Related to #610/#613 but a different leftover class.
 | Area | Change |
 |---|---|
 | PE monitor | Resolve log via env → project-index → sibling → fallback; missing → skip; stale mtime after exit 0 → alert |
+| PE monitor (#740) | Parse latest-run `Sync complete … N errors`; unhealthy even if wrapper exit was 0; no cross-run error leak |
 | Sync cleanup | `cleanupStalePaths` **removes** inactive `files` rows (shared `listInactiveFilePaths`) |
+| Sync cleanup (#740) | Every sync `purgeNonSyncableFileRows`; `clearCloudId` API removed |
+| CLI / schedule (#740) | Sync file errors → exit 1; `scripts/scheduled-sync.ps1` ISO log + `diagnose cache` gate |
 | Ops | `diagnose purge-inactive` (full cloud scan; dry-run on temp DB) |
-| Invariants | Doc + tests: no soft-clear zombies; e2e expects row gone |
+| Invariants | Doc + MDC + tests: no soft-clear zombies; e2e expects row gone |
 | One-shot | Purged 2532 → 0; backup under `%APPDATA%/youdaonote-sync/*.bak-empty-fileid-*` |
 
 ## How to keep it from coming back
@@ -90,5 +93,8 @@ curl -s http://127.0.0.1:9200/api/alerts | rg -i youdao || true
 
 ## Follow-ups
 
-- [ ] Make `diagnose cache` exit non-zero on empty-file_id-but-local (CI / optional PE probe).
-- [ ] Optional: PE system health calls `diagnose cache` summary over localhost only when log host is Windows sync machine — do **not** run on phone.
+- [x] Make `diagnose cache` exit non-zero on empty-file_id-but-local (#737)
+- [x] PE regression: never alert "Log file not found" (#738)
+- [x] Every-sync `purgeNonSyncableFileRows`; remove `clearCloudId`; sync exit≠0 on file errors (#740)
+- [x] Scheduled sync: ISO timestamps + diagnose cache gate (`scripts/scheduled-sync.ps1`)
+- [x] PE parse `Sync complete … N errors` as unhealthy even if wrapper exit was 0
