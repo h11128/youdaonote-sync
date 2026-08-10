@@ -2,7 +2,8 @@
 
 - **Date**: 2026-08-09
 - **Tasks**: PE #734/#738 (monitor), #735/#737 (empty file_id), #740 (robust fail-closed)
-- **Commits**: youdaonote-sync `1924695` / `d12588a` + #740; myforge `e06da385` / `2621d8f6` + #740
+- **Commits**: youdaonote-sync `1924695` / `d12588a` / `911eef3` (#740); myforge `e06da385` / `2621d8f6` / `adbc4872` (#740)
+- **Ops guide**: [scheduled-sync](../guides/scheduled-sync.md)
 - **Symptom**: PE showed `YoudaoNoteSync 同步失败: Log file not found` while scheduled sync was healthy; `diagnose cache` showed 2532 empty `file_id` rows
 
 ## Conclusion
@@ -57,10 +58,11 @@ Related to #610/#613 but a different leftover class.
 
 ### Already in place (must not regress)
 
-1. **Invariants** `docs/reference/sync-metadata-invariants.md` §2 / Do-not: no `clearCloudId`-only zombies.
-2. **Tests**: `cleanupStalePaths` unit + e2e stale cleanup expects `getFileInfo == null`.
-3. **PE unit tests**: missing log skips alert; stale success unhealthy.
-4. **Full scheduled sync** runs cleanup after full cloud scan → drains new zombies if any reappear.
+1. **Invariants** `docs/reference/sync-metadata-invariants.md` + `.cursor/rules/sync-metadata-invariants.mdc`.
+2. **Ops guide** `docs/guides/scheduled-sync.md` (Task points at `scripts/scheduled-sync.ps1`).
+3. **Tests**: `cleanupStalePaths` / `purge-nonsyncable` / e2e stale cleanup expects `getFileInfo == null`.
+4. **PE unit tests**: missing log skips alert; exit 0 + sync errors unhealthy; stale success unhealthy.
+5. **Every sync** `purgeNonSyncableFileRows` + scheduled `diagnose cache` gate.
 
 ### Required gates (fail closed)
 

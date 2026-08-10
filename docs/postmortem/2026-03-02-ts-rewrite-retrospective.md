@@ -112,7 +112,7 @@ Review 的 checklist 全是结构性的，没有"功能对等性"这一维度。
 | 测试更新 | 新增 MD 归一化测试 14 个，全局 xxhash 初始化 setup |
 | calibrate_metadata | 新增 `classify/calibrate.ts`，两端都有但无 metadata 的文件自动建立基线 |
 | cloud move API | executor move case 调用 `moveFile` + `renameFile` API（保留 file_id 和历史） |
-| cleanup stale | 同步后清理 metadata 中云端已不存在的幽灵记录（`clearCloudId`） |
+| cleanup stale | 同步后清理 metadata 中云端已不存在的幽灵记录（当时 `clearCloudId`）。**2026-08 起改为删行**；见 [sync-metadata-invariants](../reference/sync-metadata-invariants.md) / [2026-08-09](./2026-08-09-pe-false-alert-and-empty-file-id.md) |
 | filter_by_direction | 支持 `pull` / `push` / `both` 三种同步方向过滤 |
 | retry_with_backoff | 所有 API 调用（download / upload / refine / move）包裹指数退避重试 |
 | engine 调用 dedup | 同步后自动执行 `autoDedup`（云端+本地删除、碰撞检测、引用保护） |

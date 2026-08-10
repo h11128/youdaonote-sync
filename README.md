@@ -7,6 +7,8 @@
 - **Issues**：[提交问题](https://github.com/h11128/youdaonote-sync/issues) · [模板](./.github/ISSUE_TEMPLATE/提-issue-请使用这个模版.md)
 - **许可**：[MIT](./LICENSE.md)
 - **配置指南**：[docs/guides/configuration.md](./docs/guides/configuration.md)
+- **定时同步**：[docs/guides/scheduled-sync.md](./docs/guides/scheduled-sync.md)
+- **元数据不变量**：[docs/reference/sync-metadata-invariants.md](./docs/reference/sync-metadata-invariants.md)
 - **有道 API**：[docs/reference/youdao-api.md](./docs/reference/youdao-api.md)
 - **架构**：[docs/reference/architecture.md](./docs/reference/architecture.md)
 - **文档索引**：[docs/README.md](./docs/README.md)
@@ -107,9 +109,12 @@ npx youdaonote-sync sync --push|--pull|--git|--propagate-deletes
 npx youdaonote-sync watch --interval 300
 npx youdaonote-sync gui
 npx youdaonote-sync diagnose summary
+npx youdaonote-sync diagnose cache          # empty file_id but local → exit 1
 ```
 
-护栏：空云端列表 → abort（exit 3）；删除过多 → suspend（exit 2）。见 [RFC-007](./docs/design/rfc-007-deterministic-guardrails.md)。
+Windows 计划任务 `YoudaoNoteSync`：静默跑 [`scripts/scheduled-sync.ps1`](./scripts/scheduled-sync.ps1)（sync + diagnose cache）。说明见 [定时同步指南](./docs/guides/scheduled-sync.md)。
+
+护栏：空云端列表 → abort（exit 3）；删除过多 → suspend（exit 2）；文件级错误 / 空 `file_id` 门禁 → exit 1。见 [RFC-007](./docs/design/rfc-007-deterministic-guardrails.md) 与 [元数据不变量](./docs/reference/sync-metadata-invariants.md)。
 
 ## 它能做什么
 
@@ -117,12 +122,13 @@ npx youdaonote-sync diagnose summary
 |------|------|
 | 双向同步 | 本地 ↔ 云端互相更新 |
 | 单向同步 | `--push` / `--pull` |
-| 自动同步 | [`watch`](./ts-src/src/engine/watcher.ts) |
+| 自动同步 | [`watch`](./ts-src/src/engine/watcher.ts) · Windows 计划任务见 [scheduled-sync](./docs/guides/scheduled-sync.md) |
 | 格式转换 | [`convert/`](./ts-src/src/convert/) |
 | 图片 | 本地或 [SM.MS](https://sm.ms/) |
 | 去重 / 移动 | [`dedup/`](./ts-src/src/dedup/) · [`moves.ts`](./ts-src/src/classify/moves.ts) |
 | 删除保护 | [RFC-007](./docs/design/rfc-007-deterministic-guardrails.md) |
 | Git / GUI / 诊断 | [`util/git.ts`](./ts-src/src/util/git.ts) · [`gui/`](./ts-src/src/gui/) · [`diagnose-cli.ts`](./ts-src/src/cli/diagnose-cli.ts) |
+| 元数据健康 | 每次 sync `purgeNonSyncableFileRows`；`diagnose cache` fail-closed |
 
 ## 同步规则（简版）
 

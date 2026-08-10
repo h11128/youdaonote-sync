@@ -1,6 +1,6 @@
 # Silent scheduled Youdao sync + metadata health gate.
 # Registered as Task Scheduler job YoudaoNoteSync (no console flash).
-# Prefer this over .local-scripts/scheduled-sync.bat.
+# Docs: docs/guides/scheduled-sync.md — prefer this over .local-scripts/*.
 param(
     [string]$RepoRoot = "E:\Projects\youdaonote-sync"
 )

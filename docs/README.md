@@ -12,12 +12,14 @@
 |-----|---------|
 | [architecture.md](./reference/architecture.md) | Component diagram, pipeline, classify Decision Table |
 | [youdao-api.md](./reference/youdao-api.md) | Youdao private API (auth, push/download, fileId) |
+| [sync-metadata-invariants.md](./reference/sync-metadata-invariants.md) | Metadata lifecycle: empty `file_id`, purge, fail-closed diagnose |
 
 ## guides/ — How-to
 
 | Doc | Purpose |
 |-----|---------|
 | [configuration.md](./guides/configuration.md) | Config SOT — single directory, doctor, fields |
+| [scheduled-sync.md](./guides/scheduled-sync.md) | Windows Task `YoudaoNoteSync` — silent PS1 + cache gate |
 
 ## design/ — Newer RFCs (chrono order, ≤7)
 
@@ -33,10 +35,12 @@ RFC numbers follow document date (oldest = 001). Active `design/` keeps the **ne
 
 | Doc | Purpose |
 |-----|---------|
-| [2026-03-02-ts-rewrite-retrospective.md](./postmortem/2026-03-02-ts-rewrite-retrospective.md) | TS rewrite gaps |
-| [2026-03-20-architecture-review.md](./postmortem/2026-03-20-architecture-review.md) | Architecture review snapshot |
+| [2026-08-09-pe-false-alert-and-empty-file-id.md](./postmortem/2026-08-09-pe-false-alert-and-empty-file-id.md) | PE false alert + empty `file_id` zombies (#734–#740) |
+| [2026-08-05-pe-task-610-empty-file-id.md](./postmortem/2026-08-05-pe-task-610-empty-file-id.md) | Upload wipe / calibrate / push recovery (#610/#613) |
 | [2026-03-24-note-table-incident.md](./postmortem/2026-03-24-note-table-incident.md) | NOTE native-table render failure |
 | [2026-03-29-ai-development-retrospective.md](./postmortem/2026-03-29-ai-development-retrospective.md) | Diagnose-tool avoidance |
+| [2026-03-20-architecture-review.md](./postmortem/2026-03-20-architecture-review.md) | Architecture review snapshot |
+| [2026-03-02-ts-rewrite-retrospective.md](./postmortem/2026-03-02-ts-rewrite-retrospective.md) | TS rewrite gaps (historical; cleanup behavior superseded 2026-08) |
 
 **New postmortems** include Reflection / Troubleshooting / Avoidance.
 

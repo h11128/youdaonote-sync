@@ -35,10 +35,12 @@ Intentionally **not** restored: hash-collision skip-upload (that left empty `fil
 | No exclude-before-save regression | Test | `cloud-scan-phase.test.ts` |
 | Stale `cloud_mtime` on cache upsert | Code + test | `cacheCloudFileInfo` updates mtime; store test |
 | Dir `recordSync` → empty `file_id` files | Code | `appendSyncLog` for directory actions |
-| Diagnose silent on dangerous empties | Diagnose | warn `empty file_id but local` |
+| Diagnose silent on dangerous empties | Diagnose | warn `empty file_id but local` → later **exit 1** (#737/#740) |
 | Upload can record empty id | Assert | `requireNonEmpty` after upload |
 
 Living checklist: [sync-metadata-invariants](../reference/sync-metadata-invariants.md).
+Scheduled ops: [scheduled-sync](../guides/scheduled-sync.md).
+Later drain / fail-closed: [2026-08-09 postmortem](./2026-08-09-pe-false-alert-and-empty-file-id.md) (#735–#740).
 
 ## Verification
 
@@ -48,6 +50,6 @@ Living checklist: [sync-metadata-invariants](../reference/sync-metadata-invarian
 
 ## Follow-ups
 
-- Ops: next scheduled sync should drain residual empty-`file_id` localNew
+- [x] Residual empty-`file_id` drain + remove soft-clear + scheduled cache gate — see [2026-08-09](./2026-08-09-pe-false-alert-and-empty-file-id.md) (#735/#737/#740)
 - Optional: purge gone metadata for renamed `AI模型比较.md`
-- PE #613: harden invariants (this follow-up)
+- [x] PE #613: harden invariants

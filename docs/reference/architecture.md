@@ -191,6 +191,16 @@ Hash source: local disk hash; then usable metadata `contentHash`; then `cloudCon
 
 Source: [`ts-src/src/classify/`](../../ts-src/src/classify/) · Design details: [`RFC-006`](../design/rfc-006-typescript-rewrite-design.md)
 
+### Post-sync metadata cleanup
+
+After execute ([`runPostSyncCleanup`](../../ts-src/src/engine/execute.ts)):
+
+1. **Every sync** — `purgeNonSyncableFileRows` drops `images/` / `attachments/` / `.note`/`.clip` / dirs wrongly stored in `files`
+2. **Full cloud scan only** — `cleanupStalePaths` **removes** inactive `files` rows (no soft-clear / `clearCloudId`)
+3. Exclude purge + GC + optional dedup / git
+
+CLI exits non-zero on file-level errors; Windows scheduled job also runs `diagnose cache` (see [scheduled-sync](../guides/scheduled-sync.md)).
+
 ---
 
 Historical design notes (may be stale): [`RFC-006`](../design/rfc-006-typescript-rewrite-design.md) · [`archive/postmortem/`](../archive/postmortem/).

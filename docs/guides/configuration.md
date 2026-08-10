@@ -26,6 +26,9 @@ Implementation: [`ts-src/src/util/config-dir.ts`](../../ts-src/src/util/config-d
 | `cookies.json` | Yes for sync | `npx youdaonote-sync login` |
 | `sync_metadata.db` | Created on first sync | Engine |
 
+Metadata health: `npx youdaonote-sync diagnose cache` must show `empty file_id but local: 0` (else exit 1).
+Windows daily job: [scheduled-sync](./scheduled-sync.md).
+
 Templates in the **repo** (not runtime):
 
 - [`config.example.json`](../../examples/config.example.json)
