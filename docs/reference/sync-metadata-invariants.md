@@ -1,6 +1,8 @@
 # Sync Metadata Invariants
 
-Living reference for agents and reviewers. Root-cause context: [PE #610 postmortem](../postmortem/2026-08-05-pe-task-610-empty-file-id.md).
+Living reference for agents and reviewers. Root-cause context:
+[PE #610 postmortem](../postmortem/2026-08-05-pe-task-610-empty-file-id.md),
+[2026-08-09 PE false alert + empty file_id](../postmortem/2026-08-09-pe-false-alert-and-empty-file-id.md).
 
 These rules exist because scheduled sync once wiped `file_id` after a successful upload and left perpetual `localNew`. Treat metadata as a state machine, not a cache dump.
 

@@ -1,5 +1,7 @@
 /**
  * diagnose cache — metadata file_id health summary.
+ * Sets process.exitCode = 1 when empty file_id rows still have a local path
+ * (fail-closed gate; see postmortem 2026-08-09 empty file_id zombies).
  */
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -46,4 +48,8 @@ export function cmdCache(cfg: DiagnoseConfig): void {
     );
   }
   meta.close();
+
+  if (emptyFileIdButLocal > 0) {
+    process.exitCode = 1;
+  }
 }
