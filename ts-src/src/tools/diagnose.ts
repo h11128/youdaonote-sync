@@ -8,6 +8,7 @@
  *   reset-cache - Reset scan cache version to force full cloud scan
  *   cache       - Report metadata cache stats
  *   rebuild     - Rebuild metadata from cloud + local scan
+ *   purge-inactive - Remove files-table rows outside active snaps
  *   duplicates  - Scan for duplicate files by content hash
  *   check-content - Verify .md files contain Markdown (not raw JSON/XML)
  *   fix-hashes    - Recompute content hashes and fix stale metadata
@@ -22,6 +23,7 @@ import { YoudaoNoteApi } from '../api/client.js';
 import { printExtStats } from './diagnose-local-stats.js';
 
 export { cmdCache, cmdRebuild, cmdDuplicates } from './diagnose-commands.js';
+export { cmdPurgeInactive } from './diagnose-purge.js';
 export { cmdForceReupload, cmdCheckNoteTables, cmdVerifyNote } from './diagnose-note-tables.js';
 export { cmdMigrateNoteTables } from './diagnose-note-table-migrate.js';
 export { cmdFetchNote, cmdCompareNote, cmdCompareCloudLocal } from './diagnose-note-inspect.js';

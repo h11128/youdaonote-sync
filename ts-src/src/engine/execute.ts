@@ -69,7 +69,12 @@ export async function runPostSyncCleanup(
   meta: MetadataStore,
 ): Promise<void> {
   const { cloudSnap, localSnap, localHashes, stats, didFullScan } = opts;
-  if (didFullScan) cleanupStalePaths(meta, cloudSnap, localSnap);
+  if (didFullScan) {
+    const inactive = cleanupStalePaths(meta, cloudSnap, localSnap);
+    if (inactive > 0) {
+      logger.info(`Removed ${inactive} inactive files-table row(s) from metadata`);
+    }
+  }
   const purged = purgeExcludedMetadata(meta, {
     ...(config.syncInclude !== undefined ? { include: config.syncInclude } : {}),
     ...(config.syncExclude !== undefined ? { exclude: config.syncExclude } : {}),

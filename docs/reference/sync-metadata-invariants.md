@@ -7,7 +7,7 @@ These rules exist because scheduled sync once wiped `file_id` after a successful
 ## MUST
 
 1. **`files.file_id` after successful upload/link must be non-empty.** Assert before `recordSync`. Never "skip upload because hash matched" without writing `file_id`.
-2. **`cleanupStalePaths` may clear `file_id` only when the path is absent from both cloudSnap and localSnap.** Pre-execute cloudSnap omits just-uploaded paths — local presence is the guard.
+2. **`cleanupStalePaths` removes `files` rows absent from both cloudSnap and localSnap *as files*.** Pre-execute cloudSnap omits just-uploaded paths — local file presence is the guard. Do not `clearCloudId` and leave empty-`file_id` zombies (images/`.note`/dir rows). Directories belong in `dirs`, not `files`.
 3. **Exclude/include filters run before `saveScanVersion`.** Saving an unfiltered snap re-injects excluded paths into metadata every full scan.
 4. **Delete: `recordSync` then `removeFileInfo`.** `recordSync` upserts `files`; remove after the log write or deletes resurrect.
 5. **Directory actions must not upsert `files` with empty `file_id`.** Use `appendSyncLog` (dirs live in `dirs`).
@@ -26,6 +26,7 @@ These rules exist because scheduled sync once wiped `file_id` after a successful
 ## Do not
 
 - Clear cloud linkage solely because a path is missing from a stale/pre-execute cloudSnap
+- Leave empty-`file_id` rows for paths outside active file snaps (purge/remove instead)
 - Restore hash-collision skip-upload without also linking `file_id`
 - Call `recordSync(..., fileId: '')` for directories
 
@@ -34,6 +35,7 @@ These rules exist because scheduled sync once wiped `file_id` after a successful
 ```bash
 cd ts-src && npx vitest run src/engine/e2e-metadata-invariants.test.ts
 npm run diagnose -- cache
+npm run diagnose -- purge-inactive --dry-run
 ```
 
 These are SyncEngine pipeline e2e tests (real MetadataStore + local files + mock API), not isolated store unit checks.

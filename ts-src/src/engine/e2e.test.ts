@@ -484,11 +484,8 @@ describe('E2E: stale metadata cleanup', () => {
 
     await engine.sync();
 
-    // file_id should be cleared (stale cleanup for paths with no local file)
-    const record = meta.getFileInfo(asRelPath('deleted-from-cloud.md'));
-    if (record) {
-      expect(record.fileId).toBeFalsy();
-    }
+    // Stale path absent from cloud+local must be removed from files table
+    expect(meta.getFileInfo(asRelPath('deleted-from-cloud.md'))).toBeNull();
 
     engine.close();
   });

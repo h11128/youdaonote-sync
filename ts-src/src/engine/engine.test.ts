@@ -236,7 +236,7 @@ describe('purgeExcludedMetadata', () => {
   });
 });
 
-describe('cleanupStalePaths', () => {
+describe('cleanupStalePaths keep', () => {
   it('keeps file_id when local file still exists (just-uploaded case)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'stale-keep-'));
     const meta = new MetadataStore(join(dir, 'meta.db'));
@@ -267,8 +267,10 @@ describe('cleanupStalePaths', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
 
-  it('removes cloud linkage when path is absent from both cloud and local', () => {
+describe('cleanupStalePaths remove', () => {
+  it('removes files-table row when path is absent from both cloud and local', () => {
     const dir = mkdtempSync(join(tmpdir(), 'stale-drop-'));
     const meta = new MetadataStore(join(dir, 'meta.db'));
     try {
@@ -278,9 +280,47 @@ describe('cleanupStalePaths', () => {
         localMtime: asEpochSeconds(10),
       });
 
-      cleanupStalePaths(meta, new Map(), new Map());
+      const removed = cleanupStalePaths(meta, new Map(), new Map());
 
-      expect(meta.getFileInfo(asRelPath('ghost.md'))?.fileId).toBeFalsy();
+      expect(removed).toBe(1);
+      expect(meta.getFileInfo(asRelPath('ghost.md'))).toBeNull();
+    } finally {
+      meta.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('removes empty file_id artifact rows and dir rows not active as files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stale-empty-'));
+    const meta = new MetadataStore(join(dir, 'meta.db'));
+    try {
+      meta.setFileInfo(asRelPath('images/pic.png'), {
+        fileId: asFileId(''),
+        cloudMtime: asEpochSeconds(0),
+        localMtime: asEpochSeconds(10),
+      });
+      meta.setFileInfo(asRelPath('notes'), {
+        fileId: asFileId(''),
+        cloudMtime: asEpochSeconds(0),
+        localMtime: asEpochSeconds(10),
+      });
+      const localSnap = new Map([
+        [
+          asRelPath('notes'),
+          {
+            path: join(dir, 'notes'),
+            mtime: asEpochSeconds(10),
+            size: 0,
+            isDir: true,
+          },
+        ],
+      ]);
+
+      const removed = cleanupStalePaths(meta, new Map(), localSnap);
+
+      expect(removed).toBe(2);
+      expect(meta.getFileInfo(asRelPath('images/pic.png'))).toBeNull();
+      expect(meta.getFileInfo(asRelPath('notes'))).toBeNull();
     } finally {
       meta.close();
       rmSync(dir, { recursive: true, force: true });

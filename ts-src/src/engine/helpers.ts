@@ -181,28 +181,54 @@ export function applyRefinementIfChanged(
 }
 
 /**
- * After a *full* cloud scan, unlink metadata for paths that disappeared from
- * the cloud and have no local file (clear file_id; row may remain until GC).
- *
- * Critical: do NOT touch paths that still exist locally. Newly uploaded files
- * are absent from the pre-execute cloudSnap; clearing their file_id caused
- * perpetual localNew / empty-fileId churn in scheduled sync.
+ * Path is an active sync *file* (not a directory) in cloud and/or local snaps.
  */
+export function isActiveSyncFile(
+  path: RelPath,
+  cloudSnap: ReadonlyMap<RelPath, CloudFile>,
+  localSnap: ReadonlyMap<RelPath, LocalFile>,
+): boolean {
+  const cloud = cloudSnap.get(path);
+  const local = localSnap.get(path);
+  const inCloudAsFile = cloud !== undefined && !cloud.isDir;
+  const inLocalAsFile = local !== undefined && !local.isDir;
+  return inCloudAsFile || inLocalAsFile;
+}
+
+/**
+ * After a *full* cloud scan, drop `files` rows that are not active sync files.
+ *
+ * Active = present in cloudSnap as a file OR localSnap as a file.
+ * Directories belong in `dirs`; artifact paths (`images/`, `.note` leftovers)
+ * are absent from snaps — remove them instead of leaving empty `file_id` zombies
+ * (clearCloudId-only left 2500+ perpetual empty rows).
+ *
+ * Critical: keep rows still in localSnap as files (just-uploaded may be missing
+ * from pre-execute cloudSnap).
+ */
+export function listInactiveFilePaths(
+  meta: MetadataStore,
+  cloudSnap: ReadonlyMap<RelPath, CloudFile>,
+  localSnap: ReadonlyMap<RelPath, LocalFile>,
+): RelPath[] {
+  const toRemove: RelPath[] = [];
+  for (const path of meta.getAllFiles().keys()) {
+    if (!isActiveSyncFile(path, cloudSnap, localSnap)) toRemove.push(path);
+  }
+  return toRemove;
+}
+
 export function cleanupStalePaths(
   meta: MetadataStore,
   cloudSnap: ReadonlyMap<RelPath, CloudFile>,
   localSnap: ReadonlyMap<RelPath, LocalFile>,
-): void {
-  const activeCloudPaths = new Set<RelPath>();
-  for (const [path, cf] of cloudSnap) {
-    if (!cf.isDir) activeCloudPaths.add(path);
-  }
-  const stalePaths = meta.getStaleCloudPaths(activeCloudPaths);
-  if (stalePaths.length === 0) return;
+): number {
+  const toRemove = listInactiveFilePaths(meta, cloudSnap, localSnap);
+  if (toRemove.length === 0) return 0;
   meta.batch(() => {
-    for (const path of stalePaths) {
-      if (localSnap.has(path)) continue;
-      meta.clearCloudId(path);
+    for (const path of toRemove) {
+      meta.removeFileInfo(path);
     }
   });
+  return toRemove.length;
 }

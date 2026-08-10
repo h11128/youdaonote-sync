@@ -19,11 +19,10 @@ interface RootConfig {
 
 type GetConfigDir = () => string;
 type LoadConfig = (configDir: string) => RootConfig;
-
 const COOKIES_FILE = 'cookies.json';
 const METADATA_FILE = 'sync_metadata.db';
-const PREFIX_OPTION = 'Only process paths starting with this prefix';
-const TARGET_PATHS_OPTION = 'File paths to process';
+const PREFIX_OPTION = 'Prefix filter';
+const TARGET_PATHS_OPTION = 'File paths';
 const TARGET_OPTION = '--target <paths...>';
 
 function diagnoseCfg(getConfigDir: GetConfigDir, loadConfig: LoadConfig): DiagnoseConfig {
@@ -123,6 +122,16 @@ function addOpsDiagnoseCommands(
         }),
       );
     });
+
+  diagnose
+    .command('purge-inactive')
+    .description('Remove files-table rows not in active cloud/local file snaps')
+    .option('--dry-run', 'Preview without deleting')
+    .action((opts: { dryRun?: boolean }) => {
+      void import('../tools/diagnose.js').then(({ cmdPurgeInactive }) => {
+        void cmdPurgeInactive(diagnoseCfg(getConfigDir, loadConfig), opts.dryRun ?? false);
+      });
+    });
 }
 
 function addMaintenanceDiagnoseCommands(
@@ -132,7 +141,7 @@ function addMaintenanceDiagnoseCommands(
 ): void {
   diagnose
     .command('cache')
-    .description('Report metadata cache stats: file counts, file_id, cloud_mtime, local existence')
+    .description('Report metadata cache stats (file_id / local existence)')
     .action(() => {
       void import('../tools/diagnose.js').then(({ cmdCache }) => {
         cmdCache(diagnoseCfg(getConfigDir, loadConfig));
