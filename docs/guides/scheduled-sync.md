@@ -37,7 +37,7 @@ Set-ScheduledTask -TaskName 'YoudaoNoteSync' -Action $action `
   -Trigger $task.Triggers -Settings $task.Settings -Principal $task.Principal
 ```
 
-XML import template (keep in sync with live task): [`../scripts/scheduled-sync-task.xml`](../../scripts/scheduled-sync-task.xml) — after editing XML, re-import or use `Set-ScheduledTask` above.
+XML import template (keep in sync with live task): [`../../scripts/scheduled-sync-task.xml`](../../scripts/scheduled-sync-task.xml) — after editing XML, re-import or use `Set-ScheduledTask` above.
 
 ## Verify
 

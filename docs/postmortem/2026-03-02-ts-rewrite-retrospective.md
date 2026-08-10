@@ -589,7 +589,7 @@ Python 在文件名+祖先深度匹配后，还检查内容 hash：hash 不同�
 | # | 差距 | 影响 |
 |---|------|------|
 | 4 | 云端文件未过滤 sync_include/sync_exclude | 过滤仅作用于本地，云端不匹配的文件仍参与同步 |
-| 5 | cleanupStalePaths 在缓存扫描时执行 | 缓存 cloudSnap 不完整 → 误清 metadata |
+| 5 | cleanupStalePaths 在缓存扫描时执行 | 缓存 cloudSnap 不完整 → 误清 metadata（**fixed to full-scan-only**; later 2026-08: remove rows + every-sync `purgeNonSyncableFileRows` — [invariants](../reference/sync-metadata-invariants.md)） |
 | 6 | 移动检测后缺少二次 calibrate | moves 产生的新路径缺少 metadata 基线 |
 | 7 | HASHABLE_EXTS 缺失 .css/.js/.csv | 这些文件不参与 hash warmup 和 refine |
 | 8 | refine 未利用缓存 cloudContentHash | cloudMtime 未变时仍下载云端内容计算 hash |
@@ -622,7 +622,7 @@ Python 在文件名+祖先深度匹配后，还检查内容 hash：hash 不同�
 | 2 | localMtime 改用 readFileMtime() | P0 | ✅ |
 | 3 | 冲突 conflictFallback 按方向分支 | P0 | ✅ |
 | 4 | filterCloudSnap + patternToRegex | P1 | ✅ |
-| 5 | cleanupStalePaths 仅全量扫描后执行 | P1 | ✅ |
+| 5 | cleanupStalePaths 仅全量扫描后执行 | P1 | ✅（2026-08 起另有每 sync purge + 删行，见 [2026-08-09](./2026-08-09-pe-false-alert-and-empty-file-id.md)） |
 | 6 | moves 后二次 calibrate | P1 | ✅ |
 | 7 | HASHABLE_EXTS 补全 .css/.js/.csv | P1 | ✅ |
 | 8 | refine 缓存 cloudContentHash | P1 | ✅ |

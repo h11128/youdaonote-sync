@@ -1,7 +1,8 @@
 # 架构审查报告 — 2026-03-20
 
 > **Historical (2026-03).** For current usage see the root [README](../../README.md); docs index at [docs/README.md](../README.md).  
-> Point-in-time snapshot; open issues, test counts, and config migration status may be stale.
+> Point-in-time snapshot; open issues, test counts, and config migration status may be stale.  
+> **Superseded (2026-08):** `runPostSyncCleanup` now always runs `purgeNonSyncableFileRows`; `cleanupStalePaths` is full-scan-only and **removes** rows (no soft-clear). See [architecture.md](../reference/architecture.md) and [sync-metadata-invariants.md](../reference/sync-metadata-invariants.md).
 
 基于 dry-run + 实际同步执行 + 全量代码审阅产出。
 
@@ -46,7 +47,7 @@ SyncEngine.sync()
   │    ├─ 冲突（diff3 合并 → fallback 备份+下载）
   │    └─ 移动（云端 rename/move API）
   └─ runPostSyncCleanup()
-       ├─ cleanupStalePaths()       // 清理失效的 cloud path
+       ├─ cleanupStalePaths()       // 2026-03 snapshot — see header: superseded 2026-08
        ├─ gc()                      // 垃圾回收（过期记录、孤儿目录、旧日志）
        ├─ autoDedup()               // 自动去重
        └─ gitAutoCommit()           // 可选 git 提交
