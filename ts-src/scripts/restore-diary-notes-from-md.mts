@@ -7,9 +7,10 @@
  *
  * Usage (from ts-src):
  *   npx tsx scripts/restore-diary-notes-from-md.mts 2026-08-07 2026-08-08
+ *   npx tsx scripts/restore-diary-notes-from-md.mts --force 2026-08-11
  */
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { YoudaoNoteApi } from '../src/api/client.ts';
 import { findFolderByPath, getDirectoryEntries } from '../src/browse/search.ts';
@@ -44,9 +45,11 @@ function nonEmptyMarkdown(body: string, label: string): void {
   }
 }
 
-const dates = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const force = argv.includes('--force');
+const dates = argv.filter((a) => a !== '--force');
 if (!dates.length) {
-  console.error('usage: restore-diary-notes-from-md.mts YYYY-MM-DD [...]');
+  console.error('usage: restore-diary-notes-from-md.mts [--force] YYYY-MM-DD [...]');
   process.exit(2);
 }
 
@@ -74,10 +77,19 @@ for (const date of dates) {
   const mdEnt = entries.find((e) => e.name === `${base}.md`);
 
   if (noteEnt) {
-    const raw = new Uint8Array(await api.getFileById(asFileId(noteEnt.id)));
-    if (raw.length > 0) {
+    const raw = new Uint8Array(
+      await api.getFileById(asFileId(noteEnt.id), { convert: false }),
+    );
+    if (raw.length > 0 && !force) {
       console.log('skip existing non-empty .note', base, raw.length);
     } else {
+      if (force && raw.length > 0) {
+        const bakDir = join(notesRoot, '.local-reports', 'diary-backups');
+        mkdirSync(bakDir, { recursive: true });
+        const bak = join(bakDir, `${base}.note.pre-force-${Date.now()}`);
+        writeFileSync(bak, raw);
+        console.log('backed up cloud .note before --force', bak, raw.length);
+      }
       await api.pushFile({
         fileId: asFileId(noteEnt.id),
         parentId: folderId,
@@ -86,7 +98,7 @@ for (const date of dates) {
         bodyString: body,
         isCreate: false,
       });
-      console.log('updated empty .note', base);
+      console.log(raw.length > 0 ? 'updated .note --force' : 'updated empty .note', base);
     }
   } else {
     const fileId = YoudaoNoteApi.generateFileId();
