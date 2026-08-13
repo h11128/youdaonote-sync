@@ -97,6 +97,10 @@ POST https://note.youdao.com/yws/api/personal/file/{file_id}?method=delete&keyfr
 
 Used when `--propagate-deletes` is on (`DELETE_URL` → `deleteFile`).
 
+### Directory listing size is not emptiness
+
+`getDirInfoById` / folder list often reports `size=0` for rich `.note` files that still have full JSON bodies. The official Youdao app displays `.note`. **Never delete a `.note` because the listing size is 0.** Fetch with `getFileById` and check actual bytes (and JSON children) first. Incident: [2026-08-12-note-listing-size-zero](../postmortem/2026-08-12-note-listing-size-zero.md).
+
 ### Rename
 
 Uses `method=push` with URL params including `name`, `fileId`, plus `domain` / `modifyTime` / `transactionId` / `editorVersion` / `keyfrom` as needed. Body still carries `cstk`. See [`file-api.ts`](../../ts-src/src/api/file-api.ts).

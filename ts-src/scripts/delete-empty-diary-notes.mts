@@ -1,35 +1,17 @@
 /**
- * Delete 0-byte sibling .note files under 内在世界/日记/2026.
- * Usage (from ts-src):
- *   npx tsx scripts/delete-empty-diary-notes.mts 2026年8月11日 2026年8月10日 ...
+ * HARD REFUSE — do not delete Youdao `.note` files by directory listing size.
+ *
+ * The official app shows `.note`. The listing API reports size=0 for notes
+ * that still have full content (2026-08-12 incident: Aug 7–11 diaries vanished
+ * from the app after a size===0 delete).
+ *
+ * Inspect with: npx tsx scripts/inspect-diary-notes.mts
+ * Restore with: npx tsx scripts/restore-diary-notes-from-md.mts YYYY-MM-DD
  */
-import { join } from 'node:path';
-import { execSync } from 'node:child_process';
-import { YoudaoNoteApi } from '../src/api/client.ts';
-import { findFolderByPath, getDirectoryEntries } from '../src/browse/search.ts';
-import { asFileId } from '../src/types/common.ts';
-
-const names = process.argv.slice(2);
-if (!names.length) {
-  console.error('usage: delete-empty-diary-notes.mts <basename>...');
-  process.exit(2);
-}
-const want = new Set(names.map((n) => (n.endsWith('.note') ? n : `${n}.note`)));
-const configDir = execSync('node dist/bin.js config path', { encoding: 'utf8' }).trim();
-const api = new YoudaoNoteApi(join(configDir, 'cookies.json'));
-await api.loginByCookies();
-const folderId = await findFolderByPath(api, '内在世界/日记/2026');
-if (!folderId) throw new Error('folder missing');
-const entries = await getDirectoryEntries(api, folderId);
-let deleted = 0;
-for (const e of entries) {
-  if (!want.has(e.name)) continue;
-  if (e.size !== 0) {
-    console.log('skip non-empty', e.name, e.size);
-    continue;
-  }
-  await api.deleteFile(asFileId(e.id));
-  console.log('deleted', e.name, e.id);
-  deleted += 1;
-}
-console.log(`done: deleted ${deleted}`);
+console.error(
+  'REFUSED: do not delete .note by listing size. Youdao reports 0 B for notes that have content.',
+);
+console.error('Inspect: npx tsx scripts/inspect-diary-notes.mts');
+console.error('Restore: npx tsx scripts/restore-diary-notes-from-md.mts YYYY-MM-DD');
+console.error('See docs/postmortem/2026-08-12-note-listing-size-zero.md');
+process.exit(2);

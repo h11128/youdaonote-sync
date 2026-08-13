@@ -1,4 +1,5 @@
 import { writeFileSync, mkdirSync, utimesSync, unlinkSync, readFileSync } from 'node:fs';
+import { refuseEmptyOverwrite } from './empty-overwrite-guard.js';
 import { dirname, extname, join } from 'node:path';
 import type { YoudaoNoteApi } from '../api/client.js';
 import { NoteDomain } from '../types/common.js';
@@ -95,6 +96,7 @@ export async function downloadFile(
   const fileType = detectFileType(data, ext);
   const markdown = convertToMarkdown(data, fileType);
   assertNoRawStructuredContent(ext, markdown, fileType);
+  refuseEmptyOverwrite({ localPath, markdown, raw: data });
 
   writeDownloadAtomically(localPath, markdown, data);
   applyCloudMtime(localPath, opts?.cloudMtime);

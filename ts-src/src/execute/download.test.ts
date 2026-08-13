@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -185,6 +185,42 @@ describe('downloadFile voice notes', () => {
     expect(result.contentHash).toBeNull();
     expect(result.rawContentHash).toBeNull();
     expect(hashFn).not.toHaveBeenCalled();
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('downloadFile empty overwrite', () => {
+  it('refuses empty download over non-empty local', async () => {
+    const dir = join(tmpdir(), `yd-dl-refuse-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const localPath = join(dir, 'diary.md');
+    writeFileSync(localPath, '# keep handwritten\n');
+    const api = {
+      getFileById: vi.fn(() => Promise.resolve(new ArrayBuffer(0))),
+    } as unknown as YoudaoNoteApi;
+
+    await expect(downloadFile(api, asFileId('empty-2'), localPath)).rejects.toThrow(
+      /REFUSE: empty download/,
+    );
+    expect(readFileSync(localPath, 'utf-8')).toBe('# keep handwritten\n');
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('refuses json-to-md empty string over non-empty local', async () => {
+    const dir = join(tmpdir(), `yd-dl-jsonempty-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const localPath = join(dir, 'diary.md');
+    writeFileSync(localPath, '# keep handwritten\n');
+    const api = {
+      getFileById: vi.fn(() => Promise.resolve(enc('{"2":"1"}').buffer)),
+    } as unknown as YoudaoNoteApi;
+
+    await expect(downloadFile(api, asFileId('empty-json'), localPath)).rejects.toThrow(
+      /REFUSE: empty download/,
+    );
+    expect(readFileSync(localPath, 'utf-8')).toBe('# keep handwritten\n');
 
     rmSync(dir, { recursive: true, force: true });
   });
