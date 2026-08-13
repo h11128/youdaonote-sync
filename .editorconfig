@@ -19,6 +19,12 @@ indent_size = 2
 [*.{kt,kts}]
 indent_size = 4
 
+# Windows PowerShell 5.1 (powershell.exe) reads BOM-less .ps1 as the system ANSI
+# codepage (GBK on zh-CN), which corrupts any non-ASCII char and breaks parsing.
+# Keep .ps1 as UTF-8 with BOM so scheduled tasks parse correctly.
+[*.ps1]
+charset = utf-8-bom
+
 [*.dart]
 indent_size = 2
 
