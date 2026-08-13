@@ -1,7 +1,7 @@
 # 2026-08-12：有道 `.note` 列表 0 B 被当成空文件删掉
 
 - **Date**: 2026-08-12
-- **Tasks**: PE `#783`（恢复 8/7–11）；`#788`（Harness 门禁）；前因 `#776`（cron 整篇覆盖 8/11 手写）
+- **Tasks**: PE `#783`（恢复 8/7–11）；`#788`（listing-size 门禁）；`#790`（8/11 手写从 desktop backupNote 找回）；`#797`（禁止只查 git 就结案空）；前因 `#776`（cron 整篇覆盖 8/11 手写）
 - **Symptom**: 用户在有道官方 App 里看不到 8 月 7–11 日日记；本地 `notes` 仓 `.md` 仍在
 
 ## Conclusion
@@ -39,6 +39,7 @@
 - 判断空文件只看 `getFileById` 实收字节（以及 NOTE JSON 的 children），不看列表 size。
 - 不要为了「去重」删官方 App 还在用的 `.note`。
 - 同步下载前必须拒绝「空内容盖非空本地」。
+- 不要只查 git 就说「手写本来就是空的」。结案前跑 `python scripts/recover-diary-sources.py --title 2026年M月D日`（PE `#797`；notes 复盘 `2026-08-13-diary-false-empty-git-only.md`）。
 
 ## Restore command
 
