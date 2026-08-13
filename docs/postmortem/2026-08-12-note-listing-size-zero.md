@@ -1,7 +1,7 @@
 # 2026-08-12：有道 `.note` 列表 0 B 被当成空文件删掉
 
 - **Date**: 2026-08-12
-- **Tasks**: PE `#783`（恢复 8/7–11）；前因 `#776`（cron 整篇覆盖 8/11 手写）
+- **Tasks**: PE `#783`（恢复 8/7–11）；`#788`（Harness 门禁）；前因 `#776`（cron 整篇覆盖 8/11 手写）
 - **Symptom**: 用户在有道官方 App 里看不到 8 月 7–11 日日记；本地 `notes` 仓 `.md` 仍在
 
 ## Conclusion
@@ -32,6 +32,7 @@
 | 重建 `.note` | `scripts/restore-diary-notes-from-md.mts` 从本地 `.md` 生成 NOTE JSON 并回传 |
 | 危险脚本 | `delete-empty-diary-notes.mts` 改为硬拒绝；检查改走 `inspect-diary-notes.mts`（只报告，不删） |
 | Skill / API 文档 | 明确：列表 size=0 ≠ 空；App SOT=`.note`；git SOT=`.md` |
+| Harness（`#788`） | 共享 MDC + 全局 HookRule 拦 `delete-empty-diary-notes` / `deleteFile`+日记 `.note`；youdao-sync skill Hard safety。复盘：notes `docs/retrospectives/2026-08-12-youdao-listing-size-harness.md` |
 
 ## Avoidance
 

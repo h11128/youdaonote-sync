@@ -35,7 +35,7 @@ RFC numbers follow document date (oldest = 001). Active `design/` keeps the **ne
 
 | Doc | Purpose |
 |-----|---------|
-| [2026-08-12-note-listing-size-zero.md](./postmortem/2026-08-12-note-listing-size-zero.md) | Official app diaries vanished: `.note` listing size=0 treated as empty (#783) |
+| [2026-08-12-note-listing-size-zero.md](./postmortem/2026-08-12-note-listing-size-zero.md) | Official app diaries vanished: `.note` listing size=0 treated as empty (#783); Harness #788 |
 | [2026-08-09-pe-false-alert-and-empty-file-id.md](./postmortem/2026-08-09-pe-false-alert-and-empty-file-id.md) | PE false alert + empty `file_id` zombies (#734–#740) |
 | [2026-08-05-pe-task-610-empty-file-id.md](./postmortem/2026-08-05-pe-task-610-empty-file-id.md) | Upload wipe / calibrate / push recovery (#610/#613) |
 | [2026-03-24-note-table-incident.md](./postmortem/2026-03-24-note-table-incident.md) | NOTE native-table render failure |
