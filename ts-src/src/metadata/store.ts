@@ -133,6 +133,10 @@ export class MetadataStore {
     return storeFiles.getAllFiles(this.db);
   }
 
+  hasEmptyFileId(): boolean {
+    return storeFiles.hasEmptyFileId(this.db);
+  }
+
   getCloudFileSummaries(): Map<RelPath, storeFiles.CloudFileSummary> {
     return storeFiles.getCloudFileSummaries(this.db);
   }

@@ -176,6 +176,23 @@ function queriesAndUpsertTests(getStore: () => MetadataStore): void {
       expect(all.get(asRelPath('b.md'))!.fileId).toBe('fb');
     });
 
+    it('hasEmptyFileId is true only when a row lacks file_id', () => {
+      const store = getStore();
+      expect(store.hasEmptyFileId()).toBe(false);
+      store.setFileInfo(asRelPath('ok.md'), {
+        fileId: asFileId('f-ok'),
+        cloudMtime: asEpochSeconds(1),
+        localMtime: asEpochSeconds(1),
+      });
+      expect(store.hasEmptyFileId()).toBe(false);
+      store.setFileInfo(asRelPath('empty.md'), {
+        fileId: asFileId(''),
+        cloudMtime: asEpochSeconds(1),
+        localMtime: asEpochSeconds(1),
+      });
+      expect(store.hasEmptyFileId()).toBe(true);
+    });
+
     it('upsert preserves existing values via COALESCE', () => {
       const store = getStore();
       store.setFileInfo(asRelPath('coalesce.md'), {

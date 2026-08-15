@@ -163,6 +163,11 @@ export function renamePath(db: Database.Database, oldPath: RelPath, newPath: Rel
   }
 }
 
+export function hasEmptyFileId(db: Database.Database): boolean {
+  const row = db.prepare("SELECT 1 FROM files WHERE file_id = '' LIMIT 1").get();
+  return row != null;
+}
+
 export function getAllFiles(db: Database.Database): Map<RelPath, MetadataRecord> {
   const rows = db.prepare(`SELECT path, ${FILE_META_COLS} FROM files`).all() as Record<
     string,

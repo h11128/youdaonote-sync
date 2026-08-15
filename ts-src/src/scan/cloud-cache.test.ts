@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from '../metadata/store.js';
-import { asEpochSeconds, asRelPath } from '../types/common.js';
+import { asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
 import type { DirId, FileId, RelPath } from '../types/common.js';
 import {
   tryCachedCloudScan,
@@ -332,5 +332,28 @@ describe('tryCachedCloudScan: 24h full scan interval', () => {
     expect(stored).toBeGreaterThan(0);
     const now = Math.floor(Date.now() / 1000);
     expect(Math.abs(stored - now)).toBeLessThan(5);
+  });
+});
+
+describe('tryCachedCloudScan: empty file_id forces full scan', () => {
+  it('returns null when metadata has an empty file_id row', async () => {
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
+    saveScanVersion(meta, snap, 10);
+    meta.setFileInfo(asRelPath('orphan.md'), {
+      fileId: asFileId(''),
+      cloudMtime: asEpochSeconds(1),
+      localMtime: asEpochSeconds(1),
+    });
+    meta.save();
+
+    const api = { listRecent: () => Promise.resolve([] as Record<string, unknown>[]) };
+    const result = await tryCachedCloudScan({
+      api,
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
+    expect(result).toBeNull();
   });
 });

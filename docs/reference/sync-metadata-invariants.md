@@ -24,6 +24,7 @@ as a state machine, not a cache dump.
 10. **Empty `file_id` rows stay calibratable** (`shouldSkipCalibration` must not skip them). Hash local files before calibrate so Case2 can re-link.
 11. **Youdao push 20108 / 211 must recover** (reuse duplicate id / retry update), not leave a failed create as "done".
 12. **Upload of a path present in this sync's cloud snapshot must update that file.** Use the scanned `id` / `name` / `domain` (`.note` stays `.note`). Empty or stale metadata `file_id` is not permission to `isCreate` a second `foo.md` beside `foo.note`. Metadata id is only a fallback when the snapshot has no file.
+13. **Incomplete index cannot stand in for a live cloud listing.** Cache snap omits empty `file_id` rows; live scan still sees the mapped `.note`. If any `files.file_id` is empty, skip cache and full-scan so membership matches live listing, then write ids back.
 
 ## Tests required when touching these paths
 
@@ -35,6 +36,7 @@ as a state machine, not a cache dump.
 - `diagnose cache` exits `1` when `empty file_id but local > 0`
 - CLI / scheduled wrapper: file errors → non-zero exit; log has `Finished with exit code … (sync=… cache=…)`
 - Cloud snapshot has `.note` mapped to local `.md` + empty metadata `file_id` → upload updates that `.note` (`isCreate=false`), does not create `.md`
+- Metadata has any empty `file_id` → `tryCachedCloudScan` returns null (full scan)
 
 ## Do not
 
@@ -49,7 +51,7 @@ as a state machine, not a cache dump.
 
 ```bash
 cd ts-src
-npx vitest run src/engine/e2e-metadata-invariants.test.ts src/engine/purge-nonsyncable.test.ts
+npx vitest run src/engine/e2e-metadata-invariants.test.ts src/engine/purge-nonsyncable.test.ts src/scan/cloud-cache.test.ts
 npm run diagnose -- cache          # expect empty file_id but local: 0 (else exit 1)
 npm run diagnose -- purge-inactive --dry-run
 ```

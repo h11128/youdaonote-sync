@@ -97,9 +97,10 @@ fire). Log line looks like `↑ 内在世界/日记/2026/2026年8月13日.md`.
 
 Prevention (in engine): cloud scan maps `.note` → local `.md` and prefers
 `.note` on stem collision; cache snap restores `.note` name when domain is
-NOTE; upload uses the scanned file id/name/domain (update, never create a
-second `foo.md`); any local `.md` still binds to a same-stem `.note` if
-create would otherwise miss it.
+NOTE; empty `file_id` in metadata forces a full listing (cache must not
+pretend those paths are absent); upload uses the scanned file id/name/domain
+(update, never create a second `foo.md`); any local `.md` still binds to a
+same-stem `.note` if create would otherwise miss it.
 
 Cleanup (never `deleteFile` a diary `.note`):
 
