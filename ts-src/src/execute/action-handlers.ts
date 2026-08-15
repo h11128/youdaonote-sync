@@ -52,6 +52,7 @@ export async function handleUpload(o: {
     action: 'upload',
     direction: 'push',
     ...logMeta,
+    ...(result.domain != null ? { domain: result.domain } : {}),
   });
   stats.uploaded++;
   stats.changedPaths.push(localPath);

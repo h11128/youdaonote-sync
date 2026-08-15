@@ -57,15 +57,17 @@ const api = new YoudaoNoteApi(join(configDir(), 'cookies.json'));
 const loginErr = api.loginByCookies();
 if (loginErr) throw new Error(loginErr);
 
-const folderId = await findFolderByPath(api, '内在世界/日记/2026');
-if (!folderId) throw new Error('cloud folder missing: 内在世界/日记/2026');
-const entries = await getDirectoryEntries(api, folderId);
 const notesRoot = localNotesRoot();
 const meta = new MetadataStore(join(configDir(), 'sync_metadata.db'));
 
 for (const date of dates) {
+  const year = date.slice(0, 4);
+  const folderPath = `内在世界/日记/${year}`;
+  const folderId = await findFolderByPath(api, folderPath);
+  if (!folderId) throw new Error(`cloud folder missing: ${folderPath}`);
+  const entries = await getDirectoryEntries(api, folderId);
   const base = dateToDiaryBase(date);
-  const mdPath = join(notesRoot, '内在世界', '日记', '2026', `${base}.md`);
+  const mdPath = join(notesRoot, '内在世界', '日记', year, `${base}.md`);
   if (!existsSync(mdPath)) throw new Error(`local missing: ${mdPath}`);
   const md = readFileSync(mdPath, 'utf8');
   if (!md.trim()) throw new Error(`REFUSE: local markdown empty: ${mdPath}`);
@@ -113,23 +115,6 @@ for (const date of dates) {
     console.log('created .note', base, fileId);
   }
 
-  if (mdEnt) {
-    const raw = new Uint8Array(await api.getFileById(asFileId(mdEnt.id)));
-    if (raw.length === 0) {
-      await api.pushFile({
-        fileId: asFileId(mdEnt.id),
-        parentId: folderId,
-        name: `${base}.md`,
-        domain: NoteDomain.NOTE,
-        bodyString: body,
-        isCreate: false,
-      });
-      console.log('filled empty cloud .md', base);
-    } else {
-      console.log('left non-empty cloud .md', base, raw.length);
-    }
-  }
-
   const after = await getDirectoryEntries(api, folderId);
   const created = after.find((e) => e.name === `${base}.note`);
   if (!created) throw new Error(`verify failed: ${base}.note missing after restore`);
@@ -137,7 +122,16 @@ for (const date of dates) {
     await api.getFileById(asFileId(created.id), { convert: false }),
   );
   if (verify.length === 0) throw new Error(`verify failed: ${base}.note fetch is 0 bytes`);
-  const rel = asRelPath(`内在世界/日记/2026/${base}.md`);
+
+  const leftoverMd = after.find((e) => e.name === `${base}.md`) ?? mdEnt;
+  if (leftoverMd) {
+    // Official app hides extensions: leftover `.md` shows as a second same-title diary.
+    // Never deleteFile the `.note`. The `.md` sibling is the duplicate.
+    await api.deleteFile(asFileId(leftoverMd.id));
+    console.log('deleted leftover cloud .md', base, leftoverMd.id);
+  }
+
+  const rel = asRelPath(`内在世界/日记/${date.slice(0, 4)}/${base}.md`);
   const prev = meta.getFileInfo(rel);
   meta.setFileInfo(rel, {
     fileId: asFileId(created.id),

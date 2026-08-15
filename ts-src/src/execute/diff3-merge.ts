@@ -145,6 +145,7 @@ async function uploadMergedFile(opts: {
       action: 'merge-upload',
       direction: 'push',
       ...logMeta,
+      ...(ulResult.domain != null ? { domain: ulResult.domain } : {}),
     });
     return 'merged';
   } catch (e: unknown) {

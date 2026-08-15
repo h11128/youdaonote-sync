@@ -93,6 +93,7 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
     action: 'conflict-upload',
     direction: 'push',
     ...logMeta,
+    ...(result.domain != null ? { domain: result.domain } : {}),
   });
   stats.uploaded++;
   stats.conflicts++;

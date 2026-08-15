@@ -9,6 +9,7 @@ import type { MetadataStore } from '../metadata/store.js';
 import { markdownToNoteJson } from '../convert/md-to-note.js';
 import { normalizeSep } from '../scan/name.js';
 import { requireNonEmpty } from '../util/preconditions.js';
+import { bindDiaryNoteTarget } from './diary-note-sibling.js';
 import { pushWithRecovery } from './upload-push.js';
 
 const TEXT_EXTS = new Set([
@@ -44,6 +45,7 @@ export interface UploadResult {
   readonly fileId: FileId;
   readonly cloudMtime: EpochSeconds;
   readonly parentId: DirId;
+  readonly domain?: NoteDomain;
 }
 
 export interface EnsureParentDirOpts {
@@ -156,6 +158,83 @@ function extractCloudMtime(result: Record<string, unknown>): EpochSeconds {
   return (typeof mtimeVal === 'number' ? mtimeVal : Math.floor(Date.now() / 1000)) as EpochSeconds;
 }
 
+function resultOf(
+  fileId: FileId,
+  result: Record<string, unknown>,
+  parentId: DirId,
+  domain?: NoteDomain,
+): UploadResult {
+  requireNonEmpty('upload.fileId', fileId);
+  return {
+    fileId,
+    cloudMtime: extractCloudMtime(result),
+    parentId,
+    ...(domain != null ? { domain } : {}),
+  };
+}
+
+async function listParentEntries(
+  api: YoudaoNoteApi,
+  parentId: DirId,
+): Promise<{ name: string; id: string }[]> {
+  const listed = await api.getDirInfoById(parentId);
+  return (listed.entries ?? []).map((row) => ({
+    name: row.fileEntry.name,
+    id: row.fileEntry.id,
+  }));
+}
+
+async function uploadBinary(o: {
+  api: YoudaoNoteApi;
+  fileId: FileId;
+  parentId: DirId;
+  name: string;
+  isCreate: boolean;
+  rawBuf: Buffer;
+}): Promise<UploadResult> {
+  const { fileId, result } = await pushWithRecovery({
+    api: o.api,
+    fileId: o.fileId,
+    parentId: o.parentId,
+    name: o.name,
+    isCreate: o.isCreate,
+    binary: true,
+    fileData: new Uint8Array(o.rawBuf),
+  });
+  return resultOf(fileId, result, o.parentId);
+}
+
+async function uploadText(o: {
+  api: YoudaoNoteApi;
+  fileId: FileId;
+  parentId: DirId;
+  name: string;
+  isCreate: boolean;
+  ext: string;
+  existingDomain?: NoteDomain;
+  content: string;
+}): Promise<UploadResult> {
+  const bound = await bindDiaryNoteTarget({
+    name: o.name,
+    fileId: o.fileId,
+    isCreate: o.isCreate,
+    needsNote: o.ext === '.note' || o.ext === '.clip' || o.existingDomain === NoteDomain.NOTE,
+    listParent: () => listParentEntries(o.api, o.parentId),
+  });
+  const domain = bound.needsNote ? NoteDomain.NOTE : NoteDomain.MARKDOWN;
+  const { fileId, result } = await pushWithRecovery({
+    api: o.api,
+    fileId: bound.fileId as FileId,
+    parentId: o.parentId,
+    name: bound.name,
+    isCreate: bound.isCreate,
+    binary: false,
+    domain,
+    bodyString: bound.needsNote ? markdownToNoteJson(o.content) : o.content,
+  });
+  return resultOf(fileId, result, o.parentId, domain);
+}
+
 /**
  * Upload a single local file to the cloud.
  */
@@ -175,40 +254,19 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
   const isCreate = !opts.existingFileId;
   const fileId = opts.existingFileId ?? YoudaoNoteApi.generateFileId();
   const parts = normalizeSep(relPath).split('/');
-  const popped = parts.pop();
-  const name: string = popped ?? basename(relPath);
-
+  const name = parts.pop() ?? basename(relPath);
   const rawBuf = opts.preReadBuffer ?? readFileSync(localPath);
-
   if (!isTextFile(ext)) {
-    const { fileId: resolvedId, result } = await pushWithRecovery({
-      api,
-      fileId,
-      parentId,
-      name,
-      isCreate,
-      binary: true,
-      fileData: new Uint8Array(rawBuf),
-    });
-    requireNonEmpty('upload.fileId', resolvedId);
-    return { fileId: resolvedId, cloudMtime: extractCloudMtime(result), parentId };
+    return uploadBinary({ api, fileId, parentId, name, isCreate, rawBuf });
   }
-
-  const content = rawBuf.toString('utf-8');
-  const needsNote = ext === '.note' || ext === '.clip' || opts.existingDomain === NoteDomain.NOTE;
-  const domain = needsNote ? NoteDomain.NOTE : NoteDomain.MARKDOWN;
-  const bodyString = needsNote ? markdownToNoteJson(content) : content;
-
-  const { fileId: resolvedId, result } = await pushWithRecovery({
+  return uploadText({
     api,
     fileId,
     parentId,
     name,
     isCreate,
-    binary: false,
-    domain,
-    bodyString,
+    ext,
+    content: rawBuf.toString('utf-8'),
+    ...(opts.existingDomain != null ? { existingDomain: opts.existingDomain } : {}),
   });
-  requireNonEmpty('upload.fileId', resolvedId);
-  return { fileId: resolvedId, cloudMtime: extractCloudMtime(result), parentId };
 }

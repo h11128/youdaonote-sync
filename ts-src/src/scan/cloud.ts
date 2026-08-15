@@ -72,7 +72,9 @@ async function bfsScan(
   async function processItem(item: QueueItem): Promise<void> {
     try {
       const { entries, subdirs } = await fetchDir(api, item.dirId, item.basePath);
-      for (const [rel, cloud] of entries) files.set(rel, cloud);
+      for (const [rel, cloud] of entries) {
+        files.set(rel, pickPreferredCloud(files.get(rel), cloud));
+      }
       for (const sub of subdirs) {
         if (!visited.has(sub.dirId)) {
           visited.add(sub.dirId);
@@ -101,6 +103,24 @@ async function bfsScan(
     if (inflight === 0 && queue.length === 0) resolve();
   });
   return files;
+}
+
+/** When `.note` and `.md` map to the same local path, keep the official-app `.note`. */
+export function pickPreferredCloud(prev: CloudFile | undefined, next: CloudFile): CloudFile {
+  if (!prev) return next;
+  const rank = (name: string): number => {
+    if (name.endsWith('.note') || name.endsWith('.clip')) return 2;
+    if (name.endsWith('.md')) return 0;
+    return 1;
+  };
+  const prevRank = rank(prev.name);
+  const nextRank = rank(next.name);
+  if (nextRank !== prevRank) {
+    const keep = nextRank > prevRank ? next : prev;
+    logger.warn(`Cloud scan: stem collision "${prev.name}" vs "${next.name}" → keep ${keep.name}`);
+    return keep;
+  }
+  return next.mtime >= prev.mtime ? next : prev;
 }
 
 function buildRelPath(basePath: RelPath | '', name: string): RelPath {

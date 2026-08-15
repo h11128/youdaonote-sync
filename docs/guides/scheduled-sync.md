@@ -84,6 +84,30 @@ Expect: Action points at `scripts\scheduled-sync.ps1`; log lines use `[yyyy-MM-d
 - Use visible `cmd.exe` / `python.exe` that flashes every run
 - Treat PE “Log file not found” style alerts as sync API failure (fixed; report PE probe bugs separately)
 
+## Diary `.md` + `.note` pair (official app shows two same titles)
+
+The official app hides extensions. If the cloud folder has both
+`2026年M月D日.md` and `2026年M月D日.note`, the UI shows two identical
+「2026年M月D日」rows. That is a sync bug, not two real diaries.
+
+How it happens: scheduled sync uploads local git `.md` as a **new**
+markdown-domain file while the official-app `.note` already exists
+(Youdao treats `.md` and `.note` as different names, so 20108 does not
+fire). Log line looks like `↑ 内在世界/日记/2026/2026年8月13日.md`.
+
+Prevention (in engine): upload binds a diary `.md` to the same-stem
+`.note`; cloud scan prefers `.note` when both map to the same local path.
+
+Cleanup (never `deleteFile` a diary `.note`):
+
+```bash
+npx tsx scripts/merge-diary-md-note-pairs.mts
+npx tsx scripts/merge-diary-md-note-pairs.mts --apply 2026年8月13日
+```
+
+`--apply` pushes local `.md` onto the `.note` (`restore --force`) then
+deletes only the leftover cloud `.md`.
+
 ## Related
 
 - Metadata rules: [sync-metadata-invariants](../reference/sync-metadata-invariants.md)

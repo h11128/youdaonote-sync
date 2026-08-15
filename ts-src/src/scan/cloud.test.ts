@@ -81,6 +81,20 @@ describe('scanCloud', () => {
     expect(result.has(asRelPath('visible.md'))).toBe(true);
   });
 
+  it('prefers .note over same-stem .md', async () => {
+    const api = mockApi({
+      'root-dir': [
+        { id: 'md-id', name: '2026年8月13日.md', modifyTimeForSort: 9000 },
+        { id: 'note-id', name: '2026年8月13日.note', modifyTimeForSort: 1000 },
+      ],
+    });
+
+    const result = await scanCloud(api, asDirId('root-dir'));
+    const hit = result.get(asRelPath('2026年8月13日.md'));
+    expect(hit?.id).toBe('note-id');
+    expect(hit?.name).toBe('2026年8月13日.note');
+  });
+
   it('throws on empty rootDirId', async () => {
     const api = mockApi({});
     await expect(scanCloud(api, asDirId(''))).rejects.toThrow();

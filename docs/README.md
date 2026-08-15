@@ -19,7 +19,7 @@
 | Doc | Purpose |
 |-----|---------|
 | [configuration.md](./guides/configuration.md) | Config SOT — single directory, doctor, fields |
-| [scheduled-sync.md](./guides/scheduled-sync.md) | Windows Task `YoudaoNoteSync` — silent PS1 + cache gate |
+| [scheduled-sync.md](./guides/scheduled-sync.md) | Windows Task `YoudaoNoteSync` — silent PS1 + cache gate; diary `.md`+`.note` pairs |
 
 ## design/ — Newer RFCs (chrono order, ≤7)
 

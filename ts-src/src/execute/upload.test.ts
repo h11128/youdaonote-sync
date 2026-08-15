@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { uploadFile } from './upload.js';
 import { MetadataStore } from '../metadata/store.js';
-import { asDirId, asFileId, asRelPath } from '../types/common.js';
+import { asDirId, asFileId, asRelPath, NoteDomain } from '../types/common.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 
 function makeMockApi(): YoudaoNoteApi {
@@ -17,6 +17,7 @@ function makeMockApi(): YoudaoNoteApi {
     }),
     createDir: vi.fn().mockResolvedValue({ fileEntry: { id: 'dir-1' } }),
     generateFileId: vi.fn().mockReturnValue(asFileId('gen-id')),
+    getDirInfoById: vi.fn().mockResolvedValue({ entries: [] }),
   } as unknown as YoudaoNoteApi;
 }
 
@@ -163,6 +164,38 @@ describe('uploadFile: binary routing', () => {
 
     expect(api.pushBinaryFile).toHaveBeenCalled();
     expect(api.pushFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('uploadFile: diary .note sibling', () => {
+  const env = setupTestEnv();
+
+  it('binds diary .md upload to an existing same-stem .note', async () => {
+    const localPath = join(env.localDir, '2026年8月13日.md');
+    writeFileSync(localPath, '# diary');
+    const api = makeMockApi();
+    vi.mocked(api.getDirInfoById).mockResolvedValue({
+      entries: [
+        { fileEntry: { id: 'WEB-note', name: '2026年8月13日.note' } },
+        { fileEntry: { id: 'WEB-md', name: '2026年8月13日.md' } },
+      ],
+    });
+
+    const result = await uploadFile({
+      api,
+      meta: env.meta,
+      localPath,
+      relPath: asRelPath('内在世界/日记/2026/2026年8月13日.md'),
+      rootDirId: asDirId('root'),
+    });
+
+    const arg = vi.mocked(api.pushFile).mock.calls[0]![0];
+    expect(arg.fileId).toBe('WEB-note');
+    expect(arg.name).toBe('2026年8月13日.note');
+    expect(arg.isCreate).toBe(false);
+    expect(arg.domain).toBe(NoteDomain.NOTE);
+    expect(result.domain).toBe(NoteDomain.NOTE);
+    expect(result.fileId).toBe('result-id');
   });
 });
 
