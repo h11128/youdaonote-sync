@@ -99,7 +99,8 @@ Prevention (in engine): cloud scan maps `.note` → local `.md` and prefers
 `.note` on stem collision; cache snap restores `.note` name when domain is
 NOTE; empty `file_id` in metadata forces a full listing; cache snaps hydrate
 local-only paths by listing the parent with the same `.note`→`.md` identity
-as a full scan; upload uses the scanned file id/name/domain (update, never
+as a full scan (a listing that misses known sibling ids is treated as a stale
+dir id and falls back to a full scan); upload uses the scanned file id/name/domain (update, never
 create a second `foo.md`); any local `.md` still binds to a same-stem `.note`
 if create would otherwise miss it.
 

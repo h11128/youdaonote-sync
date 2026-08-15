@@ -5,7 +5,7 @@
  */
 import { posix } from 'node:path';
 import type { DirId, RelPath } from '../types/common.js';
-import { asFileId, asRelPath } from '../types/common.js';
+import { asDirId, asFileId, asRelPath } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { DirBrowser } from './cloud.js';
@@ -42,10 +42,23 @@ function inferDirId(
   if (!parent) return rootDirId;
   const cached = meta.getDirId(parent);
   if (cached) return cached;
+  const asDir = cloudSnap.get(parent);
+  if (asDir?.isDir && asDir.id) return asDirId(String(asDir.id));
   for (const [rel, cf] of cloudSnap) {
     if (!cf.isDir && parentRel(rel) === parent && cf.parentId) return cf.parentId;
   }
   return null;
+}
+
+function listingMatchesParent(
+  entries: [RelPath, CloudFile][],
+  parent: RelPath | '',
+  cloudSnap: Map<RelPath, CloudFile>,
+): boolean {
+  const expected = [...cloudSnap].filter(([rel, cf]) => !cf.isDir && parentRel(rel) === parent);
+  if (expected.length === 0) return true;
+  const listedIds = new Set(entries.map(([, cf]) => String(cf.id)));
+  return expected.some(([, cf]) => listedIds.has(String(cf.id)));
 }
 
 function localOnlyPaths(
@@ -118,12 +131,15 @@ export async function hydrateLocalOnlyFromParents(
       blocked += wanted.size;
       continue;
     }
-    merged += mergeWanted(
-      collectDirEntries(listed.entries, dirId as DirId, base).entries,
-      wanted,
-      cloudSnap,
-      meta,
-    );
+    const { entries } = collectDirEntries(listed.entries, dirId as DirId, base);
+    if (!listingMatchesParent(entries, base, cloudSnap)) {
+      logger.warn(
+        `hydrate: listing for "${base}" missed known siblings — treating dir id as stale`,
+      );
+      blocked += wanted.size;
+      continue;
+    }
+    merged += mergeWanted(entries, wanted, cloudSnap, meta);
   }
   return { merged, blocked };
 }

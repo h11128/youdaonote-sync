@@ -25,7 +25,7 @@ as a state machine, not a cache dump.
 11. **Youdao push 20108 / 211 must recover** (reuse duplicate id / retry update), not leave a failed create as "done".
 12. **Upload of a path present in this sync's cloud snapshot must update that file.** Use the scanned `id` / `name` / `domain` (`.note` stays `.note`). Empty or stale metadata `file_id` is not permission to `isCreate` a second `foo.md` beside `foo.note`. Metadata id is only a fallback when the snapshot has no file.
 13. **Incomplete index cannot stand in for a live cloud listing.** Cache snap omits empty `file_id` rows; live scan still sees the mapped `.note`. If any `files.file_id` is empty, skip cache and full-scan so membership matches live listing, then write ids back.
-14. **One identity everywhere.** `mapCloudName` / `officialAppName` / `pickPreferredCloud` are the only rules for "this local path is that cloud file". Incremental cache must hydrate local-only paths by listing the parent with those same rules before classify — "not in cache" is not "not on cloud".
+14. **One identity everywhere.** `mapCloudName` / `officialAppName` / `pickPreferredCloud` are the only rules for "this local path is that cloud file". Incremental cache must hydrate local-only paths by listing the parent with those same rules before classify — "not in cache" is not "not on cloud". A successful parent list that omits known same-parent sibling ids is a stale dir id: increment `blocked`, skip merge, and fall back to a full scan. A listing that still shows those sibling ids may treat a missing wanted path as truly local-new.
 
 ## Tests required when touching these paths
 
@@ -38,6 +38,7 @@ as a state machine, not a cache dump.
 - CLI / scheduled wrapper: file errors → non-zero exit; log has `Finished with exit code … (sync=… cache=…)`
 - Cloud snapshot has `.note` mapped to local `.md` + empty metadata `file_id` → upload updates that `.note` (`isCreate=false`), does not create `.md`
 - Metadata has any empty `file_id` → `tryCachedCloudScan` returns null (full scan)
+- Hydrate: listing misses known sibling ids → `blocked` and no merge; listing has sibling + wanted `.note` → merge; listing has sibling only → local-new, not blocked
 
 ## Do not
 
@@ -52,7 +53,7 @@ as a state machine, not a cache dump.
 
 ```bash
 cd ts-src
-npx vitest run src/engine/e2e-metadata-invariants.test.ts src/engine/purge-nonsyncable.test.ts src/scan/cloud-cache.test.ts
+npx vitest run src/engine/e2e-metadata-invariants.test.ts src/engine/e2e-hydrate-cache.test.ts src/engine/purge-nonsyncable.test.ts src/scan/cloud-cache.test.ts src/scan/hydrate-cached-cloud.test.ts
 npm run diagnose -- cache          # expect empty file_id but local: 0 (else exit 1)
 npm run diagnose -- purge-inactive --dry-run
 ```
