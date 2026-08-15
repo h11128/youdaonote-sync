@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FileState, SyncAction, SyncLogMetadata } from '../types/state.js';
 import { stateToAction } from '../types/state.js';
-import type { DirId, FileId, NoteDomain, RelPath, SyncDirection } from '../types/common.js';
+import type { DirId, RelPath, SyncDirection } from '../types/common.js';
 import { joinRelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { handleDownload } from './download.js';
@@ -14,6 +14,7 @@ import {
   handleUpload,
 } from './action-handlers.js';
 import { handleMove } from './move-handler.js';
+import { resolveUploadMeta } from './resolve-upload-target.js';
 import { pLimit } from '../util/concurrency.js';
 import { emptyStats, type ExecuteContext, type SyncStats } from './types.js';
 import { logger } from '../util/logger.js';
@@ -62,15 +63,6 @@ function partitionEntries(opts: PartitionOpts): {
 
 function formatError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
-}
-
-function resolveUploadMeta(
-  record: { fileId?: FileId; domain?: NoteDomain } | undefined,
-  cloudFile: CloudFile | undefined,
-): { fileId?: FileId; domain?: NoteDomain } | undefined {
-  if (record != null) return record;
-  const domain = cloudFile?.domain;
-  return domain != null ? { domain } : undefined;
 }
 
 type Entry = [RelPath, FileState, SyncAction, SyncLogMetadata | undefined];

@@ -18,7 +18,7 @@ import type { ExecuteContext, SyncStats } from './types.js';
 export async function handleUpload(o: {
   relPath: RelPath;
   localPath: string;
-  metaRecord: { fileId?: FileId; domain?: NoteDomain } | undefined;
+  metaRecord: { fileId?: FileId; domain?: NoteDomain; name?: string } | undefined;
   ctx: ExecuteContext;
   stats: SyncStats;
   logMeta?: SyncLogMetadata | undefined;
@@ -41,6 +41,7 @@ export async function handleUpload(o: {
   };
   if (metaRecord?.fileId) ulOpts.existingFileId = metaRecord.fileId;
   if (metaRecord?.domain != null) ulOpts.existingDomain = metaRecord.domain;
+  if (metaRecord?.name) ulOpts.existingName = metaRecord.name;
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
   const result = await uploadFile(ulOpts);
   meta.recordSync(relPath, {

@@ -23,6 +23,7 @@ as a state machine, not a cache dump.
 9. **`cacheCloudFileInfo` conflict updates must refresh `cloud_mtime`** along with `file_id`.
 10. **Empty `file_id` rows stay calibratable** (`shouldSkipCalibration` must not skip them). Hash local files before calibrate so Case2 can re-link.
 11. **Youdao push 20108 / 211 must recover** (reuse duplicate id / retry update), not leave a failed create as "done".
+12. **Upload of a path present in this sync's cloud snapshot must update that file.** Use the scanned `id` / `name` / `domain` (`.note` stays `.note`). Empty or stale metadata `file_id` is not permission to `isCreate` a second `foo.md` beside `foo.note`. Metadata id is only a fallback when the snapshot has no file.
 
 ## Tests required when touching these paths
 
@@ -33,6 +34,7 @@ as a state machine, not a cache dump.
 - Non-syncable / inactive paths → row **removed** (`getFileInfo == null`), not empty `file_id`
 - `diagnose cache` exits `1` when `empty file_id but local > 0`
 - CLI / scheduled wrapper: file errors → non-zero exit; log has `Finished with exit code … (sync=… cache=…)`
+- Cloud snapshot has `.note` mapped to local `.md` + empty metadata `file_id` → upload updates that `.note` (`isCreate=false`), does not create `.md`
 
 ## Do not
 

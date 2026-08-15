@@ -11,6 +11,7 @@ import {
 import type { CloudFile } from '../types/scan.js';
 import type { SyncLogMetadata } from '../types/state.js';
 import { downloadFile } from './download.js';
+import { applyCloudUploadTarget } from './resolve-upload-target.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
 import type { ExecuteContext, SyncStats } from './types.js';
 
@@ -81,7 +82,7 @@ async function conflictPushFallback(opts: ConflictOpts): Promise<void> {
   const fileBuffer = existsSync(localPath) ? readFileSync(localPath) : undefined;
   const ulOpts: UploadFileOpts = { api, meta, localPath, relPath, rootDirId };
   if (fileBuffer) ulOpts.preReadBuffer = fileBuffer;
-  if (cloudFile?.id) ulOpts.existingFileId = cloudFile.id as FileId;
+  if (cloudFile) applyCloudUploadTarget(ulOpts, cloudFile);
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
   const result = await uploadFile(ulOpts);
   const hashed = ctx.hashFn && fileBuffer ? ctx.hashFn(fileBuffer, localPath) : null;

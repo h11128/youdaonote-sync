@@ -167,6 +167,35 @@ describe('uploadFile: binary routing', () => {
   });
 });
 
+describe('uploadFile: scanned cloud name', () => {
+  const env = setupTestEnv();
+
+  it('updates the existing .note name instead of creating a .md', async () => {
+    const localPath = join(env.localDir, '2026年8月13日.md');
+    writeFileSync(localPath, '# diary');
+    const api = makeMockApi();
+
+    const result = await uploadFile({
+      api,
+      meta: env.meta,
+      localPath,
+      relPath: asRelPath('内在世界/日记/2026/2026年8月13日.md'),
+      rootDirId: asDirId('root'),
+      existingFileId: asFileId('WEB-note'),
+      existingDomain: NoteDomain.NOTE,
+      existingName: '2026年8月13日.note',
+    });
+
+    const arg = vi.mocked(api.pushFile).mock.calls[0]![0];
+    expect(arg.fileId).toBe('WEB-note');
+    expect(arg.name).toBe('2026年8月13日.note');
+    expect(arg.isCreate).toBe(false);
+    expect(arg.domain).toBe(NoteDomain.NOTE);
+    expect(result.domain).toBe(NoteDomain.NOTE);
+    expect(api.getDirInfoById).not.toHaveBeenCalled();
+  });
+});
+
 describe('uploadFile: diary .note sibling', () => {
   const env = setupTestEnv();
 

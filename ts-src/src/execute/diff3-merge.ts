@@ -11,6 +11,7 @@ import {
   type RelPath,
 } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
+import { applyCloudUploadTarget } from './resolve-upload-target.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
 import { detectFileType, convertToMarkdown } from './download.js';
 import { threeWayMerge } from '../algo/merge.js';
@@ -133,8 +134,8 @@ async function uploadMergedFile(opts: {
       localPath,
       relPath,
       rootDirId,
-      existingFileId: cloudFile.id as FileId,
     };
+    applyCloudUploadTarget(ulOpts, cloudFile);
     if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
     const ulResult = await uploadFile(ulOpts);
     meta.recordSync(relPath, {

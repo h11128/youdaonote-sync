@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeFilename, mapCloudName, normalizeSep } from './name.js';
+import { cachedCloudName, sanitizeFilename, mapCloudName, normalizeSep } from './name.js';
+import { NoteDomain } from '../types/common.js';
 
 describe('sanitizeFilename', () => {
   it('replaces < with _', () => {
@@ -34,6 +35,18 @@ describe('sanitizeFilename', () => {
 
   it('deletes newlines', () => {
     expect(sanitizeFilename('line1\nline2\r.md')).toBe('line1line2.md');
+  });
+});
+
+describe('cachedCloudName', () => {
+  it('restores .note when cache domain is NOTE but path is local .md', () => {
+    expect(cachedCloudName('内在世界/日记/2026/2026年8月13日.md', NoteDomain.NOTE)).toBe(
+      '2026年8月13日.note',
+    );
+  });
+
+  it('keeps markdown basename for MARKDOWN domain', () => {
+    expect(cachedCloudName('docs/readme.md', NoteDomain.MARKDOWN)).toBe('readme.md');
   });
 });
 

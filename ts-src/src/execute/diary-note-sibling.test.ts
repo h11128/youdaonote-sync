@@ -1,18 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import {
-  bindDiaryNoteTarget,
-  diaryNoteSiblingName,
-  findNamedFileId,
-} from './diary-note-sibling.js';
+import { bindDiaryNoteTarget, findNamedFileId, noteSiblingName } from './diary-note-sibling.js';
 
-describe('diaryNoteSiblingName', () => {
-  it('maps a diary markdown name to the official-app .note', () => {
-    expect(diaryNoteSiblingName('2026年8月13日.md')).toBe('2026年8月13日.note');
+describe('noteSiblingName', () => {
+  it('maps any local markdown name to the official-app .note', () => {
+    expect(noteSiblingName('2026年8月13日.md')).toBe('2026年8月13日.note');
+    expect(noteSiblingName('readme.md')).toBe('readme.note');
   });
 
-  it('ignores non-diary markdown', () => {
-    expect(diaryNoteSiblingName('readme.md')).toBeNull();
-    expect(diaryNoteSiblingName('2026年8月13日.note')).toBeNull();
+  it('ignores non-markdown names', () => {
+    expect(noteSiblingName('2026年8月13日.note')).toBeNull();
   });
 });
 
@@ -24,6 +20,24 @@ describe('bindDiaryNoteTarget', () => {
       isCreate: true,
       needsNote: false,
       listParent: () => Promise.resolve([{ name: '2026年8月13日.note', id: 'WEB-note' }]),
+    });
+    expect(bound).toEqual({
+      name: '2026年8月13日.note',
+      fileId: 'WEB-note',
+      isCreate: false,
+      needsNote: true,
+    });
+  });
+
+  it('rewrites .md to .note on update without listing the parent', async () => {
+    const bound = await bindDiaryNoteTarget({
+      name: '2026年8月13日.md',
+      fileId: 'WEB-note',
+      isCreate: false,
+      needsNote: true,
+      listParent: () => {
+        throw new Error('must not list parent on already-bound update');
+      },
     });
     expect(bound).toEqual({
       name: '2026年8月13日.note',

@@ -268,6 +268,20 @@ describe('loadCloudFilesFromCache', () => {
     expect(result!.has(asRelPath('doc.md'))).toBe(true);
     expect(result!.has(asRelPath('doc.conflict.md'))).toBe(false);
   });
+
+  it('restores official-app .note name for NOTE-domain local .md paths', () => {
+    meta.cacheCloudFileInfo(asRelPath('内在世界/日记/2026/2026年8月13日.md'), {
+      fileId: 'WEB-note' as FileId,
+      cloudMtime: asEpochSeconds(100),
+      parentId: 'root' as DirId,
+      domain: 0,
+      createTime: asEpochSeconds(50),
+    });
+    const result = loadCloudFilesFromCache(meta);
+    expect(result?.get(asRelPath('内在世界/日记/2026/2026年8月13日.md'))?.name).toBe(
+      '2026年8月13日.note',
+    );
+  });
 });
 
 describe('tryCachedCloudScan: 24h full scan interval', () => {

@@ -1,10 +1,13 @@
-/** Same-stem diary `.md` + `.note` on Youdao: App hides extensions → two titles. */
+/** Local `.md` maps to official-app `.note` (Youdao hides extensions). */
 
-export const DIARY_MD_RE = /^(\d{4}年\d{1,2}月\d{1,2}日)\.md$/;
+export function noteSiblingName(localName: string): string | null {
+  if (!localName.toLowerCase().endsWith('.md')) return null;
+  return `${localName.slice(0, -3)}.note`;
+}
 
+/** @deprecated use noteSiblingName */
 export function diaryNoteSiblingName(localName: string): string | null {
-  const m = DIARY_MD_RE.exec(localName);
-  return m ? `${m[1]}.note` : null;
+  return noteSiblingName(localName);
 }
 
 export function findNamedFileId(
@@ -27,8 +30,11 @@ export async function bindDiaryNoteTarget(opts: {
     isCreate: opts.isCreate,
     needsNote: opts.needsNote,
   };
-  const noteName = diaryNoteSiblingName(opts.name);
+  const noteName = noteSiblingName(opts.name);
   if (!noteName) return unchanged;
+  if (!opts.isCreate && opts.needsNote) {
+    return { ...unchanged, name: noteName, needsNote: true };
+  }
   const sib = findNamedFileId(await opts.listParent(), noteName);
   if (!sib) return unchanged;
   return { name: noteName, fileId: sib, isCreate: false, needsNote: true };

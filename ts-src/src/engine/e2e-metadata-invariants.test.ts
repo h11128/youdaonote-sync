@@ -194,6 +194,66 @@ describe('E2E metadata: delete record-then-remove', () => {
   });
 });
 
+describe('E2E metadata: upload reuses scanned .note', () => {
+  const ctx = useE2ECtx();
+
+  it('cloud .note + empty file_id updates that note instead of creating .md', async () => {
+    const localName = '2026年8月13日.md';
+    const { engine, meta, recorder } = openMappedNoteEngine(ctx, localName, '# first');
+    const first = await engine.sync();
+    expect(first.stats.errors).toBe(0);
+    expect(recorder.pushed.some((p) => p.name.endsWith('.md') && p.isCreate)).toBe(false);
+    expect(meta.getFileInfo(asRelPath(localName))?.fileId).toBe('WEB-note-813');
+
+    writeFileSync(join(ctx.localDir, localName), '# local edited');
+    const second = await engine.sync();
+    expect(second.stats.errors).toBe(0);
+    expect(second.stats.uploaded).toBe(1);
+    expect(recorder.pushed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: '2026年8月13日.note',
+          fileId: 'WEB-note-813',
+          isCreate: false,
+        }),
+      ]),
+    );
+    expect(recorder.pushed.some((p) => p.name.endsWith('.md'))).toBe(false);
+    engine.close();
+  });
+});
+
+function openMappedNoteEngine(
+  ctx: { localDir: string; metaPath: string },
+  localName: string,
+  body: string,
+): { engine: SyncEngine; meta: MetadataStore; recorder: MockApiRecorder } {
+  const meta = new MetadataStore(ctx.metaPath);
+  writeFileSync(join(ctx.localDir, localName), body);
+  meta.setFileInfo(asRelPath(localName), {
+    fileId: '' as FileId,
+    cloudMtime: asEpochSeconds(50),
+    localMtime: asEpochSeconds(50),
+    contentHash: asContentHash('stale'),
+    lastSyncAt: asEpochSeconds(50),
+  });
+  meta.save();
+  const recorder: MockApiRecorder = { pushed: [], deleted: [], moved: [], dirs: [] };
+  const engine = new SyncEngine({
+    cookiesPath: '',
+    metadataPath: ctx.metaPath,
+    localDir: ctx.localDir,
+    api: buildMockApi(
+      [makeCloudEntry('WEB-note-813', '2026年8月13日.note', 50, { domain: 0 })],
+      new Map([['WEB-note-813', body]]),
+      recorder,
+    ),
+    meta,
+    autoGit: false,
+  });
+  return { engine, meta, recorder };
+}
+
 describe('E2E metadata: calibrate and exclude', () => {
   const ctx = useE2ECtx();
 

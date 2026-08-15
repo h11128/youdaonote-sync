@@ -4,12 +4,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { trashPath, executeAll } from './executor.js';
 import type { ExecuteContext } from './types.js';
-import { asRelPath, asEpochSeconds } from '../types/common.js';
-import type { DirId, FileId, RelPath, NoteDomain } from '../types/common.js';
+import { asRelPath, asEpochSeconds, asFileId, asDirId, NoteDomain } from '../types/common.js';
+import type { DirId, FileId, RelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { FileState } from '../types/state.js';
 import type { YoudaoNoteApi } from '../api/client.js';
-import type { MetadataStore } from '../metadata/store.js';
+import { MetadataStore } from '../metadata/store.js';
 
 const noop = vi.fn();
 
@@ -237,6 +237,86 @@ describe('executeAll — failedFiles tracking', () => {
       expect(stats.failedFiles[0]!.path).toBe(asRelPath('fail.md'));
       expect(stats.failedFiles[0]!.action).toBe('deleteCloud');
       expect(stats.failedFiles[0]!.error).toContain('API timeout');
+    }),
+  );
+});
+
+describe('executeAll — upload reuses scanned cloud file', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(noop);
+    vi.spyOn(console, 'error').mockImplementation(noop);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it(
+    'updates mapped .note when metadata file_id is empty',
+    withTmpDir(async (localDir) => {
+      const rel = asRelPath('2026年8月13日.md');
+      writeFileSync(join(localDir, rel), '# edited');
+      const meta = new MetadataStore(join(localDir, 'meta.db'));
+      meta.setFileInfo(rel, {
+        fileId: '' as FileId,
+        cloudMtime: asEpochSeconds(50),
+        localMtime: asEpochSeconds(50),
+      });
+      const pushed: { name: string; fileId: string; isCreate: boolean; domain: number }[] = [];
+      const ctx: ExecuteContext = {
+        api: {
+          pushFile: (opts: {
+            name: string;
+            fileId: string;
+            isCreate?: boolean;
+            domain?: number;
+          }) => {
+            pushed.push({
+              name: opts.name,
+              fileId: opts.fileId,
+              isCreate: Boolean(opts.isCreate),
+              domain: opts.domain ?? -1,
+            });
+            return Promise.resolve({
+              entry: { id: opts.fileId, modifyTimeForSort: 9999 },
+            });
+          },
+          getDirInfoById: () => Promise.resolve({ entries: [] }),
+          createDir: () => Promise.resolve({ fileEntry: { id: 'dir-1' } }),
+        } as unknown as YoudaoNoteApi,
+        meta,
+        rootDirId: asDirId('root'),
+        localDir,
+      };
+      const classified = new Map<RelPath, FileState>([[rel, { kind: 'localModified' }]]);
+      const cloud = new Map<RelPath, CloudFile>([
+        [
+          rel,
+          {
+            id: asFileId('WEB-note-813'),
+            parentId: asDirId('root'),
+            name: '2026年8月13日.note',
+            isDir: false,
+            mtime: asEpochSeconds(50),
+            ctime: asEpochSeconds(40),
+            domain: NoteDomain.NOTE,
+          },
+        ],
+      ]);
+
+      const stats = await executeAll({ classified, cloud, ctx });
+
+      expect(stats.errors).toBe(0);
+      expect(stats.uploaded).toBe(1);
+      expect(pushed).toEqual([
+        {
+          name: '2026年8月13日.note',
+          fileId: 'WEB-note-813',
+          isCreate: false,
+          domain: NoteDomain.NOTE,
+        },
+      ]);
+      expect(meta.getFileInfo(rel)?.fileId).toBe('WEB-note-813');
+      meta.close();
     }),
   );
 });

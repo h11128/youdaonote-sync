@@ -15,7 +15,7 @@ import {
 } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
-import { mapCloudName, sanitizeFilename } from '../scan/name.js';
+import { cachedCloudName, mapCloudName, sanitizeFilename } from '../scan/name.js';
 
 import { seedMetadataFromDesktop } from '../metadata/desktop-data.js';
 
@@ -52,7 +52,7 @@ export function loadCloudFilesFromCache(meta: MetadataStore): Map<RelPath, Cloud
     result.set(asRelPath(path), {
       id: info.fileId,
       parentId: info.parentId as DirId,
-      name: basename(path),
+      name: cachedCloudName(path, info.domain),
       isDir: false,
       mtime: asEpochSeconds(info.cloudMtime),
       ctime: asEpochSeconds(info.createTime),

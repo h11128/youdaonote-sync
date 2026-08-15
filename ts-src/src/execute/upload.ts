@@ -141,6 +141,8 @@ export interface UploadFileOpts {
   existingFileId?: FileId;
   /** Domain of the existing cloud file (from metadata). When set, overrides extension-based domain detection. */
   existingDomain?: NoteDomain;
+  /** Cloud filename. Keep `.note` when updating a mapped official-app file. */
+  existingName?: string;
   hashFn?: (data: Uint8Array, path: string) => ContentHash | null;
   /** Pre-read file buffer to avoid redundant disk reads. */
   preReadBuffer?: Buffer;
@@ -218,7 +220,12 @@ async function uploadText(o: {
     name: o.name,
     fileId: o.fileId,
     isCreate: o.isCreate,
-    needsNote: o.ext === '.note' || o.ext === '.clip' || o.existingDomain === NoteDomain.NOTE,
+    needsNote:
+      o.ext === '.note' ||
+      o.ext === '.clip' ||
+      o.name.endsWith('.note') ||
+      o.name.endsWith('.clip') ||
+      o.existingDomain === NoteDomain.NOTE,
     listParent: () => listParentEntries(o.api, o.parentId),
   });
   const domain = bound.needsNote ? NoteDomain.NOTE : NoteDomain.MARKDOWN;
@@ -254,7 +261,7 @@ export async function uploadFile(opts: UploadFileOpts): Promise<UploadResult> {
   const isCreate = !opts.existingFileId;
   const fileId = opts.existingFileId ?? YoudaoNoteApi.generateFileId();
   const parts = normalizeSep(relPath).split('/');
-  const name = parts.pop() ?? basename(relPath);
+  const name = opts.existingName ?? parts.pop() ?? basename(relPath);
   const rawBuf = opts.preReadBuffer ?? readFileSync(localPath);
   if (!isTextFile(ext)) {
     return uploadBinary({ api, fileId, parentId, name, isCreate, rawBuf });

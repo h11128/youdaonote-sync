@@ -95,8 +95,11 @@ markdown-domain file while the official-app `.note` already exists
 (Youdao treats `.md` and `.note` as different names, so 20108 does not
 fire). Log line looks like `↑ 内在世界/日记/2026/2026年8月13日.md`.
 
-Prevention (in engine): upload binds a diary `.md` to the same-stem
-`.note`; cloud scan prefers `.note` when both map to the same local path.
+Prevention (in engine): cloud scan maps `.note` → local `.md` and prefers
+`.note` on stem collision; cache snap restores `.note` name when domain is
+NOTE; upload uses the scanned file id/name/domain (update, never create a
+second `foo.md`); any local `.md` still binds to a same-stem `.note` if
+create would otherwise miss it.
 
 Cleanup (never `deleteFile` a diary `.note`):
 

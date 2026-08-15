@@ -36,7 +36,7 @@ export function makeCloudEntry(
 }
 
 export interface MockApiRecorder {
-  pushed: { name: string; body: string }[];
+  pushed: { name: string; body: string; isCreate?: boolean; fileId?: string }[];
   deleted: string[];
   moved: string[];
   dirs: string[];
@@ -57,7 +57,12 @@ export function buildMockApi(
       return Promise.resolve(new TextEncoder().encode(content).buffer);
     },
     pushFile: (opts: Record<string, unknown>) => {
-      recorder?.pushed.push({ name: opts.name as string, body: opts.bodyString as string });
+      recorder?.pushed.push({
+        name: opts.name as string,
+        body: opts.bodyString as string,
+        isCreate: Boolean(opts.isCreate),
+        fileId: typeof opts.fileId === 'string' ? opts.fileId : '',
+      });
       return Promise.resolve({
         entry: { id: opts.fileId ?? 'new-id', modifyTimeForSort: Math.floor(Date.now() / 1000) },
       });
