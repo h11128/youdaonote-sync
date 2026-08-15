@@ -25,6 +25,7 @@ as a state machine, not a cache dump.
 11. **Youdao push 20108 / 211 must recover** (reuse duplicate id / retry update), not leave a failed create as "done".
 12. **Upload of a path present in this sync's cloud snapshot must update that file.** Use the scanned `id` / `name` / `domain` (`.note` stays `.note`). Empty or stale metadata `file_id` is not permission to `isCreate` a second `foo.md` beside `foo.note`. Metadata id is only a fallback when the snapshot has no file.
 13. **Incomplete index cannot stand in for a live cloud listing.** Cache snap omits empty `file_id` rows; live scan still sees the mapped `.note`. If any `files.file_id` is empty, skip cache and full-scan so membership matches live listing, then write ids back.
+14. **One identity everywhere.** `mapCloudName` / `officialAppName` / `pickPreferredCloud` are the only rules for "this local path is that cloud file". Incremental cache must hydrate local-only paths by listing the parent with those same rules before classify — "not in cache" is not "not on cloud".
 
 ## Tests required when touching these paths
 

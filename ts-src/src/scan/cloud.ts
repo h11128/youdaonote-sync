@@ -7,9 +7,9 @@ import {
   type NoteDomain,
   type RelPath,
 } from '../types/common.js';
-import type { DirInfoByIdResponse } from '../types/dir.js';
+import type { DirFileEntry, DirInfoByIdResponse } from '../types/dir.js';
 import type { CloudFile } from '../types/scan.js';
-import { mapCloudName } from './name.js';
+import { domainFromCloudName, mapCloudName, pickPreferredCloud } from './cloud-identity.js';
 import { logger } from '../util/logger.js';
 
 /**
@@ -105,23 +105,7 @@ async function bfsScan(
   return files;
 }
 
-/** When `.note` and `.md` map to the same local path, keep the official-app `.note`. */
-export function pickPreferredCloud(prev: CloudFile | undefined, next: CloudFile): CloudFile {
-  if (!prev) return next;
-  const rank = (name: string): number => {
-    if (name.endsWith('.note') || name.endsWith('.clip')) return 2;
-    if (name.endsWith('.md')) return 0;
-    return 1;
-  };
-  const prevRank = rank(prev.name);
-  const nextRank = rank(next.name);
-  if (nextRank !== prevRank) {
-    const keep = nextRank > prevRank ? next : prev;
-    logger.warn(`Cloud scan: stem collision "${prev.name}" vs "${next.name}" → keep ${keep.name}`);
-    return keep;
-  }
-  return next.mtime >= prev.mtime ? next : prev;
-}
+export { pickPreferredCloud } from './cloud-identity.js';
 
 function buildRelPath(basePath: RelPath | '', name: string): RelPath {
   return basePath ? joinRelPath(basePath, name) : asRelPath(name);
@@ -153,7 +137,7 @@ function parseEntry(
     isDir,
     mtime: asEpochSeconds(fe.modifyTimeForSort ?? 0),
     ctime: asEpochSeconds(fe.createTimeForSort ?? 0),
-    domain: (fe.domain ?? 1) as NoteDomain,
+    domain: (fe.domain ?? domainFromCloudName(fe.name)) as NoteDomain,
   };
   const subdir = isDir
     ? { dirId: fe.id as DirId, basePath: buildRelPath(basePath, fe.name) }
@@ -179,9 +163,21 @@ async function fetchDir(
     return { entries: [], subdirs: [] };
   }
 
+  return collectDirEntries(data.entries, dirId, basePath);
+}
+
+/** Same mapping as a full BFS scan: mapCloudName + prefer `.note` on stem collision. */
+export function collectDirEntries(
+  listed: { fileEntry: DirFileEntry }[] | undefined,
+  dirId: DirId,
+  basePath: RelPath | '',
+): {
+  entries: [RelPath, CloudFile][];
+  subdirs: { dirId: DirId; basePath: RelPath }[];
+} {
   const entries: [RelPath, CloudFile][] = [];
   const subdirs: { dirId: DirId; basePath: RelPath }[] = [];
-  for (const entry of data.entries ?? []) {
+  for (const entry of listed ?? []) {
     const parsed = parseEntry(entry.fileEntry, dirId, basePath);
     if (!parsed) continue;
     entries.push([parsed.rel, parsed.cloudFile]);

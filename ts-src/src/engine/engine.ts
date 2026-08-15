@@ -205,8 +205,14 @@ export class SyncEngine {
     this.p?.endPhase();
 
     const { cloudSnap, didFullScan } = await this.scanCloudPhase(rootDirId);
-    const { localSnap, localHashes } = await this.scanLocalPhase(localDir, cloudSnap);
-    return { cloudSnap, localSnap, localHashes, rootDirId, didFullScan };
+    const local = await this.scanLocalPhase(localDir, cloudSnap, rootDirId, didFullScan);
+    return {
+      cloudSnap,
+      localSnap: local.localSnap,
+      localHashes: local.localHashes,
+      rootDirId,
+      didFullScan: didFullScan || local.didFullScan,
+    };
   }
 
   /** Overridable in tests. */
@@ -229,14 +235,20 @@ export class SyncEngine {
   private scanLocalPhase(
     localDir: string,
     cloudSnap: Map<RelPath, CloudFile>,
+    rootDirId: DirId,
+    didFullScan: boolean,
   ): Promise<{
     localSnap: Map<RelPath, LocalFile>;
     localHashes: Map<RelPath, ContentHash | null>;
+    didFullScan: boolean;
   }> {
     return runLocalScanPhase({
       meta: this.meta,
       localDir,
       cloudSnap,
+      api: this.api,
+      rootDirId,
+      didFullScan,
       syncInclude: this.config.syncInclude,
       syncExclude: this.config.syncExclude,
       profiler: this.p,

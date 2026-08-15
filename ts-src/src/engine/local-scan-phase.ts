@@ -1,10 +1,16 @@
 /**
  * Local scan + calibrate + hash warmup — extracted from SyncEngine.
  */
-import type { ContentHash, RelPath } from '../types/common.js';
+import type { ContentHash, DirId, RelPath } from '../types/common.js';
 import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
+import type { DirBrowser } from '../scan/cloud.js';
 import { scanLocalParallel } from '../scan/local.js';
+import { scanCloud } from '../scan/cloud.js';
+import { fetchCurrentVersion, saveScanVersion } from '../scan/cloud-cache.js';
+import { hydrateLocalOnlyFromParents } from '../scan/hydrate-cached-cloud.js';
+import { filterCloudSnap } from './helpers.js';
+import { logger } from '../util/logger.js';
 import { calibrateMetadata } from '../classify/calibrate.js';
 import { computeHashesConcurrent } from '../algo/hash.js';
 import type { HashFileEntry } from '../algo/hash.js';
@@ -14,6 +20,11 @@ export interface LocalScanPhaseOpts {
   meta: MetadataStore;
   localDir: string;
   cloudSnap: Map<RelPath, CloudFile>;
+  api?:
+    | (DirBrowser & { listRecent?: (limit: number) => Promise<Record<string, unknown>[]> })
+    | undefined;
+  rootDirId?: DirId | undefined;
+  didFullScan?: boolean | undefined;
   syncInclude?: string[] | undefined;
   syncExclude?: string[] | undefined;
   profiler?: SyncProfiler | undefined;
@@ -22,6 +33,7 @@ export interface LocalScanPhaseOpts {
 export async function runLocalScanPhase(opts: LocalScanPhaseOpts): Promise<{
   localSnap: Map<RelPath, LocalFile>;
   localHashes: Map<RelPath, ContentHash | null>;
+  didFullScan: boolean;
 }> {
   const p = opts.profiler;
   const scanOpts: { include?: string[]; exclude?: string[] } = {};
@@ -49,9 +61,53 @@ export async function runLocalScanPhase(opts: LocalScanPhaseOpts): Promise<{
   const hashResult = await computeHashesConcurrent(toHash, localHashes, { cache: opts.meta });
   p?.endPhase(`${hashResult.cacheHits} cached, ${hashResult.computed} computed`);
 
+  const hydratedFull = await maybeHydrateCachedCloud(opts, localSnap, p);
+
   p?.beginPhase('calibrateMetadata');
   const calibrated = calibrateMetadata(opts.meta, opts.cloudSnap, localSnap, localHashes);
   p?.endPhase(`${calibrated} calibrated`);
 
-  return { localSnap, localHashes };
+  return { localSnap, localHashes, didFullScan: !!opts.didFullScan || hydratedFull };
+}
+
+async function maybeHydrateCachedCloud(
+  opts: LocalScanPhaseOpts,
+  localSnap: Map<RelPath, LocalFile>,
+  p: SyncProfiler | undefined,
+): Promise<boolean> {
+  if (opts.didFullScan || !opts.api || !opts.rootDirId) return false;
+  p?.beginPhase('hydrateLocalOnlyFromParents');
+  const { merged, blocked } = await hydrateLocalOnlyFromParents({
+    api: opts.api,
+    meta: opts.meta,
+    cloudSnap: opts.cloudSnap,
+    localSnap,
+    rootDirId: opts.rootDirId,
+  });
+  if (blocked > 0) {
+    logger.warn(
+      `hydrate: ${blocked} unverified local-only path(s) — falling back to full cloud scan`,
+    );
+    const live = await scanCloud(opts.api, opts.rootDirId);
+    opts.cloudSnap.clear();
+    for (const [rel, cloud] of live) opts.cloudSnap.set(rel, cloud);
+    applyListingFilters(opts.cloudSnap, opts);
+    const listRecent = opts.api.listRecent;
+    const version = listRecent ? await fetchCurrentVersion({ listRecent }) : 0;
+    saveScanVersion(opts.meta, opts.cloudSnap, version);
+    p?.endPhase(`${merged} linked, ${blocked} blocked → full scan ${opts.cloudSnap.size}`);
+    return true;
+  }
+  p?.endPhase(`${merged} linked`);
+  return false;
+}
+
+function applyListingFilters(cloudSnap: Map<RelPath, CloudFile>, opts: LocalScanPhaseOpts): void {
+  const filterOpts: { include?: string[]; exclude?: string[] } = {};
+  if (opts.syncInclude) filterOpts.include = opts.syncInclude;
+  if (opts.syncExclude) filterOpts.exclude = opts.syncExclude;
+  if (filterOpts.include || filterOpts.exclude) filterCloudSnap(cloudSnap, filterOpts);
+  for (const [path] of [...cloudSnap]) {
+    if ((path.split('/').pop() ?? '').includes('.conflict.')) cloudSnap.delete(path);
+  }
 }

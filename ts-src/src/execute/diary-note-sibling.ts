@@ -1,8 +1,8 @@
-/** Local `.md` maps to official-app `.note` (Youdao hides extensions). */
+import { officialAppName } from '../scan/cloud-identity.js';
 
+/** Local `.md` maps to official-app `.note` (Youdao hides extensions). */
 export function noteSiblingName(localName: string): string | null {
-  if (!localName.toLowerCase().endsWith('.md')) return null;
-  return `${localName.slice(0, -3)}.note`;
+  return officialAppName(localName);
 }
 
 /** @deprecated use noteSiblingName */

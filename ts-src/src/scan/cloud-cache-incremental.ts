@@ -13,6 +13,7 @@ import {
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { mapCloudName, sanitizeFilename } from './name.js';
+import { pickPreferredCloud } from './cloud-identity.js';
 
 export function toNum(val: unknown, fallback: number): number {
   const n = Number(val);
@@ -85,13 +86,14 @@ function processFileEntry(opts: FileEntryParams): void {
     ctime: asEpochSeconds(ctime),
     domain,
   };
-  cloudFiles.set(relPath, info);
+  const chosen = pickPreferredCloud(cloudFiles.get(relPath), info);
+  cloudFiles.set(relPath, chosen);
   meta.cacheCloudFileInfo(relPath, {
-    fileId: fid as FileId,
-    cloudMtime: asEpochSeconds(mtime),
-    parentId: parentId as DirId,
-    domain,
-    createTime: asEpochSeconds(ctime),
+    fileId: chosen.id as FileId,
+    cloudMtime: chosen.mtime,
+    parentId: chosen.parentId,
+    domain: chosen.domain,
+    createTime: chosen.ctime,
   });
 }
 

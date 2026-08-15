@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { cachedCloudName, sanitizeFilename, mapCloudName, normalizeSep } from './name.js';
-import { NoteDomain } from '../types/common.js';
+import { domainFromCloudName, officialAppName, pickPreferredCloud } from './cloud-identity.js';
+import { asDirId, asEpochSeconds, asFileId, NoteDomain } from '../types/common.js';
+import type { CloudFile } from '../types/scan.js';
 
 describe('sanitizeFilename', () => {
   it('replaces < with _', () => {
@@ -83,5 +85,41 @@ describe('normalizeSep', () => {
 
   it('leaves forward slashes unchanged', () => {
     expect(normalizeSep('a/b/c')).toBe('a/b/c');
+  });
+});
+
+describe('officialAppName', () => {
+  it('maps any local .md to the official-app .note name', () => {
+    expect(officialAppName('2026年8月13日.md')).toBe('2026年8月13日.note');
+    expect(officialAppName('readme.md')).toBe('readme.note');
+  });
+
+  it('leaves non-markdown names alone', () => {
+    expect(officialAppName('2026年8月13日.note')).toBeNull();
+  });
+});
+
+describe('pickPreferredCloud', () => {
+  function file(id: string, name: string): CloudFile {
+    return {
+      id: asFileId(id),
+      parentId: asDirId('root'),
+      name,
+      isDir: false,
+      mtime: asEpochSeconds(1),
+      ctime: asEpochSeconds(1),
+      domain: NoteDomain.NOTE,
+    };
+  }
+
+  it('infers NOTE domain from official-app names', () => {
+    expect(domainFromCloudName('day.note')).toBe(NoteDomain.NOTE);
+    expect(domainFromCloudName('readme.md')).toBe(NoteDomain.MARKDOWN);
+  });
+
+  it('keeps .note when the same local path also has .md', () => {
+    const keep = pickPreferredCloud(file('md', 'day.md'), file('note', 'day.note'));
+    expect(keep.id).toBe('note');
+    expect(keep.name).toBe('day.note');
   });
 });
