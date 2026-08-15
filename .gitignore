@@ -58,3 +58,20 @@ htmlcov/
 # git-crypt-tool binary (built from myforge; no longer vendored by install-hooks)
 /target/release/git-crypt-tool
 /target/release/git-crypt-tool.exe
+# BEGIN shared-cursor-rules-projections
+# Hardlinks from E:/shared-cursor-rules. Commit only in that SOT repo.
+# Managed by ensure-projection-gitignore.ps1 (called from sync-rules.ps1).
+.cursor/rules/coding-patterns.mdc
+.cursor/rules/communication-style.mdc
+.cursor/rules/dev-tool-tips.mdc
+.cursor/rules/docs-organization.mdc
+.cursor/rules/host-resource-budget.mdc
+.cursor/rules/implement-review-commit.mdc
+.cursor/rules/jason-dev-practices.mdc
+.cursor/rules/long-task-no-busy-wait.mdc
+.cursor/rules/memory-rules.mdc
+.cursor/rules/pe-lifecycle.mdc
+.cursor/rules/pe-task-official-channel.mdc
+.cursor/rules/prefer-reusable-scripts.mdc
+.cursor/rules/youdao-note-listing-size.mdc
+# END shared-cursor-rules-projections
