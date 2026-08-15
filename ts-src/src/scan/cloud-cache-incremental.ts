@@ -13,7 +13,7 @@ import {
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { mapCloudName, sanitizeFilename } from './name.js';
-import { pickPreferredCloud } from './cloud-identity.js';
+import { domainFromCloudName, pickPreferredCloud } from './cloud-identity.js';
 
 export function toNum(val: unknown, fallback: number): number {
   const n = Number(val);
@@ -70,7 +70,9 @@ function processFileEntry(opts: FileEntryParams): void {
   const { meta, cloudFiles, fe, fid, name, parentId } = opts;
   const mtime = toNum(fe.modifyTimeForSort, 0);
   const ctime = toNum(fe.createTimeForSort, 0);
-  const domain = toNum(fe.domain, 0) as NoteDomain;
+  const domain = (
+    fe.domain != null ? toNum(fe.domain, domainFromCloudName(name)) : domainFromCloudName(name)
+  ) as NoteDomain;
   const existingPath = meta.findByFileId(fid as FileId);
   const relPath =
     (existingPath != null ? asRelPath(existingPath) : null) ??

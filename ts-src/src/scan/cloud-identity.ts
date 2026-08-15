@@ -36,6 +36,13 @@ export function mapCloudName(name: string): string {
   return name;
 }
 
+/** True when this name/ext/domain should stay an official-app `.note`. */
+export function needsOfficialNote(name: string, ext?: string, domain?: NoteDomain): boolean {
+  if (domain === NoteDomain.NOTE) return true;
+  if (domainFromCloudName(name) === NoteDomain.NOTE) return true;
+  return !!ext && domainFromCloudName(`stem${ext}`) === NoteDomain.NOTE;
+}
+
 /** Infer Youdao domain from the official filename when the listing omits it. */
 export function domainFromCloudName(name: string): NoteDomain {
   const lower = name.toLowerCase();

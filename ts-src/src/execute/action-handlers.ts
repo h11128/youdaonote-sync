@@ -3,7 +3,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { FileId, NoteDomain, RelPath } from '../types/common.js';
+import type { FileId, RelPath } from '../types/common.js';
 import { asEpochSeconds } from '../types/common.js';
 import type { SyncLogMetadata } from '../types/state.js';
 import type { CloudFile } from '../types/scan.js';
@@ -11,6 +11,7 @@ import { isUnusableContentHash } from '../algo/content-hash.js';
 import { readFileMtime } from '../util/utils.js';
 import { logger } from '../util/logger.js';
 import { uploadFile, type UploadFileOpts } from './upload.js';
+import { applyUploadTarget, type UploadTarget } from './resolve-upload-target.js';
 import { conflictFallback, type ConflictOpts } from './conflict.js';
 import { tryDiff3Merge, type MergeResult } from './diff3-merge.js';
 import type { ExecuteContext, SyncStats } from './types.js';
@@ -18,7 +19,7 @@ import type { ExecuteContext, SyncStats } from './types.js';
 export async function handleUpload(o: {
   relPath: RelPath;
   localPath: string;
-  metaRecord: { fileId?: FileId; domain?: NoteDomain; name?: string } | undefined;
+  metaRecord: UploadTarget | undefined;
   ctx: ExecuteContext;
   stats: SyncStats;
   logMeta?: SyncLogMetadata | undefined;
@@ -39,9 +40,7 @@ export async function handleUpload(o: {
     preReadBuffer: fileBuffer,
     dirCreateInflight: ctx.dirCreateInflight,
   };
-  if (metaRecord?.fileId) ulOpts.existingFileId = metaRecord.fileId;
-  if (metaRecord?.domain != null) ulOpts.existingDomain = metaRecord.domain;
-  if (metaRecord?.name) ulOpts.existingName = metaRecord.name;
+  if (metaRecord) applyUploadTarget(ulOpts, metaRecord);
   if (ctx.hashFn) ulOpts.hashFn = ctx.hashFn;
   const result = await uploadFile(ulOpts);
   meta.recordSync(relPath, {

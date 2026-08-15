@@ -32,8 +32,9 @@ export async function bindDiaryNoteTarget(opts: {
   };
   const noteName = noteSiblingName(opts.name);
   if (!noteName) return unchanged;
-  if (!opts.isCreate && opts.needsNote) {
-    return { ...unchanged, name: noteName, needsNote: true };
+  if (!opts.isCreate) {
+    if (opts.needsNote) return { ...unchanged, name: noteName, needsNote: true };
+    return unchanged;
   }
   const sib = findNamedFileId(await opts.listParent(), noteName);
   if (!sib) return unchanged;

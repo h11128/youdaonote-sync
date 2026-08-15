@@ -194,6 +194,33 @@ describe('uploadFile: scanned cloud name', () => {
     expect(result.domain).toBe(NoteDomain.NOTE);
     expect(api.getDirInfoById).not.toHaveBeenCalled();
   });
+
+  it('does not rebind a markdown update when a same-stem .note exists', async () => {
+    const localPath = join(env.localDir, 'readme.md');
+    writeFileSync(localPath, '# md');
+    const api = makeMockApi();
+    vi.mocked(api.getDirInfoById).mockResolvedValue({
+      entries: [{ fileEntry: { id: 'WEB-note', name: 'readme.note' } }],
+    });
+
+    await uploadFile({
+      api,
+      meta: env.meta,
+      localPath,
+      relPath: asRelPath('readme.md'),
+      rootDirId: asDirId('root'),
+      existingFileId: asFileId('WEB-md'),
+      existingDomain: NoteDomain.MARKDOWN,
+      existingName: 'readme.md',
+    });
+
+    const arg = vi.mocked(api.pushFile).mock.calls[0]![0];
+    expect(arg.fileId).toBe('WEB-md');
+    expect(arg.name).toBe('readme.md');
+    expect(arg.isCreate).toBe(false);
+    expect(arg.domain).toBe(NoteDomain.MARKDOWN);
+    expect(api.getDirInfoById).not.toHaveBeenCalled();
+  });
 });
 
 describe('uploadFile: diary .note sibling', () => {

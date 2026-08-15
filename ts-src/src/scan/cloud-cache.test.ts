@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from '../metadata/store.js';
-import { asEpochSeconds, asFileId, asRelPath } from '../types/common.js';
+import { asEpochSeconds, asFileId, asRelPath, NoteDomain } from '../types/common.js';
 import type { DirId, FileId, RelPath } from '../types/common.js';
 import {
   tryCachedCloudScan,
@@ -11,6 +11,7 @@ import {
   saveScanVersion,
   STATE_LAST_FULL_SCAN,
 } from './cloud-cache.js';
+import { applyIncrementalChanges } from './cloud-cache-incremental.js';
 import type { CloudFile } from '../types/scan.js';
 
 const TMP = join(tmpdir(), 'cloud-cache-test');
@@ -355,5 +356,18 @@ describe('tryCachedCloudScan: empty file_id forces full scan', () => {
       cacheTtlSeconds: 0,
     });
     expect(result).toBeNull();
+  });
+});
+
+describe('applyIncrementalChanges: domain inference', () => {
+  it('keeps MARKDOWN when listRecent omits domain on a .md name', () => {
+    meta.setDirInfo(asRelPath(''), 'root' as DirId, null);
+    const cloudFiles = new Map<RelPath, CloudFile>();
+    applyIncrementalChanges(meta, cloudFiles, [
+      { fileEntry: { id: 'f-md', name: 'readme.md', parentId: 'root' } },
+    ]);
+    const hit = cloudFiles.get(asRelPath('readme.md'));
+    expect(hit?.domain).toBe(NoteDomain.MARKDOWN);
+    expect(hit?.name).toBe('readme.md');
   });
 });

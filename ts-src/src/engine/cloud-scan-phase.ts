@@ -5,10 +5,23 @@ import type { DirId, RelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { YoudaoNoteApi } from '../api/client.js';
-import { scanCloud } from '../scan/cloud.js';
+import { scanCloud, type DirBrowser } from '../scan/cloud.js';
 import { tryCachedCloudScan, saveScanVersion, fetchCurrentVersion } from '../scan/cloud-cache.js';
 import { filterCloudSnap } from './helpers.js';
 import type { SyncProfiler } from '../perf/profiler.js';
+
+export type LiveScanApi = DirBrowser & {
+  listRecent?: (limit: number) => Promise<Record<string, unknown>[]>;
+};
+
+/** Empty or collapsed live listing must not replace a larger cache. */
+export function isUsableLiveCloudSnap(
+  live: ReadonlyMap<RelPath, CloudFile>,
+  priorSize: number,
+): boolean {
+  if (live.size === 0) return false;
+  return priorSize === 0 || live.size * 2 >= priorSize;
+}
 
 export interface CloudScanPhaseOpts {
   api: YoudaoNoteApi;
@@ -59,7 +72,7 @@ export async function runCloudScanPhase(
     return { cloudSnap, didFullScan: false };
   }
 
-  const cloudSnap = await scanCloud(opts.api, opts.rootDirId);
+  const cloudSnap = await scanCloud(opts.api, opts.rootDirId, { failOnDirError: true });
   p?.endPhase(`${cloudSnap.size} entries (full)`);
   // Filter BEFORE saveScanVersion so excluded paths never re-enter metadata.
   p?.beginPhase('filterCloudSnap');
@@ -67,4 +80,33 @@ export async function runCloudScanPhase(
   p?.endPhase(`→ ${cloudSnap.size} after filter`);
   saveScanVersion(opts.meta, cloudSnap, await fetchCurrentVersion(opts.api));
   return { cloudSnap, didFullScan: true };
+}
+
+export async function replaceCloudSnapFromLiveScan(opts: {
+  api: LiveScanApi;
+  meta: MetadataStore;
+  cloudSnap: Map<RelPath, CloudFile>;
+  rootDirId: DirId;
+  syncInclude?: string[] | undefined;
+  syncExclude?: string[] | undefined;
+}): Promise<number> {
+  const priorSize = opts.cloudSnap.size;
+  const live = await scanCloud(opts.api, opts.rootDirId, { failOnDirError: true });
+  if (!isUsableLiveCloudSnap(live, priorSize)) {
+    throw new Error(`full-scan fallback refused: live ${live.size} files vs cache ${priorSize}`);
+  }
+  const next = new Map(live);
+  const filterOpts: { include?: string[]; exclude?: string[] } = {};
+  if (opts.syncInclude) filterOpts.include = opts.syncInclude;
+  if (opts.syncExclude) filterOpts.exclude = opts.syncExclude;
+  applyCloudFilters(next, filterOpts);
+  if (next.size === 0 && priorSize > 0 && !filterOpts.include && !filterOpts.exclude) {
+    throw new Error(`full-scan fallback refused: filtered live empty vs cache ${priorSize}`);
+  }
+  opts.cloudSnap.clear();
+  for (const [rel, cloud] of next) opts.cloudSnap.set(rel, cloud);
+  const listRecent = opts.api.listRecent;
+  const version = listRecent ? await fetchCurrentVersion({ listRecent }) : 0;
+  saveScanVersion(opts.meta, opts.cloudSnap, version);
+  return opts.cloudSnap.size;
 }

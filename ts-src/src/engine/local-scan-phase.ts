@@ -6,10 +6,8 @@ import type { CloudFile, LocalFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import type { DirBrowser } from '../scan/cloud.js';
 import { scanLocalParallel } from '../scan/local.js';
-import { scanCloud } from '../scan/cloud.js';
-import { fetchCurrentVersion, saveScanVersion } from '../scan/cloud-cache.js';
 import { hydrateLocalOnlyFromParents } from '../scan/hydrate-cached-cloud.js';
-import { filterCloudSnap } from './helpers.js';
+import { replaceCloudSnapFromLiveScan } from './cloud-scan-phase.js';
 import { logger } from '../util/logger.js';
 import { calibrateMetadata } from '../classify/calibrate.js';
 import { computeHashesConcurrent } from '../algo/hash.js';
@@ -88,26 +86,17 @@ async function maybeHydrateCachedCloud(
     logger.warn(
       `hydrate: ${blocked} unverified local-only path(s) — falling back to full cloud scan`,
     );
-    const live = await scanCloud(opts.api, opts.rootDirId);
-    opts.cloudSnap.clear();
-    for (const [rel, cloud] of live) opts.cloudSnap.set(rel, cloud);
-    applyListingFilters(opts.cloudSnap, opts);
-    const listRecent = opts.api.listRecent;
-    const version = listRecent ? await fetchCurrentVersion({ listRecent }) : 0;
-    saveScanVersion(opts.meta, opts.cloudSnap, version);
-    p?.endPhase(`${merged} linked, ${blocked} blocked → full scan ${opts.cloudSnap.size}`);
+    const n = await replaceCloudSnapFromLiveScan({
+      api: opts.api,
+      meta: opts.meta,
+      cloudSnap: opts.cloudSnap,
+      rootDirId: opts.rootDirId,
+      syncInclude: opts.syncInclude,
+      syncExclude: opts.syncExclude,
+    });
+    p?.endPhase(`${merged} linked, ${blocked} blocked → full scan ${n}`);
     return true;
   }
   p?.endPhase(`${merged} linked`);
   return false;
-}
-
-function applyListingFilters(cloudSnap: Map<RelPath, CloudFile>, opts: LocalScanPhaseOpts): void {
-  const filterOpts: { include?: string[]; exclude?: string[] } = {};
-  if (opts.syncInclude) filterOpts.include = opts.syncInclude;
-  if (opts.syncExclude) filterOpts.exclude = opts.syncExclude;
-  if (filterOpts.include || filterOpts.exclude) filterCloudSnap(cloudSnap, filterOpts);
-  for (const [path] of [...cloudSnap]) {
-    if ((path.split('/').pop() ?? '').includes('.conflict.')) cloudSnap.delete(path);
-  }
 }

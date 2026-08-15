@@ -39,8 +39,16 @@ export function resolveUploadMeta(
   return out;
 }
 
+export function applyUploadTarget(ulOpts: UploadFileOpts, target: UploadTarget): void {
+  if (target.fileId) ulOpts.existingFileId = target.fileId;
+  if (target.domain != null) ulOpts.existingDomain = target.domain;
+  if (target.name) ulOpts.existingName = target.name;
+}
+
 export function applyCloudUploadTarget(ulOpts: UploadFileOpts, cloudFile: CloudFile): void {
-  ulOpts.existingFileId = cloudFile.id as FileId;
-  ulOpts.existingDomain = cloudFile.domain;
-  ulOpts.existingName = cloudFile.name;
+  applyUploadTarget(ulOpts, {
+    fileId: cloudFile.id as FileId,
+    domain: cloudFile.domain,
+    name: cloudFile.name,
+  });
 }

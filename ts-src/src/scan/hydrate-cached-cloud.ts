@@ -50,15 +50,41 @@ function inferDirId(
   return null;
 }
 
+function cachedFileSiblings(cloudSnap: Map<RelPath, CloudFile>, parent: RelPath | ''): CloudFile[] {
+  return [...cloudSnap]
+    .filter(([rel, cf]) => !cf.isDir && parentRel(rel) === parent)
+    .map(([, cf]) => cf);
+}
+
 function listingMatchesParent(
   entries: [RelPath, CloudFile][],
-  parent: RelPath | '',
-  cloudSnap: Map<RelPath, CloudFile>,
+  siblings: readonly CloudFile[],
 ): boolean {
-  const expected = [...cloudSnap].filter(([rel, cf]) => !cf.isDir && parentRel(rel) === parent);
-  if (expected.length === 0) return true;
+  if (siblings.length === 0) return true;
   const listedIds = new Set(entries.map(([, cf]) => String(cf.id)));
-  return expected.some(([, cf]) => listedIds.has(String(cf.id)));
+  return siblings.some((cf) => listedIds.has(String(cf.id)));
+}
+
+async function confirmParentDir(
+  api: DirBrowser,
+  rootDirId: DirId,
+  parent: RelPath | '',
+  listedDirId: string,
+): Promise<boolean> {
+  if (!parent) return listedDirId === String(rootDirId);
+  let id = String(rootDirId);
+  for (const seg of parent.split('/')) {
+    let data: Awaited<ReturnType<DirBrowser['getDirInfoById']>>;
+    try {
+      data = await api.getDirInfoById(asDirId(id));
+    } catch {
+      return false;
+    }
+    const child = (data.entries ?? []).find((e) => e.fileEntry.dir && e.fileEntry.name === seg);
+    if (!child) return false;
+    id = child.fileEntry.id;
+  }
+  return id === listedDirId;
 }
 
 function localOnlyPaths(
@@ -132,10 +158,16 @@ export async function hydrateLocalOnlyFromParents(
       continue;
     }
     const { entries } = collectDirEntries(listed.entries, dirId as DirId, base);
-    if (!listingMatchesParent(entries, base, cloudSnap)) {
+    const siblings = cachedFileSiblings(cloudSnap, base);
+    if (!listingMatchesParent(entries, siblings)) {
       logger.warn(
         `hydrate: listing for "${base}" missed known siblings — treating dir id as stale`,
       );
+      blocked += wanted.size;
+      continue;
+    }
+    if (siblings.length === 0 && !(await confirmParentDir(api, rootDirId, base, dirId))) {
+      logger.warn(`hydrate: could not confirm dir "${base}" (${dirId}) from root`);
       blocked += wanted.size;
       continue;
     }

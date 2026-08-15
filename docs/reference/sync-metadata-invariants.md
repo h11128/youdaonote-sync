@@ -25,7 +25,7 @@ as a state machine, not a cache dump.
 11. **Youdao push 20108 / 211 must recover** (reuse duplicate id / retry update), not leave a failed create as "done".
 12. **Upload of a path present in this sync's cloud snapshot must update that file.** Use the scanned `id` / `name` / `domain` (`.note` stays `.note`). Empty or stale metadata `file_id` is not permission to `isCreate` a second `foo.md` beside `foo.note`. Metadata id is only a fallback when the snapshot has no file.
 13. **Incomplete index cannot stand in for a live cloud listing.** Cache snap omits empty `file_id` rows; live scan still sees the mapped `.note`. If any `files.file_id` is empty, skip cache and full-scan so membership matches live listing, then write ids back.
-14. **One identity everywhere.** `mapCloudName` / `officialAppName` / `pickPreferredCloud` are the only rules for "this local path is that cloud file". Incremental cache must hydrate local-only paths by listing the parent with those same rules before classify — "not in cache" is not "not on cloud". A successful parent list that omits known same-parent sibling ids is a stale dir id: increment `blocked`, skip merge, and fall back to a full scan. A listing that still shows those sibling ids may treat a missing wanted path as truly local-new.
+14. **One identity everywhere.** `mapCloudName` / `officialAppName` / `pickPreferredCloud` are the only rules for "this local path is that cloud file". Incremental cache must hydrate local-only paths by listing the parent with those same rules before classify — "not in cache" is not "not on cloud". A successful parent list that omits known same-parent sibling ids is a stale dir id: increment `blocked`, skip merge, and fall back to a full scan. When the cache has no siblings, walk from the root to confirm the dir id before treating a miss as local-new. A hydrate full-scan fallback must not `clear`/`saveScanVersion` an empty or collapsed live snap (any dir list failure is fatal when saving; live size below half the cache is refused). Sibling bind on upload is create-only.
 
 ## Tests required when touching these paths
 
@@ -39,6 +39,9 @@ as a state machine, not a cache dump.
 - Cloud snapshot has `.note` mapped to local `.md` + empty metadata `file_id` → upload updates that `.note` (`isCreate=false`), does not create `.md`
 - Metadata has any empty `file_id` → `tryCachedCloudScan` returns null (full scan)
 - Hydrate: listing misses known sibling ids → `blocked` and no merge; listing has sibling + wanted `.note` → merge; listing has sibling only → local-new, not blocked
+- Hydrate: stale dir id and no cached siblings → `blocked`; blocked fallback + empty or collapsed live scan must not save
+- Incremental listing with `.md` and omitted domain → MARKDOWN (not NOTE)
+- Upload update of a MARKDOWN target must not rebind a same-stem `.note`
 
 ## Do not
 

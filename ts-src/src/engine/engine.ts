@@ -294,7 +294,6 @@ export class SyncEngine {
     if (direction !== 'both') filterByDirection(classified, direction);
     return { classified, cloudSnap, localSnap };
   }
-
   close(): void {
     this.meta.close();
   }

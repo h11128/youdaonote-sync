@@ -47,6 +47,24 @@ describe('bindDiaryNoteTarget', () => {
     });
   });
 
+  it('does not rebind an update that already targets a markdown file', async () => {
+    const bound = await bindDiaryNoteTarget({
+      name: 'readme.md',
+      fileId: 'WEB-md',
+      isCreate: false,
+      needsNote: false,
+      listParent: () => {
+        throw new Error('must not list parent on markdown update');
+      },
+    });
+    expect(bound).toEqual({
+      name: 'readme.md',
+      fileId: 'WEB-md',
+      isCreate: false,
+      needsNote: false,
+    });
+  });
+
   it('leaves a diary .md create unchanged when no .note sibling exists', async () => {
     const bound = await bindDiaryNoteTarget({
       name: '2026年8月13日.md',

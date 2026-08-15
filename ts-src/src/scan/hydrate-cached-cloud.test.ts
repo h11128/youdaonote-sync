@@ -33,6 +33,24 @@ function localMd(rel: string): [RelPath, LocalFile] {
   return [path, { path: join(TMP, rel), mtime: asEpochSeconds(1), size: 1, isDir: false }];
 }
 
+function listingById(
+  dirs: Record<string, { id: string; name: string; dir?: boolean; domain?: number }[]>,
+) {
+  return {
+    getDirInfoById: (id: string) =>
+      Promise.resolve({
+        entries: (dirs[id] ?? []).map((e) => ({
+          fileEntry: {
+            id: e.id,
+            name: e.name,
+            dir: e.dir ?? false,
+            ...(e.domain != null ? { domain: e.domain } : {}),
+          },
+        })),
+      }),
+  };
+}
+
 let meta: MetadataStore;
 
 beforeEach(() => {
@@ -60,15 +78,13 @@ describe('hydrateLocalOnlyFromParents', () => {
       ],
     ]);
     const cloudSnap = new Map<RelPath, CloudFile>();
-    const api = {
-      getDirInfoById: () =>
-        Promise.resolve({
-          entries: [
-            { fileEntry: { id: 'WEB-note', name: '2026年8月13日.note', domain: 0 } },
-            { fileEntry: { id: 'WEB-md', name: '2026年8月13日.md', domain: 1 } },
-          ],
-        }),
-    };
+    const api = listingById({
+      root: [{ id: 'dir-diary', name: '日记', dir: true }],
+      'dir-diary': [
+        { id: 'WEB-note', name: '2026年8月13日.note', domain: 0 },
+        { id: 'WEB-md', name: '2026年8月13日.md', domain: 1 },
+      ],
+    });
 
     const n = await hydrateLocalOnlyFromParents({
       api,
@@ -141,15 +157,13 @@ describe('hydrateLocalOnlyFromParents: fail-closed', () => {
     meta.setDirInfo(asRelPath('日记'), asDirId('dir-diary'), asDirId('root'));
     const cloudSnap = new Map<RelPath, CloudFile>();
     await hydrateLocalOnlyFromParents({
-      api: {
-        getDirInfoById: () =>
-          Promise.resolve({
-            entries: [
-              { fileEntry: { id: 'WEB-note', name: 'day.note', domain: 0 } },
-              { fileEntry: { id: 'WEB-db', name: 'skip.db', domain: 1 } },
-            ],
-          }),
-      },
+      api: listingById({
+        root: [{ id: 'dir-diary', name: '日记', dir: true }],
+        'dir-diary': [
+          { id: 'WEB-note', name: 'day.note', domain: 0 },
+          { id: 'WEB-db', name: 'skip.db', domain: 1 },
+        ],
+      }),
       meta,
       cloudSnap,
       localSnap: new Map([localMd('日记/day.md')]),
@@ -164,13 +178,15 @@ describe('hydrateLocalOnlyFromParents: fail-closed', () => {
     const cloudSnap = new Map<RelPath, CloudFile>([
       [asRelPath('日记'), noteFile('dir-from-snap', '日记', 'root', true)],
     ]);
+    const inner = listingById({
+      root: [{ id: 'dir-from-snap', name: '日记', dir: true }],
+      'dir-from-snap': [{ id: 'WEB-note', name: 'day.note', domain: 0 }],
+    });
     const result = await hydrateLocalOnlyFromParents({
       api: {
         getDirInfoById: (id) => {
           listedIds.push(String(id));
-          return Promise.resolve({
-            entries: [{ fileEntry: { id: 'WEB-note', name: 'day.note', domain: 0 } }],
-          });
+          return inner.getDirInfoById(id);
         },
       },
       meta,
@@ -178,7 +194,7 @@ describe('hydrateLocalOnlyFromParents: fail-closed', () => {
       localSnap: new Map([localMd('日记/day.md')]),
       rootDirId: asDirId('root'),
     });
-    expect(listedIds).toEqual(['dir-from-snap']);
+    expect(listedIds[0]).toBe('dir-from-snap');
     expect(result.blocked).toBe(0);
     expect(cloudSnap.get(asRelPath('日记/day.md'))?.id).toBe('WEB-note');
   });
@@ -252,5 +268,26 @@ describe('hydrateLocalOnlyFromParents: sibling listing gate', () => {
     expect(result.blocked).toBe(0);
     expect(result.merged).toBe(0);
     expect(cloudSnap.has(asRelPath('日记/new.md'))).toBe(false);
+  });
+});
+
+describe('hydrateLocalOnlyFromParents: walk confirm', () => {
+  it('blocks a stale dir id when the cache has no siblings', async () => {
+    meta.setDirInfo(asRelPath('日记'), asDirId('dir-stale'), asDirId('root'));
+    const cloudSnap = new Map<RelPath, CloudFile>();
+    const result = await hydrateLocalOnlyFromParents({
+      api: listingById({
+        root: [{ id: 'dir-real', name: '日记', dir: true }],
+        'dir-stale': [{ id: 'WEB-wrong', name: 'day.note', domain: 0 }],
+        'dir-real': [{ id: 'WEB-note', name: 'day.note', domain: 0 }],
+      }),
+      meta,
+      cloudSnap,
+      localSnap: new Map([localMd('日记/day.md')]),
+      rootDirId: asDirId('root'),
+    });
+    expect(result.blocked).toBe(1);
+    expect(result.merged).toBe(0);
+    expect(cloudSnap.has(asRelPath('日记/day.md'))).toBe(false);
   });
 });

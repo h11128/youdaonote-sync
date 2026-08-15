@@ -10,6 +10,7 @@ import { markdownToNoteJson } from '../convert/md-to-note.js';
 import { normalizeSep } from '../scan/name.js';
 import { requireNonEmpty } from '../util/preconditions.js';
 import { bindDiaryNoteTarget } from './diary-note-sibling.js';
+import { needsOfficialNote } from '../scan/cloud-identity.js';
 import { pushWithRecovery } from './upload-push.js';
 
 const TEXT_EXTS = new Set([
@@ -220,12 +221,7 @@ async function uploadText(o: {
     name: o.name,
     fileId: o.fileId,
     isCreate: o.isCreate,
-    needsNote:
-      o.ext === '.note' ||
-      o.ext === '.clip' ||
-      o.name.endsWith('.note') ||
-      o.name.endsWith('.clip') ||
-      o.existingDomain === NoteDomain.NOTE,
+    needsNote: needsOfficialNote(o.name, o.ext, o.existingDomain),
     listParent: () => listParentEntries(o.api, o.parentId),
   });
   const domain = bound.needsNote ? NoteDomain.NOTE : NoteDomain.MARKDOWN;

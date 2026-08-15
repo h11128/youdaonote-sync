@@ -37,6 +37,8 @@ export interface ScanCloudOpts {
   base?: string;
   maxConcurrent?: number;
   retryOpts?: { maxRetries?: number; baseDelay?: number };
+  /** When true, any directory list failure aborts (used before saveScanVersion). */
+  failOnDirError?: boolean;
 }
 
 function normalizeOpts(optsOrBase?: ScanCloudOpts | string, maxConcurrent?: number): ScanCloudOpts {
@@ -68,19 +70,20 @@ async function bfsScan(
   const queue: QueueItem[] = [{ dirId: rootDirId, basePath: (opts.base ?? '') as RelPath | '' }];
   let inflight = 0;
   let resolveAll: (() => void) | null = null;
+  let fatal: Error | undefined;
 
   async function processItem(item: QueueItem): Promise<void> {
     try {
-      const { entries, subdirs } = await fetchDir(api, item.dirId, item.basePath);
-      for (const [rel, cloud] of entries) {
-        files.set(rel, pickPreferredCloud(files.get(rel), cloud));
-      }
-      for (const sub of subdirs) {
-        if (!visited.has(sub.dirId)) {
-          visited.add(sub.dirId);
-          queue.push(sub);
-        }
-      }
+      await mergeListedDir({
+        api,
+        item,
+        files,
+        queue,
+        visited,
+        failOnDirError: !!opts.failOnDirError,
+      });
+    } catch (e: unknown) {
+      fatal = e instanceof Error ? e : new Error(String(e));
     } finally {
       inflight--;
       drain();
@@ -102,7 +105,33 @@ async function bfsScan(
     drain();
     if (inflight === 0 && queue.length === 0) resolve();
   });
+  if (fatal) throw fatal;
   return files;
+}
+
+async function mergeListedDir(o: {
+  api: DirBrowser;
+  item: QueueItem;
+  files: Map<RelPath, CloudFile>;
+  queue: QueueItem[];
+  visited: Set<string>;
+  failOnDirError: boolean;
+}): Promise<void> {
+  const { entries, subdirs } = await fetchDir(
+    o.api,
+    o.item.dirId,
+    o.item.basePath,
+    o.failOnDirError,
+  );
+  for (const [rel, cloud] of entries) {
+    o.files.set(rel, pickPreferredCloud(o.files.get(rel), cloud));
+  }
+  for (const sub of subdirs) {
+    if (!o.visited.has(sub.dirId)) {
+      o.visited.add(sub.dirId);
+      o.queue.push(sub);
+    }
+  }
 }
 
 export { pickPreferredCloud } from './cloud-identity.js';
@@ -149,6 +178,7 @@ async function fetchDir(
   api: DirBrowser,
   dirId: DirId,
   basePath: RelPath | '',
+  failOnDirError: boolean,
 ): Promise<{
   entries: [RelPath, CloudFile][];
   subdirs: { dirId: DirId; basePath: RelPath }[];
@@ -157,6 +187,9 @@ async function fetchDir(
   try {
     data = await api.getDirInfoById(dirId);
   } catch (e: unknown) {
+    if (!basePath || failOnDirError) {
+      throw e instanceof Error ? e : new Error(String(e));
+    }
     logger.warn(
       `Cloud scan: failed to list dir ${dirId} at "${basePath}": ${e instanceof Error ? e.message : String(e)}`,
     );

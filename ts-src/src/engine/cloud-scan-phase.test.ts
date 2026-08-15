@@ -1,88 +1,143 @@
-/**
- * cloud-scan-phase: exclude must run before saveScanVersion.
- */
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MetadataStore } from '../metadata/store.js';
 import { asDirId, asEpochSeconds, asFileId, asRelPath, NoteDomain } from '../types/common.js';
+import type { RelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
-import type { YoudaoNoteApi } from '../api/client.js';
-import { runCloudScanPhase } from './cloud-scan-phase.js';
+import { replaceCloudSnapFromLiveScan } from './cloud-scan-phase.js';
+import { saveScanVersion } from '../scan/cloud-cache.js';
 
-vi.mock('../scan/cloud.js', () => ({
-  scanCloud: vi.fn(),
-}));
+const TMP = join(tmpdir(), 'cloud-scan-phase-test');
 
-vi.mock('../scan/cloud-cache.js', async () => {
-  const actual = await vi.importActual('../scan/cloud-cache.js');
+function keepFile(): CloudFile {
   return {
-    ...actual,
-    tryCachedCloudScan: vi.fn().mockResolvedValue(null),
-    fetchCurrentVersion: vi.fn().mockResolvedValue(42),
+    id: asFileId('keep'),
+    parentId: asDirId('root'),
+    name: 'keep.md',
+    isDir: false,
+    mtime: asEpochSeconds(1),
+    ctime: asEpochSeconds(1),
+    domain: NoteDomain.MARKDOWN,
   };
-});
-
-import { scanCloud } from '../scan/cloud.js';
-
-function mockApi(): YoudaoNoteApi {
-  return { listRecent: vi.fn() } as unknown as YoudaoNoteApi;
 }
 
-describe('runCloudScanPhase exclude-before-save', () => {
-  let tmpDir = '';
+function seededSnap(n: number): Map<RelPath, CloudFile> {
+  const cloudSnap = new Map<RelPath, CloudFile>();
+  for (let i = 1; i <= n; i++) {
+    cloudSnap.set(asRelPath(`f${i}.md`), {
+      ...keepFile(),
+      id: asFileId(`f${i}`),
+      name: `f${i}.md`,
+    });
+  }
+  return cloudSnap;
+}
+
+function rootPlusBrokenDiary(rootFiles: { id: string; name: string }[]) {
+  return {
+    getDirInfoById: (id: string) => {
+      if (id === 'root') {
+        return Promise.resolve({
+          entries: [
+            ...rootFiles.map((f) => ({ fileEntry: { ...f, dir: false } })),
+            { fileEntry: { id: 'dir-diary', name: '日记', dir: true } },
+          ],
+        });
+      }
+      return Promise.reject(new Error('diary list failed'));
+    },
+  };
+}
+
+describe('replaceCloudSnapFromLiveScan', () => {
   let meta: MetadataStore;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'cloud-scan-phase-'));
-    meta = new MetadataStore(join(tmpDir, 'meta.db'));
+    mkdirSync(TMP, { recursive: true });
+    meta = new MetadataStore(join(TMP, 'meta.db'));
   });
 
   afterEach(() => {
     meta.close();
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(TMP, { recursive: true, force: true });
   });
 
-  it('does not persist excluded paths via saveScanVersion', async () => {
-    const keep: CloudFile = {
-      id: asFileId('f-keep'),
-      name: 'keep.md',
-      mtime: asEpochSeconds(10),
-      ctime: asEpochSeconds(10),
-      isDir: false,
-      domain: NoteDomain.MARKDOWN,
-      parentId: asDirId('root'),
-    };
-    const drop: CloudFile = {
-      id: asFileId('f-drop'),
-      name: 'skip.db',
-      mtime: asEpochSeconds(10),
-      ctime: asEpochSeconds(10),
-      isDir: false,
-      domain: NoteDomain.MARKDOWN,
-      parentId: asDirId('root'),
-    };
-    vi.mocked(scanCloud).mockResolvedValue(
-      new Map([
-        [asRelPath('keep.md'), keep],
-        [asRelPath('skip.db'), drop],
-      ]),
-    );
+  it('does not clear or save when the live root listing fails', async () => {
+    const cloudSnap = new Map<RelPath, CloudFile>([[asRelPath('keep.md'), keepFile()]]);
+    saveScanVersion(meta, cloudSnap, 10);
+    await expect(
+      replaceCloudSnapFromLiveScan({
+        api: { getDirInfoById: () => Promise.reject(new Error('network')) },
+        meta,
+        cloudSnap,
+        rootDirId: asDirId('root'),
+      }),
+    ).rejects.toThrow('network');
+    expect(cloudSnap.get(asRelPath('keep.md'))?.id).toBe('keep');
+    expect(meta.getFileInfo(asRelPath('keep.md'))?.fileId).toBe('keep');
+  });
 
-    const { cloudSnap, didFullScan } = await runCloudScanPhase({
-      api: mockApi(),
-      meta,
-      rootDirId: asDirId('root'),
-      skipDesktopSeed: true,
-      dryRun: false,
-      syncExclude: ['*.db'],
-    });
+  it('does not clear or save an empty live snap', async () => {
+    const cloudSnap = new Map<RelPath, CloudFile>([[asRelPath('keep.md'), keepFile()]]);
+    saveScanVersion(meta, cloudSnap, 10);
+    await expect(
+      replaceCloudSnapFromLiveScan({
+        api: { getDirInfoById: () => Promise.resolve({ entries: [] }) },
+        meta,
+        cloudSnap,
+        rootDirId: asDirId('root'),
+      }),
+    ).rejects.toThrow('full-scan fallback refused');
+    expect(cloudSnap.get(asRelPath('keep.md'))?.id).toBe('keep');
+    expect(meta.getFileInfo(asRelPath('keep.md'))?.fileId).toBe('keep');
+  });
+});
 
-    expect(didFullScan).toBe(true);
-    expect(cloudSnap.has(asRelPath('keep.md'))).toBe(true);
-    expect(cloudSnap.has(asRelPath('skip.db'))).toBe(false);
-    expect(meta.getFileInfo(asRelPath('keep.md'))?.fileId).toBe('f-keep');
-    expect(meta.getFileInfo(asRelPath('skip.db'))).toBeNull();
+describe('replaceCloudSnapFromLiveScan: subtree list failure', () => {
+  let meta: MetadataStore;
+
+  beforeEach(() => {
+    mkdirSync(TMP, { recursive: true });
+    meta = new MetadataStore(join(TMP, 'meta.db'));
+  });
+
+  afterEach(() => {
+    meta.close();
+    rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it('does not replace a large cache with a truncated live listing', async () => {
+    const cloudSnap = seededSnap(5);
+    saveScanVersion(meta, cloudSnap, 10);
+    await expect(
+      replaceCloudSnapFromLiveScan({
+        api: rootPlusBrokenDiary([{ id: 'keep', name: 'keep.md' }]),
+        meta,
+        cloudSnap,
+        rootDirId: asDirId('root'),
+      }),
+    ).rejects.toThrow('diary list failed');
+    expect(cloudSnap.size).toBe(5);
+    expect(meta.getFileInfo(asRelPath('f1.md'))?.fileId).toBe('f1');
+  });
+
+  it('does not replace when a minority subtree listing fails', async () => {
+    const cloudSnap = seededSnap(10);
+    saveScanVersion(meta, cloudSnap, 10);
+    const rootFiles = Array.from({ length: 9 }, (_, i) => ({
+      id: `f${i + 1}`,
+      name: `f${i + 1}.md`,
+    }));
+    await expect(
+      replaceCloudSnapFromLiveScan({
+        api: rootPlusBrokenDiary(rootFiles),
+        meta,
+        cloudSnap,
+        rootDirId: asDirId('root'),
+      }),
+    ).rejects.toThrow('diary list failed');
+    expect(cloudSnap.size).toBe(10);
   });
 });

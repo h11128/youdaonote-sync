@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { cachedCloudName, sanitizeFilename, mapCloudName, normalizeSep } from './name.js';
-import { domainFromCloudName, officialAppName, pickPreferredCloud } from './cloud-identity.js';
+import {
+  domainFromCloudName,
+  needsOfficialNote,
+  officialAppName,
+  pickPreferredCloud,
+} from './cloud-identity.js';
 import { asDirId, asEpochSeconds, asFileId, NoteDomain } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 
@@ -115,6 +120,13 @@ describe('pickPreferredCloud', () => {
   it('infers NOTE domain from official-app names', () => {
     expect(domainFromCloudName('day.note')).toBe(NoteDomain.NOTE);
     expect(domainFromCloudName('readme.md')).toBe(NoteDomain.MARKDOWN);
+  });
+
+  it('needsOfficialNote follows domainFromCloudName plus existing NOTE domain', () => {
+    expect(needsOfficialNote('day.md', '.md')).toBe(false);
+    expect(needsOfficialNote('day.note', '.note')).toBe(true);
+    expect(needsOfficialNote('untitled', '')).toBe(true);
+    expect(needsOfficialNote('day.md', '.md', NoteDomain.NOTE)).toBe(true);
   });
 
   it('keeps .note when the same local path also has .md', () => {

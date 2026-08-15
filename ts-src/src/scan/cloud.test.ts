@@ -100,13 +100,31 @@ describe('scanCloud', () => {
     await expect(scanCloud(api, asDirId(''))).rejects.toThrow();
   });
 
-  it('handles API errors gracefully', async () => {
+  it('throws when the root listing fails', async () => {
     const api: DirBrowser = {
       getDirInfoById: () => Promise.reject(new Error('network error')),
     };
 
-    const result = await scanCloud(api, asDirId('root'), { retryOpts: { maxRetries: 0 } });
+    await expect(scanCloud(api, asDirId('root'), { retryOpts: { maxRetries: 0 } })).rejects.toThrow(
+      'network error',
+    );
+  });
 
-    expect(result.size).toBe(0);
+  it('swallows a child list error unless failOnDirError is set', async () => {
+    const api: DirBrowser = {
+      getDirInfoById: (id) => {
+        if (String(id) === 'root') {
+          return Promise.resolve({
+            entries: [{ fileEntry: { id: 'sub', name: 'sub', dir: true } }],
+          });
+        }
+        return Promise.reject(new Error('child down'));
+      },
+    };
+    const partial = await scanCloud(api, asDirId('root'));
+    expect(partial.size).toBe(1);
+    await expect(scanCloud(api, asDirId('root'), { failOnDirError: true })).rejects.toThrow(
+      'child down',
+    );
   });
 });
