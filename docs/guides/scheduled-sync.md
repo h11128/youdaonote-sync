@@ -116,6 +116,16 @@ npx tsx scripts/merge-diary-md-note-pairs.mts --apply 2026年8月13日
 `--apply` pushes local `.md` onto the `.note` (`restore --force`) then
 deletes only the leftover cloud `.md`.
 
+App copies named `(冲突笔记)2026年M月D日.md` are a second row, not a `.note`:
+
+```bash
+npx tsx scripts/remove-conflict-diary-copies.mts
+npx tsx scripts/remove-conflict-diary-copies.mts --apply 2026年8月17日
+```
+
+`--apply` dumps the copy to `.local-reports/` then deletes only that `.md`.
+Never `deleteFile` a diary `.note`.
+
 ## Related
 
 - Metadata rules: [sync-metadata-invariants](../reference/sync-metadata-invariants.md)
