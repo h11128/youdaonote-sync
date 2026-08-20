@@ -36,6 +36,23 @@ describe('diary-guard: hasDiaryHandwriting', () => {
     expect(hasDiaryHandwriting(template)).toBe(false);
   });
 
+  it('returns false when protected section has only a single character', () => {
+    const almostEmpty = `
+# 睡眠质量
+好
+# 工作概括
+`;
+    expect(hasDiaryHandwriting(almostEmpty)).toBe(false);
+  });
+
+  it('returns true for short but substantive non-protected text', () => {
+    const shortNote = `
+# 今日随笔
+今天开会讨论了新方案。
+`;
+    expect(hasDiaryHandwriting(shortNote)).toBe(true);
+  });
+
   it('returns false for template with boilerplate placeholders', () => {
     const templateWithPlaceholders = `
 # 周二甲子
@@ -75,10 +92,10 @@ describe('diary-guard: hasDiaryHandwriting', () => {
   it('handles non-bold headings', () => {
     const withPlainHeadings = `
 # 睡眠质量
-睡了8小时。
+睡了8小时，精神还可以。
 
 # 工作概括
-写代码。
+写代码，完成了同步模块。
 `;
     expect(hasDiaryHandwriting(withPlainHeadings)).toBe(true);
   });
@@ -99,9 +116,9 @@ describe('diary-guard: refuseEmptyDiaryUpload - allowed cases', () => {
   it('allows upload when local diary has handwriting', async () => {
     const localContent = `
 # 睡眠质量
-睡了7小时。
+睡了7小时，精神还可以。
 # 工作概括
-完成任务。
+完成了今天的同步任务。
 `;
     const api = {
       getFileById: vi.fn(),
@@ -162,7 +179,7 @@ describe('diary-guard: refuseEmptyDiaryUpload - allowed cases', () => {
   });
 });
 
-describe('diary-guard: refuseEmptyDiaryUpload - refusal and safety', () => {
+describe('diary-guard: refuseEmptyDiaryUpload - refusal when cloud has handwriting', () => {
   it('refuses upload when local is empty template and cloud has handwriting', async () => {
     const emptyLocalTemplate = `
 # 周二甲子
@@ -225,7 +242,9 @@ describe('diary-guard: refuseEmptyDiaryUpload - refusal and safety', () => {
       }),
     ).rejects.toThrow(/REFUSE: local diary "2026年8月18日.note" is an empty template shell/);
   });
+});
 
+describe('diary-guard: refuseEmptyDiaryUpload - fail-closed safety', () => {
   it('fails closed on probe API errors (network failure)', async () => {
     const emptyLocalTemplate = `
 # 2026年8月18日
@@ -244,5 +263,44 @@ describe('diary-guard: refuseEmptyDiaryUpload - refusal and safety', () => {
         localContent: emptyLocalTemplate,
       }),
     ).rejects.toThrow(/probe of cloud note \(WEB-123\) failed/);
+  });
+
+  it('fails closed when cloud note bytes cannot be decoded', async () => {
+    const emptyLocalTemplate = `
+# 2026年8月18日
+# **睡眠质量**
+# **工作概括**
+`;
+    const api = {
+      getFileById: vi.fn().mockResolvedValue(new Uint8Array([0, 1, 2, 3]).buffer),
+    } as unknown as YoudaoNoteApi;
+
+    await expect(
+      refuseEmptyDiaryUpload({
+        api,
+        fileId: 'WEB-123' as FileId,
+        name: '2026年8月18日.note',
+        localContent: emptyLocalTemplate,
+      }),
+    ).rejects.toThrow(/could not be decoded/);
+  });
+
+  it('allows upload when cloud probe returns empty bytes', async () => {
+    const emptyLocalTemplate = `
+# 2026年8月18日
+# **睡眠质量**
+`;
+    const api = {
+      getFileById: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
+    } as unknown as YoudaoNoteApi;
+
+    await expect(
+      refuseEmptyDiaryUpload({
+        api,
+        fileId: 'WEB-123' as FileId,
+        name: '2026年8月18日.note',
+        localContent: emptyLocalTemplate,
+      }),
+    ).resolves.not.toThrow();
   });
 });

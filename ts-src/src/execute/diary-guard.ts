@@ -9,6 +9,11 @@ import type { YoudaoNoteApi } from '../api/client.js';
 
 const DIARY_STEM_RE = /^\d{4}年\d{1,2}月\d{1,2}日(?:\.(?:md|note))?$/;
 
+/** Minimum chars in protected sections to count as local handwriting. */
+const MIN_PROTECTED_CHARS = 10;
+/** Minimum total body chars (any section) to count as local handwriting. */
+const MIN_TOTAL_BODY_CHARS = 8;
+
 export function isDiaryName(name: string): boolean {
   return DIARY_STEM_RE.test(name);
 }
@@ -34,6 +39,12 @@ const TEMPLATE_BOILERPLATE = new Set([
   '暂无',
 ]);
 
+function isBoilerplateLine(line: string): boolean {
+  if (TEMPLATE_BOILERPLATE.has(line)) return true;
+  const trimmed = line.replace(/\s+/g, '');
+  return trimmed === '*无*' || trimmed === '无';
+}
+
 /**
  * Check if a diary markdown text has non-empty body under protected sections
  * or substantive non-template text.
@@ -55,24 +66,42 @@ export function hasDiaryHandwriting(text: string): boolean {
       continue;
     }
 
-    if (TEMPLATE_BOILERPLATE.has(line)) continue;
+    if (isBoilerplateLine(line)) continue;
 
     totalBodyChars += line.length;
     if (currentProtected) {
       protectedChars += line.length;
     }
-
-    if (protectedChars > 5 || totalBodyChars > 20) {
-      return true;
-    }
   }
 
-  return protectedChars > 0;
+  return protectedChars >= MIN_PROTECTED_CHARS || totalBodyChars >= MIN_TOTAL_BODY_CHARS;
+}
+
+function cloudMarkdownFromBytes(raw: Uint8Array, name: string): string {
+  const ext = extname(name) || '.note';
+  let fileType = detectFileType(raw, ext);
+  if (fileType === 'binary') {
+    const prefix = Buffer.from(raw.slice(0, 50)).toString('utf-8').trimStart();
+    if (prefix.startsWith('#') || prefix.startsWith('-')) {
+      fileType = 'markdown';
+    }
+  }
+  const markdown = convertToMarkdown(raw, fileType);
+  if (markdown != null) return markdown;
+
+  if (fileType === 'markdown') {
+    return Buffer.from(raw).toString('utf-8');
+  }
+
+  throw new Error(
+    `could not convert cloud note bytes (detected ${fileType}) to markdown for handwriting check`,
+  );
 }
 
 /**
  * Refuse upload if local diary is an empty shell but cloud note already has handwriting.
  * Fails closed on probe/conversion errors to prevent accidental overwrites during network blips.
+ * `localContent` must be markdown — never NOTE JSON.
  */
 export async function refuseEmptyDiaryUpload(opts: {
   api: YoudaoNoteApi;
@@ -97,9 +126,15 @@ export async function refuseEmptyDiaryUpload(opts: {
   if (cloudBuf.byteLength === 0) return;
 
   const raw = new Uint8Array(cloudBuf);
-  const ext = extname(opts.name) || '.note';
-  const fileType = detectFileType(raw, ext);
-  const cloudText = convertToMarkdown(raw, fileType) ?? Buffer.from(raw).toString('utf-8');
+  let cloudText: string;
+  try {
+    cloudText = cloudMarkdownFromBytes(raw, opts.name);
+  } catch (err: unknown) {
+    throw new Error(
+      `REFUSE: local diary "${opts.name}" is an empty template shell, and cloud note (${opts.fileId}) could not be decoded (${err instanceof Error ? err.message : String(err)}). Upload blocked for safety.`,
+      { cause: err },
+    );
+  }
 
   if (hasDiaryHandwriting(cloudText)) {
     throw new Error(

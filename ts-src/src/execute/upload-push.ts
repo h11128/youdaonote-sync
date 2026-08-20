@@ -31,6 +31,8 @@ export type PushOnceOpts =
       binary: false;
       domain: NoteDomain;
       bodyString: string;
+      /** Markdown source for diary guard — never NOTE JSON. */
+      diaryGuardMarkdown?: string;
     };
 
 async function pushOnce(opts: PushOnceOpts): Promise<Record<string, unknown>> {
@@ -43,12 +45,12 @@ async function pushOnce(opts: PushOnceOpts): Promise<Record<string, unknown>> {
       isCreate: opts.isCreate,
     });
   }
-  if (!opts.isCreate) {
+  if (!opts.isCreate && opts.diaryGuardMarkdown !== undefined) {
     await refuseEmptyDiaryUpload({
       api: opts.api,
       fileId: opts.fileId,
       name: opts.name,
-      localContent: opts.bodyString,
+      localContent: opts.diaryGuardMarkdown,
     });
   }
   return opts.api.pushFile({

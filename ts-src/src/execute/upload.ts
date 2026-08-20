@@ -12,7 +12,6 @@ import { requireNonEmpty } from '../util/preconditions.js';
 import { bindDiaryNoteTarget } from './diary-note-sibling.js';
 import { needsOfficialNote } from '../scan/cloud-identity.js';
 import { pushWithRecovery } from './upload-push.js';
-import { refuseEmptyDiaryUpload } from './diary-guard.js';
 
 const TEXT_EXTS = new Set([
   '.md',
@@ -226,14 +225,6 @@ async function uploadText(o: {
     listParent: () => listParentEntries(o.api, o.parentId),
   });
   const domain = bound.needsNote ? NoteDomain.NOTE : NoteDomain.MARKDOWN;
-  if (!bound.isCreate) {
-    await refuseEmptyDiaryUpload({
-      api: o.api,
-      fileId: bound.fileId as FileId,
-      name: bound.name,
-      localContent: o.content,
-    });
-  }
   const { fileId, result } = await pushWithRecovery({
     api: o.api,
     fileId: bound.fileId as FileId,
@@ -243,6 +234,7 @@ async function uploadText(o: {
     binary: false,
     domain,
     bodyString: bound.needsNote ? markdownToNoteJson(o.content) : o.content,
+    diaryGuardMarkdown: o.content,
   });
   return resultOf(fileId, result, o.parentId, domain);
 }

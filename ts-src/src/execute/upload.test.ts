@@ -254,6 +254,45 @@ describe('uploadFile: diary .note sibling', () => {
     expect(result.domain).toBe(NoteDomain.NOTE);
     expect(result.fileId).toBe('result-id');
   });
+
+  it('refuses duplicate-name recovery when local diary is empty shell and cloud has handwriting', async () => {
+    const emptyLocalTemplate = `
+# 2026年8月18日
+# **睡眠质量**
+# **情绪/状态**
+# **工作概括**
+`;
+    const cloudHandwriting = `
+# 2026年8月18日
+# **睡眠质量**
+昨晚睡得很好，大概11点睡7点起。
+# **工作概括**
+完成了手写日记。
+`;
+    const localPath = join(env.localDir, '2026年8月18日.md');
+    writeFileSync(localPath, emptyLocalTemplate);
+
+    const api = makeMockApi();
+    vi.mocked(api.getFileById).mockResolvedValue(new TextEncoder().encode(cloudHandwriting).buffer);
+    vi.mocked(api.pushFile).mockRejectedValueOnce(
+      new Error(
+        'HTTP 500: {"error":"20108","duplicateFileId":"WEB-note","message":"Message[CLIENT : DUPLICATE_FILE_NAME]"}',
+      ),
+    );
+
+    await expect(
+      uploadFile({
+        api,
+        meta: env.meta,
+        localPath,
+        relPath: asRelPath('2026年8月18日.md'),
+        rootDirId: asDirId('root'),
+      }),
+    ).rejects.toThrow(/REFUSE: local diary "2026年8月18日.md" is an empty template shell/);
+
+    expect(api.pushFile).toHaveBeenCalledTimes(1);
+    expect(api.getFileById).toHaveBeenCalledWith('WEB-note');
+  });
 });
 
 describe('uploadFile: duplicate-name recovery', () => {

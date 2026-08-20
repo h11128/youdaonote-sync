@@ -47,8 +47,8 @@
 ### 1. 建立日记上传前置守卫（`diary-guard.ts`）
 在 `ts-src/src/execute/diary-guard.ts` 中实现专属防护层：
 - **日记名称判定**：精确匹配 `YYYY年MM月DD日.md` / `.note`。
-- **手写正文检测**（`hasDiaryHandwriting`）：解析 Markdown 各级标题，重点检查受保护核心区块（睡眠质量、情绪/状态、感情/人际关系、工作概括、生活概括等）。若正文字符数超过阈值（>10 字符），判定为含有真实手写。
-- **上传强阻断**（`refuseEmptyDiaryUpload`）：对于既有笔记的更新上传（`!isCreate`），若本地被识别为空模版，则主动拉取云端正文；一旦检测到云端存在手写正文，立即抛出致命拒绝错误，终止覆写并保护云端数据。
+- **手写正文检测**（`hasDiaryHandwriting`）：解析 Markdown 各级标题，重点检查受保护核心区块；保护区块正文 ≥10 字符，或任意区块合计 ≥8 字符，判定为含有真实手写。
+- **上传强阻断**（`refuseEmptyDiaryUpload`）：对于既有笔记的更新上传（`!isCreate`），若本地被识别为空模版，则主动拉取云端正文；一旦检测到云端存在手写正文，立即抛出致命拒绝错误。守卫始终使用 **markdown 原文**（`diaryGuardMarkdown`），从不把 NOTE JSON 当正文检测。
 
 ```typescript
 // ts-src/src/execute/diary-guard.ts
@@ -86,8 +86,8 @@ export async function refuseEmptyDiaryUpload(opts: {
 }
 ```
 
-### 2. 接入上传执行链路（`upload.ts`）
-在 `ts-src/src/execute/upload.ts` 的 `uploadText()` 关键入口处接入 `refuseEmptyDiaryUpload`，确保任何上传动作在真正发送 HTTP 请求给有道 API 之前必须通过该安全门禁。
+### 2. 接入上传执行链路（`upload.ts` + `upload-push.ts`）
+在 `uploadText` 向 `pushWithRecovery` 传入 `diaryGuardMarkdown`（markdown 原文）。`pushOnce` 在每次 `!isCreate` 推送前运行守卫，覆盖正常更新与 20108/211 降级为 update 的恢复路径。
 
 ### 3. 修复元数据扫描的 `cloud_mtime` 保留逻辑（`store-files.ts`）
 修正 `cacheCloudFileInfo` 的更新逻辑：对于已同步过的文件（`files.last_sync_at > 0`），保留其历史基线 `cloud_mtime`，防止在扫描阶段提前抹平时间差，确保 `classifyAll()` 能正确捕捉云端变更并进入冲突处理流程。
