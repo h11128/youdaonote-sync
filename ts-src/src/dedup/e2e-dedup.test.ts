@@ -55,7 +55,8 @@ describe('E2E: upload dedup', () => {
       moved: [] as string[],
       dirs: [] as string[],
     };
-    const mockApi = buildMockApi([], new Map(), recorder);
+    const cloudEntries = [makeCloudEntry('f-existing', 'existing-cloud.md', 1000)];
+    const mockApi = buildMockApi(cloudEntries, new Map([['f-existing', content]]), recorder);
 
     const engine = new SyncEngine({
       cookiesPath: '',

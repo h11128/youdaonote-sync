@@ -233,7 +233,7 @@ function cloudCacheTests(getStore: () => MetadataStore): void {
       expect(info!.cloudMtime).toBe(5000);
     });
 
-    it('cacheCloudFileInfo updates cloud_mtime on conflict', () => {
+    it('cacheCloudFileInfo updates cloud_mtime on conflict when unsynced', () => {
       const store = getStore();
       store.cacheCloudFileInfo(asRelPath('cached.md'), {
         fileId: asFileId('f-old'),
@@ -246,6 +246,24 @@ function cloudCacheTests(getStore: () => MetadataStore): void {
       const info = store.getFileInfo(asRelPath('cached.md'));
       expect(info!.fileId).toBe('f-new');
       expect(info!.cloudMtime).toBe(2000);
+    });
+
+    it('cacheCloudFileInfo preserves baseline cloud_mtime when last_sync_at > 0', () => {
+      const store = getStore();
+      store.setFileInfo(asRelPath('synced.md'), {
+        fileId: asFileId('f-synced'),
+        cloudMtime: asEpochSeconds(1000),
+        localMtime: asEpochSeconds(1000),
+        lastSyncAt: asEpochSeconds(1000),
+      });
+      // Scan finds new cloud mtime
+      store.cacheCloudFileInfo(asRelPath('synced.md'), {
+        fileId: asFileId('f-synced'),
+        cloudMtime: asEpochSeconds(3000),
+      });
+      const info = store.getFileInfo(asRelPath('synced.md'));
+      // Must preserve baseline cloud_mtime so classify can detect cloud mtime changed
+      expect(info!.cloudMtime).toBe(1000);
     });
 
     it('appendSyncLog writes sync_log without creating files rows', () => {

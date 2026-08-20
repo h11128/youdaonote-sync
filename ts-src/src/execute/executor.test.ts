@@ -79,7 +79,11 @@ function withTmpDir(fn: (localDir: string) => Promise<void>): () => Promise<void
     try {
       await fn(localDir);
     } finally {
-      rmSync(tmpDir, { recursive: true, force: true });
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Handle busy sqlite lock on Windows during test teardown
+      }
     }
   };
 }
@@ -282,6 +286,7 @@ describe('executeAll — upload reuses scanned cloud file', () => {
           },
           getDirInfoById: () => Promise.resolve({ entries: [] }),
           createDir: () => Promise.resolve({ fileEntry: { id: 'dir-1' } }),
+          getFileById: () => Promise.resolve(new ArrayBuffer(0)),
         } as unknown as YoudaoNoteApi,
         meta,
         rootDirId: asDirId('root'),

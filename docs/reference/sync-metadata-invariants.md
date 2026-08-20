@@ -20,12 +20,13 @@ as a state machine, not a cache dump.
 6. **Exclude/include filters run before `saveScanVersion`.** Saving an unfiltered snap re-injects excluded paths into metadata every full scan.
 7. **Delete: `recordSync` then `removeFileInfo`.** `recordSync` upserts `files`; remove after the log write or deletes resurrect.
 8. **Directory actions must not upsert `files` with empty `file_id`.** Use `appendSyncLog` (dirs live in `dirs`).
-9. **`cacheCloudFileInfo` conflict updates must refresh `cloud_mtime`** along with `file_id`.
+9. **`cacheCloudFileInfo` on unsynced rows (`last_sync_at === 0`) refreshes `cloud_mtime`** along with `file_id`; on previously synced rows (`last_sync_at > 0`), it preserves baseline `cloud_mtime` so `classify` accurately detects cloud modifications against the last sync.
 10. **Empty `file_id` rows stay calibratable** (`shouldSkipCalibration` must not skip them). Hash local files before calibrate so Case2 can re-link.
 11. **Youdao push 20108 / 211 must recover** (reuse duplicate id / retry update), not leave a failed create as "done".
 12. **Upload of a path present in this sync's cloud snapshot must update that file.** Use the scanned `id` / `name` / `domain` (`.note` stays `.note`). Empty or stale metadata `file_id` is not permission to `isCreate` a second `foo.md` beside `foo.note`. Metadata id is only a fallback when the snapshot has no file.
 13. **Incomplete index cannot stand in for a live cloud listing.** Cache snap omits empty `file_id` rows; live scan still sees the mapped `.note`. If any `files.file_id` is empty, skip cache and full-scan so membership matches live listing, then write ids back.
 14. **One identity everywhere.** `mapCloudName` / `officialAppName` / `pickPreferredCloud` are the only rules for "this local path is that cloud file". Incremental cache must hydrate local-only paths by listing the parent with those same rules before classify — "not in cache" is not "not on cloud". A successful parent list that omits known same-parent sibling ids is a stale dir id: increment `blocked`, skip merge, and fall back to a full scan. When the cache has no siblings, walk from the root to confirm the dir id before treating a miss as local-new. A hydrate full-scan fallback must not `clear`/`saveScanVersion` an empty or collapsed live snap (any dir list failure is fatal when saving; live size below half the cache is refused). Sibling bind on upload is create-only.
+15. **Diary upload guard:** Uploading a local diary file (`YYYY年MM月DD日`) must refuse to overwrite a cloud note if the local file is an empty template shell and the cloud note has handwritten content (`refuseEmptyDiaryUpload`). `cacheCloudFileInfo` preserves baseline `cloud_mtime` when `last_sync_at > 0` so `classify` reliably triggers conflict resolution.
 
 ## Tests required when touching these paths
 

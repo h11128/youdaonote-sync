@@ -191,7 +191,8 @@ describe('E2E: gc cleans stale metadata in postSyncCleanup', () => {
     });
     meta.save();
 
-    const mockApi = buildMockApi([], new Map());
+    const cloudEntries = [makeCloudEntry('f-recent', 'recent-deleted.md', recentTs)];
+    const mockApi = buildMockApi(cloudEntries, new Map());
     const engine = new SyncEngine({
       cookiesPath: '',
       metadataPath: metaPath,

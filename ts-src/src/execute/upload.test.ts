@@ -18,6 +18,7 @@ function makeMockApi(): YoudaoNoteApi {
     createDir: vi.fn().mockResolvedValue({ fileEntry: { id: 'dir-1' } }),
     generateFileId: vi.fn().mockReturnValue(asFileId('gen-id')),
     getDirInfoById: vi.fn().mockResolvedValue({ entries: [] }),
+    getFileById: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
   } as unknown as YoudaoNoteApi;
 }
 

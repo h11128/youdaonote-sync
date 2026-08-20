@@ -99,7 +99,11 @@ export function setupE2EContext(): {
     localDir,
     metaPath,
     cleanup: () => {
-      rmSync(tmpDir, { recursive: true, force: true });
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Handle busy sqlite lock on Windows during test teardown
+      }
     },
   };
 }

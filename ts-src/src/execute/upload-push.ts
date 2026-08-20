@@ -8,6 +8,7 @@ import {
   YOUDAO_VERSION_CONFLICT,
 } from '../api/push-errors.js';
 import type { DirId, FileId, NoteDomain } from '../types/common.js';
+import { refuseEmptyDiaryUpload } from './diary-guard.js';
 
 const MAX_PUSH_RECOVERY_DEPTH = 3;
 
@@ -40,6 +41,14 @@ async function pushOnce(opts: PushOnceOpts): Promise<Record<string, unknown>> {
       name: opts.name,
       fileData: opts.fileData,
       isCreate: opts.isCreate,
+    });
+  }
+  if (!opts.isCreate) {
+    await refuseEmptyDiaryUpload({
+      api: opts.api,
+      fileId: opts.fileId,
+      name: opts.name,
+      localContent: opts.bodyString,
     });
   }
   return opts.api.pushFile({
