@@ -266,6 +266,23 @@ function cloudCacheTests(getStore: () => MetadataStore): void {
       expect(info!.cloudMtime).toBe(1000);
     });
 
+    it('cacheCloudFileInfo refreshes cloud_mtime when file_id changes', () => {
+      const store = getStore();
+      store.setFileInfo(asRelPath('relinked.md'), {
+        fileId: asFileId('f-old'),
+        cloudMtime: asEpochSeconds(1000),
+        localMtime: asEpochSeconds(1000),
+        lastSyncAt: asEpochSeconds(1000),
+      });
+      store.cacheCloudFileInfo(asRelPath('relinked.md'), {
+        fileId: asFileId('f-new'),
+        cloudMtime: asEpochSeconds(4000),
+      });
+      const info = store.getFileInfo(asRelPath('relinked.md'));
+      expect(info!.fileId).toBe('f-new');
+      expect(info!.cloudMtime).toBe(4000);
+    });
+
     it('appendSyncLog writes sync_log without creating files rows', () => {
       const store = getStore();
       store.appendSyncLog(asRelPath('photos'), {

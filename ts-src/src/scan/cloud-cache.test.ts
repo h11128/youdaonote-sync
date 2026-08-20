@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,7 @@ import {
   loadCloudFilesFromCache,
   saveScanVersion,
   STATE_LAST_FULL_SCAN,
+  STATE_SCAN_TIME,
 } from './cloud-cache.js';
 import { applyIncrementalChanges } from './cloud-cache-incremental.js';
 import type { CloudFile } from '../types/scan.js';
@@ -333,6 +334,60 @@ describe('tryCachedCloudScan: 24h full scan interval', () => {
     expect(stored).toBeGreaterThan(0);
     const now = Math.floor(Date.now() / 1000);
     expect(Math.abs(stored - now)).toBeLessThan(5);
+  });
+});
+
+describe('tryCachedCloudScan: TTL with synced files', () => {
+  it('does not TTL-skip when metadata has synced rows (needs listRecent for live mtimes)', async () => {
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
+    saveScanVersion(meta, snap, 10);
+    meta.setFileInfo(asRelPath('doc.md'), {
+      fileId: asFileId('f-1'),
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(900),
+      lastSyncAt: asEpochSeconds(800),
+    });
+    meta.setState(STATE_SCAN_TIME, String(Math.floor(Date.now() / 1000)));
+    meta.save();
+
+    const listRecent = vi
+      .fn()
+      .mockResolvedValue([makeEntry('f-1', 'doc.note', 10, { mtime: 5000 })]);
+    const result = await tryCachedCloudScan({
+      api: { listRecent },
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 3600,
+    });
+
+    expect(listRecent).toHaveBeenCalled();
+    expect(result).not.toBeNull();
+    expect(result!.get(asRelPath('doc.md'))!.mtime).toBe(5000);
+    expect(meta.getFileInfo(asRelPath('doc.md'))!.cloudMtime).toBe(1000);
+  });
+
+  it('forces full scan when listRecent fails and synced rows exist', async () => {
+    const snap = new Map<RelPath, CloudFile>();
+    snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
+    saveScanVersion(meta, snap, 10);
+    meta.setFileInfo(asRelPath('doc.md'), {
+      fileId: asFileId('f-1'),
+      cloudMtime: asEpochSeconds(1000),
+      localMtime: asEpochSeconds(900),
+      lastSyncAt: asEpochSeconds(800),
+    });
+    meta.setState(STATE_SCAN_TIME, String(Math.floor(Date.now() / 1000) - 120));
+    meta.save();
+
+    const result = await tryCachedCloudScan({
+      api: { listRecent: vi.fn().mockRejectedValue(new Error('network')) },
+      meta,
+      skipDesktopSeed: true,
+      cacheTtlSeconds: 0,
+    });
+
+    expect(result).toBeNull();
   });
 });
 

@@ -16,6 +16,7 @@ import { sanitizeFilename, normalizeSep } from '../util/path.js';
 import * as storeDirs from './store-dirs.js';
 import * as storeState from './store-state.js';
 import * as storeFiles from './store-files.js';
+import * as storeCloudBaseline from './store-cloud-baseline.js';
 import * as storeHashCache from './store-hash-cache.js';
 import {
   appendSyncLog as writeAppendSyncLog,
@@ -175,6 +176,14 @@ export class MetadataStore {
 
   updateContentHash(localPath: RelPath, contentHash: ContentHash): void {
     storeFiles.updateContentHash(this.db, this.normalizePath(localPath), contentHash);
+  }
+
+  updateCloudMtime(localPath: RelPath, cloudMtime: EpochSeconds): void {
+    storeCloudBaseline.updateCloudMtime(this.db, this.normalizePath(localPath), cloudMtime);
+  }
+
+  hasSyncedFiles(): boolean {
+    return storeCloudBaseline.hasSyncedFiles(this.db);
   }
 
   getContentHash(localPath: RelPath): ContentHash | null {

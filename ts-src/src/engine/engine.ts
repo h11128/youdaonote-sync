@@ -4,6 +4,7 @@ import type { FileState, SyncLogMetadata } from '../types/state.js';
 import { YoudaoNoteApi } from '../api/client.js';
 import { MetadataStore } from '../metadata/store.js';
 import { healPreScan, healPostHash } from '../metadata/health.js';
+import { healCloudMtimeBaseline } from '../metadata/heal-cloud-mtime.js';
 import { emptyStats } from '../execute/executor.js';
 import type { SyncStats } from '../execute/executor.js';
 import { filterByDirection } from './helpers.js';
@@ -260,6 +261,7 @@ export class SyncEngine {
     localSnap: Map<RelPath, LocalFile>,
     localHashes: Map<RelPath, ContentHash | null>,
   ): Promise<{ classified: Map<RelPath, FileState>; metadata: Map<RelPath, SyncLogMetadata> }> {
+    healCloudMtimeBaseline(this.meta, cloudSnap, true);
     return runClassifyAndRefine({
       api: this.api,
       meta: this.meta,

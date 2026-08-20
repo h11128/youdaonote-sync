@@ -123,3 +123,28 @@ export function applyIncrementalChanges(
     }
   });
 }
+
+/**
+ * Patch in-memory cloud snap mtimes from listRecent without touching DB baselines.
+ * Used when synced rows keep baseline cloud_mtime in metadata but classify needs live mtimes.
+ */
+export function overlayLiveMtimesFromRecent(
+  meta: MetadataStore,
+  cloudFiles: Map<RelPath, CloudFile>,
+  recent: Record<string, unknown>[],
+): void {
+  for (const entry of recent) {
+    const fe = entry.fileEntry as Record<string, unknown> | undefined;
+    if (!fe || Boolean(fe.dir)) continue;
+    const fid = toStr(fe.id);
+    if (!fid) continue;
+    const existingPath = meta.findByFileId(fid as FileId);
+    if (existingPath == null) continue;
+    const rel = asRelPath(existingPath);
+    const cached = cloudFiles.get(rel);
+    if (!cached) continue;
+    const mtime = toNum(fe.modifyTimeForSort, cached.mtime);
+    if (mtime === cached.mtime) continue;
+    cloudFiles.set(rel, { ...cached, mtime: asEpochSeconds(mtime) });
+  }
+}

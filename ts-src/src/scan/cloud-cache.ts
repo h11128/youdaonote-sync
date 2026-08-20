@@ -15,7 +15,11 @@ import {
 import type { CloudFile } from '../types/scan.js';
 import type { MetadataStore } from '../metadata/store.js';
 import { cachedCloudName } from '../scan/name.js';
-import { applyIncrementalChanges, toNum } from './cloud-cache-incremental.js';
+import {
+  applyIncrementalChanges,
+  overlayLiveMtimesFromRecent,
+  toNum,
+} from './cloud-cache-incremental.js';
 
 import { seedMetadataFromDesktop } from '../metadata/desktop-data.js';
 
@@ -129,6 +133,8 @@ function stampScanTime(meta: MetadataStore): void {
 
 function tryTtlShortcut(meta: MetadataStore, ttl: number): Map<RelPath, CloudFile> | null {
   if (ttl <= 0) return null;
+  // Synced rows keep baseline cloud_mtime in DB; TTL cache would feed classify stale mtimes.
+  if (meta.hasSyncedFiles()) return null;
   const lastScanTime = meta.getStateInt(STATE_SCAN_TIME);
   if (lastScanTime <= 0) return null;
   const nowEpoch = Math.floor(Date.now() / 1000);
@@ -142,7 +148,10 @@ function reconcileRecent(
   cachedVersion: number,
   cachedFiles: Map<RelPath, CloudFile> | null,
 ): Map<RelPath, CloudFile> | null {
+  const needsLiveMtimes = meta.hasSyncedFiles();
+
   if (recent.length === 0) {
+    if (needsLiveMtimes) return null;
     stampScanTime(meta);
     return cachedFiles;
   }
@@ -154,6 +163,9 @@ function reconcileRecent(
   );
   if (cachedVersion >= cloudMaxVersion) {
     stampScanTime(meta);
+    if (needsLiveMtimes && cachedFiles) {
+      overlayLiveMtimesFromRecent(meta, cachedFiles, recent);
+    }
     return cachedFiles;
   }
   const changed = recent.filter((e) => {
@@ -211,7 +223,9 @@ export async function tryCachedCloudScan(
     Promise.resolve(loadCloudFilesFromCache(meta)),
   ]);
 
-  if (recentResult === null) return cachedFiles;
+  if (recentResult === null) {
+    return meta.hasSyncedFiles() ? null : cachedFiles;
+  }
   return reconcileRecent(meta, recentResult, cachedVersion, cachedFiles);
 }
 
