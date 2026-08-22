@@ -35,13 +35,13 @@ RFC numbers follow document date (oldest = 001). Active `design/` keeps the **ne
 
 | Doc | Purpose |
 |-----|---------|
+| [2026-08-21-diary-blind-push-and-scaffold-guard-bypass.md](./postmortem/2026-08-21-diary-blind-push-and-scaffold-guard-bypass.md) | Diary overwrite recurrence: never-synced cloud baseline read as unchanged + diary-guard counted generated scaffolding as handwriting |
+| [2026-08-19-diary-empty-template-overwrite-guard.md](./postmortem/2026-08-19-diary-empty-template-overwrite-guard.md) | Empty local template overwrote cloud handwriting on upload; added `diary-guard.ts` |
 | [2026-08-12-note-listing-size-zero.md](./postmortem/2026-08-12-note-listing-size-zero.md) | Official app diaries vanished: `.note` listing size=0 treated as empty (#783); Harness #788 |
 | [2026-08-09-pe-false-alert-and-empty-file-id.md](./postmortem/2026-08-09-pe-false-alert-and-empty-file-id.md) | PE false alert + empty `file_id` zombies (#734–#740) |
 | [2026-08-05-pe-task-610-empty-file-id.md](./postmortem/2026-08-05-pe-task-610-empty-file-id.md) | Upload wipe / calibrate / push recovery (#610/#613) |
 | [2026-03-24-note-table-incident.md](./postmortem/2026-03-24-note-table-incident.md) | NOTE native-table render failure |
 | [2026-03-29-ai-development-retrospective.md](./postmortem/2026-03-29-ai-development-retrospective.md) | Diagnose-tool avoidance |
-| [2026-03-20-architecture-review.md](./postmortem/2026-03-20-architecture-review.md) | Architecture review snapshot |
-| [2026-03-02-ts-rewrite-retrospective.md](./postmortem/2026-03-02-ts-rewrite-retrospective.md) | TS rewrite gaps (historical; cleanup behavior superseded 2026-08) |
 
 **New postmortems** include Reflection / Troubleshooting / Avoidance.
 
