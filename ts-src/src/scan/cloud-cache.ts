@@ -27,7 +27,15 @@ export const STATE_CLOUD_VERSION = 'last_cloud_version';
 export const STATE_SCAN_TIME = 'last_scan_time';
 export const STATE_LAST_FULL_SCAN = 'last_full_scan_time';
 
-const FULL_SCAN_INTERVAL_SECONDS = 24 * 3600;
+/**
+ * Deletion-detection latency. `listRecent` only reports created/modified entries,
+ * so applyIncrementalChanges can never drop a path — a cloud-side delete stays
+ * invisible in the cached snapshot until the next full scan. This interval is
+ * therefore the worst-case window in which sync reports a deleted cloud file as
+ * still present (and `diagnose` reports it as `synced`). A full scan costs ~10s
+ * on a 5.7k-file account, so 24h was far more staleness than the saving is worth.
+ */
+const FULL_SCAN_INTERVAL_SECONDS = 3600;
 
 export interface CloudCacheDeps {
   api: {

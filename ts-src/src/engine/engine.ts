@@ -280,6 +280,8 @@ export class SyncEngine {
     classified: Map<RelPath, FileState>;
     cloudSnap: Map<RelPath, CloudFile>;
     localSnap: Map<RelPath, LocalFile>;
+    /** False when the cloud side came from the metadata cache (cloud deletions invisible). */
+    didFullScan: boolean;
   }> {
     this.p?.beginPhase('initXxhash');
     await initXxhash();
@@ -290,11 +292,13 @@ export class SyncEngine {
     this.p?.endPhase();
     if (loginErr) throw new Error(`Login failed: ${loginErr}`);
 
-    const { cloudSnap, localSnap, localHashes } = await this.obtainSnapshots(this.config.localDir);
+    const { cloudSnap, localSnap, localHashes, didFullScan } = await this.obtainSnapshots(
+      this.config.localDir,
+    );
     const { classified } = await this.classifyAndRefine(cloudSnap, localSnap, localHashes);
     const direction = this.config.direction ?? 'both';
     if (direction !== 'both') filterByDirection(classified, direction);
-    return { classified, cloudSnap, localSnap };
+    return { classified, cloudSnap, localSnap, didFullScan };
   }
   close(): void {
     this.meta.close();

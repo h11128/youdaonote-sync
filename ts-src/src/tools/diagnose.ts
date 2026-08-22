@@ -19,6 +19,7 @@ import { SyncEngine } from '../engine/engine.js';
 import { asRelPath, type RelPath } from '../types/common.js';
 import type { CloudFile } from '../types/scan.js';
 import { MetadataStore } from '../metadata/store.js';
+import { STATE_LAST_FULL_SCAN } from '../scan/cloud-cache.js';
 import { YoudaoNoteApi } from '../api/client.js';
 import { printExtStats } from './diagnose-local-stats.js';
 
@@ -108,6 +109,25 @@ function printPathLookup(suspect: string, cloudSnap: Map<RelPath, CloudFile>): v
   if (children.length > 10) console.log(`      ... and ${children.length - 10} more`);
 }
 
+/**
+ * Say where the cloud side of this report came from. A cached snapshot is rebuilt
+ * from metadata and patched with `listRecent`, which never reports deletions — so a
+ * note deleted in the cloud still shows as `exists` / `synced` here. Printing this
+ * is the difference between a two-minute diagnosis and an hour chasing a phantom.
+ */
+export function printSnapshotProvenance(didFullScan: boolean, meta: MetadataStore): void {
+  if (didFullScan) {
+    console.log('  cloud snapshot: FULL SCAN (live, authoritative)');
+    return;
+  }
+  const lastFull = meta.getStateInt(STATE_LAST_FULL_SCAN);
+  const age = Math.max(0, Math.floor(Date.now() / 1000) - lastFull);
+  const ageText = lastFull > 0 ? `${Math.floor(age / 60)} min ago` : 'never';
+  console.log(`  cloud snapshot: CACHED (last full scan ${ageText})`);
+  console.log('    Cloud-side deletions are NOT visible in a cached snapshot.');
+  console.log('    Run `youdaonote-sync diagnose reset-cache` to force a full scan.');
+}
+
 export async function cmdDecision(cfg: DiagnoseConfig, targets: string[]): Promise<void> {
   if (targets.length === 0) {
     console.log('Specify at least one --target path');
@@ -116,8 +136,11 @@ export async function cmdDecision(cfg: DiagnoseConfig, targets: string[]): Promi
 
   const engine = createEngine(cfg);
   try {
-    const { classified, cloudSnap, localSnap } = await engine.collectItems();
+    const { classified, cloudSnap, localSnap, didFullScan } = await engine.collectItems();
     const meta = new MetadataStore(cfg.metadataPath);
+
+    console.log('\n' + '='.repeat(60));
+    printSnapshotProvenance(didFullScan, meta);
 
     for (const target of targets) {
       printDecision(target, { cloudSnap, localSnap, classified, meta });
@@ -159,7 +182,7 @@ function printDecision(target: string, ctx: DecisionCtx): void {
 export async function cmdSummary(cfg: DiagnoseConfig): Promise<void> {
   const engine = createEngine(cfg);
   try {
-    const { classified } = await engine.collectItems();
+    const { classified, didFullScan } = await engine.collectItems();
 
     const counts = new Map<string, number>();
     for (const [, state] of classified) {
@@ -169,6 +192,9 @@ export async function cmdSummary(cfg: DiagnoseConfig): Promise<void> {
     console.log('\n' + '='.repeat(60));
     console.log('  Dry-run Summary');
     console.log('='.repeat(60));
+    const summaryMeta = new MetadataStore(cfg.metadataPath);
+    printSnapshotProvenance(didFullScan, summaryMeta);
+    summaryMeta.close();
 
     const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
     for (const [kind, count] of sorted) {

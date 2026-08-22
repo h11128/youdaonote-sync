@@ -135,6 +135,41 @@ describe('classify: modified states', () => {
     expect(result.state.kind).toBe('localModified');
   });
 
+  // Regression: 2026-08-21 lost the day's diary. cacheCloudFileInfo had stamped
+  // file_id + cloud_mtime onto a never-synced row straight off a cloud listing, so
+  // cloudMtimeChanged read `false` ("cloud unchanged since baseline") for content the
+  // tool had never downloaded. rule_11 then classified localModified and uploaded an
+  // empty local template over the note the user had written in the Youdao app.
+  it('never-synced row does not report the cloud baseline as unchanged', () => {
+    const cond = extractConditions({
+      local: makeLocal(),
+      cloud: makeCloud({ mtime: asEpochSeconds(1000) }),
+      meta: makeMeta({ cloudMtime: asEpochSeconds(1000), lastSyncAt: asEpochSeconds(0) }),
+      localHash: asContentHash('hash-changed'),
+    });
+    expect(cond.cloudMtimeChanged).toBeNull();
+  });
+
+  it('never-synced row with local changes gathers cloud evidence instead of pushing', () => {
+    const result = classify({
+      local: makeLocal(),
+      cloud: makeCloud({ mtime: asEpochSeconds(1000) }),
+      meta: makeMeta({ cloudMtime: asEpochSeconds(1000), lastSyncAt: asEpochSeconds(0) }),
+      localHash: asContentHash('hash-changed'),
+    });
+    expect(result.state.kind).toBe('cloudModifiedContent');
+  });
+
+  it('localModified still applies once the row has a verified sync baseline', () => {
+    const result = classify({
+      local: makeLocal(),
+      cloud: makeCloud({ mtime: asEpochSeconds(1000) }),
+      meta: makeMeta({ cloudMtime: asEpochSeconds(1000), lastSyncAt: asEpochSeconds(900) }),
+      localHash: asContentHash('hash-changed'),
+    });
+    expect(result.state.kind).toBe('localModified');
+  });
+
   it('cloudModifiedContent — both exist, only cloud mtime changed (hash not available)', () => {
     const result = classify({
       local: makeLocal(),

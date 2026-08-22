@@ -114,8 +114,13 @@ export const RULES: readonly Rule[] = [
     then: 'synced',
   },
   {
+    // Local changed but the cloud baseline is unknown (never-synced row). We hold no
+    // evidence that the cloud copy is stale, so route through the evidence-gathering
+    // pass: refineAllConflicts fetches the cloud content hash and downgrades this to
+    // converged / cloudModifiedContent / conflict. Uploading here would overwrite
+    // cloud content we have never read.
     when: { localExists: true, cloudExists: true, localHashChanged: true, cloudMtimeChanged: null },
-    then: 'localModified',
+    then: 'cloudModifiedContent',
   },
 
   // Both exist, no hash (first sync / fallback)

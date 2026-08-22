@@ -357,6 +357,43 @@ describe('cmdDecision', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('local: exists'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('classified state: synced'));
   });
+
+  // A cached snapshot cannot see cloud-side deletions, so `synced` may be a lie.
+  // The report has to say which snapshot it came from.
+  it('warns when the cloud snapshot came from cache', async () => {
+    const metaPath = join(tempDir, 'provenance-cached.db');
+    new MetadataStore(metaPath).close();
+
+    engineMethods.collectItems.mockResolvedValue({
+      cloudSnap: makeCloudSnap([['test.md', { mtime: asEpochSeconds(100), name: 'test.md' }]]),
+      localSnap: new Map([[asRelPath('test.md'), { mtime: asEpochSeconds(200) }]]),
+      classified: new Map([[asRelPath('test.md'), { kind: 'synced' }]]),
+      didFullScan: false,
+    });
+
+    const logSpy = vi.spyOn(console, 'log');
+    await cmdDecision({ ...dummyCfg, metadataPath: metaPath }, ['test.md']);
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('cloud snapshot: CACHED'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('deletions are NOT visible'));
+  });
+
+  it('marks the cloud snapshot authoritative after a full scan', async () => {
+    const metaPath = join(tempDir, 'provenance-full.db');
+    new MetadataStore(metaPath).close();
+
+    engineMethods.collectItems.mockResolvedValue({
+      cloudSnap: makeCloudSnap([['test.md', { mtime: asEpochSeconds(100), name: 'test.md' }]]),
+      localSnap: new Map([[asRelPath('test.md'), { mtime: asEpochSeconds(200) }]]),
+      classified: new Map([[asRelPath('test.md'), { kind: 'synced' }]]),
+      didFullScan: true,
+    });
+
+    const logSpy = vi.spyOn(console, 'log');
+    await cmdDecision({ ...dummyCfg, metadataPath: metaPath }, ['test.md']);
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('cloud snapshot: FULL SCAN'));
+  });
 });
 
 describe('cmdSummary', () => {

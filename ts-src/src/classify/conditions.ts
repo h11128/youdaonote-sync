@@ -31,6 +31,11 @@ function computeCloudMtimeChanged(
   meta: MetadataRecord | null,
 ): boolean | null {
   if (!cloud || !meta) return null;
+  // A row that was never synced has no verified cloud baseline: cacheCloudFileInfo
+  // stamps file_id + cloud_mtime straight off a cloud listing whose content we have
+  // never held. Reporting "unchanged" there would let classify treat cloud content
+  // it has never seen as already-in-sync and blind-push over it.
+  if (meta.lastSyncAt <= 0) return null;
   if (meta.cloudMtime > 0) return cloud.mtime > meta.cloudMtime;
   if (meta.cloudMtime === 0) return true;
   return null;

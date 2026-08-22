@@ -286,13 +286,15 @@ describe('loadCloudFilesFromCache', () => {
   });
 });
 
-describe('tryCachedCloudScan: 24h full scan interval', () => {
-  it('returns null when last full scan was >24h ago', async () => {
+describe('tryCachedCloudScan: full scan interval', () => {
+  // The interval is the deletion-detection latency: listRecent never reports a
+  // deleted path, so a cloud-side delete stays invisible until the next full scan.
+  it('returns null when the last full scan is older than the interval', async () => {
     const snap = new Map<RelPath, CloudFile>();
     snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
     saveScanVersion(meta, snap, 10);
 
-    const oldTime = Math.floor(Date.now() / 1000) - 25 * 3600;
+    const oldTime = Math.floor(Date.now() / 1000) - 2 * 3600;
     meta.setState(STATE_LAST_FULL_SCAN, String(oldTime));
     meta.save();
 
@@ -307,7 +309,7 @@ describe('tryCachedCloudScan: 24h full scan interval', () => {
     expect(result).toBeNull();
   });
 
-  it('returns cached when last full scan was <24h ago', async () => {
+  it('returns cached when the last full scan is within the interval', async () => {
     const snap = new Map<RelPath, CloudFile>();
     snap.set(asRelPath('doc.md'), makeCloudFile('f-1', 'doc.note'));
     saveScanVersion(meta, snap, 10);
