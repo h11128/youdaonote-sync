@@ -3,6 +3,18 @@
 How the daily `YoudaoNoteSync` Task Scheduler job is supposed to run.
 This is the ops SOT for scripts under `scripts/` — not `.local-scripts/`.
 
+> **Disabled 2026-08-22.** This task ran the same full bidirectional sync as
+> Hermes cron job `日记补全 + 今天模版` (id `b6fcec0187b6`), 30 minutes apart
+> on the same repo — `Task Scheduler 18:00` then `Hermes 18:30`. That overlap
+> contributed to the 2026-08-21 diary-conflict incident (see
+> [postmortem/2026-08-21-diary-blind-push-and-scaffold-guard-bypass.md](../postmortem/2026-08-21-diary-blind-push-and-scaffold-guard-bypass.md)).
+> Sync now runs only as part of the Hermes diary job's own sync↓/sync↑ steps.
+> The task is **disabled, not deleted** — re-enable
+> (`Enable-ScheduledTask -TaskName YoudaoNoteSync`) if the Hermes job ever
+> needs a standalone fallback again (e.g. it stops reliably reaching its own
+> sync step). Everything below describes the mechanism, still accurate if
+> re-enabled.
+
 ## What runs
 
 | Piece | Path / name |
