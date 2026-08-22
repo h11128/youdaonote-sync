@@ -45,6 +45,24 @@ function isBoilerplateLine(line: string): boolean {
   return trimmed === '*无*' || trimmed === '无';
 }
 
+/** Task checkbox, e.g. `- [ ] #931 会前过一遍回退准备稿`. */
+const CHECKBOX_ITEM_RE = /^[-*+]\s*\[[ xX]\]/;
+/** A list marker with nothing after it. */
+const EMPTY_LIST_MARKER_RE = /^[-*+]$/;
+
+/**
+ * Lines the daily template generator writes on its own: the section hint quotes,
+ * the Progress Engine brief quote, the check-in / plan checkbox lists, and empty
+ * bullets. They are not handwriting, and counting them let a freshly generated
+ * 902-byte shell pass as "the user wrote something" — which is how the 2026-08-21
+ * template got pushed over a cloud diary without the guard ever probing the cloud.
+ */
+function isGeneratedScaffoldLine(line: string): boolean {
+  if (line.startsWith('>')) return true;
+  if (CHECKBOX_ITEM_RE.test(line)) return true;
+  return EMPTY_LIST_MARKER_RE.test(line);
+}
+
 /**
  * Check if a diary markdown text has non-empty body under protected sections
  * or substantive non-template text.
@@ -67,6 +85,7 @@ export function hasDiaryHandwriting(text: string): boolean {
     }
 
     if (isBoilerplateLine(line)) continue;
+    if (isGeneratedScaffoldLine(line)) continue;
 
     totalBodyChars += line.length;
     if (currentProtected) {

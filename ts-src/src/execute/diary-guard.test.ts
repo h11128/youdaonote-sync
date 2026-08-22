@@ -4,6 +4,50 @@ import type { FileId } from '../types/common.js';
 import type { YoudaoNoteApi } from '../api/client.js';
 import { markdownToNoteJson } from '../convert/md-to-note.js';
 
+/**
+ * The exact 902-byte shell daily-diary-update generated on 2026-08-21. Its check-in
+ * list and Progress Engine brief once pushed totalBodyChars past the threshold, so the
+ * guard treated a freshly generated template as handwriting and never probed the cloud
+ * note it was about to overwrite.
+ */
+const GENERATED_SHELL_2026_08_21 = `# 周五丙午年丙申月丁卯日
+
+# 睡眠质量
+
+# 情绪/状态
+
+# 感情/人际关系
+
+# 工作概括
+
+# 生活概括
+
+# 主线工作
+
+# 计划完成度
+
+> 今天在这条主线上有时间投入或推进就勾上。
+
+- [ ] #1 学习驾照
+- [ ] #2 找 MetLife 网络内牙医拔智齿
+- [ ] #3 家庭医生体检
+- [ ] #4 工作目标与日常追踪
+- [ ] #5 优化 cursor 使用方式
+
+# 明日计划
+
+-
+
+## 建议明日计划
+
+> 进度引擎每日简报：（尚无 LLM 简报；以下为确定性排序 Top 任务，可点「重新生成」）
+
+- [ ] #931 会前过一遍回退准备稿（Modern Health，0.5h）
+- [ ] #930 8/21 周五夫妻咨询（Modern Health，1h）
+- [ ] #469 九月联系律所办延期（签证跟进（H1B / 文丽H4 / 文丽H4EAD），1h）
+- [ ] #202 打电话申诉牙科额度（找 MetLife 网络内牙医拔智齿，0.5h）
+`;
+
 describe('diary-guard: isDiaryName', () => {
   it('identifies diary names correctly', () => {
     expect(isDiaryName('2026年8月18日.md')).toBe(true);
@@ -109,6 +153,20 @@ describe('diary-guard: hasDiaryHandwriting', () => {
 2. 读写分离缓存设计
 `;
     expect(hasDiaryHandwriting(otherSectionText)).toBe(true);
+  });
+});
+
+describe('diary-guard: hasDiaryHandwriting — generated scaffolding', () => {
+  it('returns false for a generated shell carrying check-in and PE brief lists', () => {
+    expect(hasDiaryHandwriting(GENERATED_SHELL_2026_08_21)).toBe(false);
+  });
+
+  it('still counts a hand-written bullet that is not a checkbox', () => {
+    const handwrittenBullet = `
+# 睡眠质量
+- 昨晚睡得很好，大概11点睡7点起。
+`;
+    expect(hasDiaryHandwriting(handwrittenBullet)).toBe(true);
   });
 });
 
