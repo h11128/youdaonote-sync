@@ -19,7 +19,7 @@ function isRetryable(err: unknown): boolean {
       return true;
     }
     // HTTP status-based: retry 5xx, don't retry 4xx
-    const statusMatch = /status[: ]+(\d{3})/.exec(msg);
+    const statusMatch = /(?:status[: ]+|http[:\s]+)(\d{3})/.exec(msg);
     if (statusMatch) {
       const cap = statusMatch[1];
       if (cap === undefined) return false;

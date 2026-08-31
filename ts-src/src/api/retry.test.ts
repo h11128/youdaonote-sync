@@ -24,7 +24,7 @@ describe('retryWithBackoff', () => {
     const fn = vi
       .fn()
       .mockRejectedValueOnce(new Error('HTTP status: 502'))
-      .mockRejectedValueOnce(new Error('HTTP status: 503'))
+      .mockRejectedValueOnce(new Error('HTTP 500: {"error":"205","message":"Upload data failure"}'))
       .mockResolvedValue('ok');
 
     const result = await retryWithBackoff(fn, { baseDelay: 1 });
@@ -36,6 +36,10 @@ describe('retryWithBackoff', () => {
     const fn = vi.fn().mockRejectedValue(new Error('HTTP status: 401 Unauthorized'));
     await expect(retryWithBackoff(fn, { baseDelay: 1 })).rejects.toThrow('401');
     expect(fn).toHaveBeenCalledTimes(1);
+
+    const fn404 = vi.fn().mockRejectedValue(new Error('HTTP 404: Not Found'));
+    await expect(retryWithBackoff(fn404, { baseDelay: 1 })).rejects.toThrow('404');
+    expect(fn404).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT retry on non-network errors', async () => {
