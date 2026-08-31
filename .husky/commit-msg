@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+# Auto-installed by myforge/scripts/install-hooks.sh
+# commit-msg hook: validate conventional commit format + task ref.
+# Rejects commits that don't match the convention.
+#
+# Skip: --no-verify, SKIP_TASK_REF=1, or merge commits.
+
+set -euo pipefail
+
+is_wsl() {
+    grep -qi "microsoft" /proc/version 2>/dev/null
+}
+
+wsl_host_ip() {
+    awk '/^nameserver / { print $2; exit }' /etc/resolv.conf 2>/dev/null
+}
+
+default_pe_url() {
+    if is_wsl; then
+        if command -v curl.exe >/dev/null 2>&1; then
+            printf 'http://127.0.0.1:9200'
+            return
+        fi
+        local host_ip
+        host_ip="$(wsl_host_ip)"
+        if [[ -n "$host_ip" ]]; then
+            printf 'http://%s:9200' "$host_ip"
+            return
+        fi
+    fi
+    printf 'http://127.0.0.1:9200'
+}
+
+PE_URL="${PE_URL:-$(default_pe_url)}"
+
+pe_uses_windows_loopback() {
+    is_wsl && [[ "$PE_URL" =~ ^https?://(127\.0\.0\.1|localhost)(:|/) ]]
+}
+
+pe_curl() {
+    if pe_uses_windows_loopback && command -v curl.exe >/dev/null 2>&1; then
+        curl.exe "$@"
+    else
+        curl "$@"
+    fi
+}
+
+pe_url_points_to_llm_gateway() {
+    [[ "$PE_URL" =~ :9100(/|$) ]]
+}
+
+print_task_list_hint() {
+    local task_url="$PE_URL"
+    if pe_url_points_to_llm_gateway; then
+        task_url="http://127.0.0.1:9200"
+    fi
+    if pe_uses_windows_loopback && command -v curl.exe >/dev/null 2>&1; then
+        printf "  curl.exe -sS --max-time 3 %q/api/tasks?status=in_progress | head -c 4000\n" "$task_url"
+    else
+        printf "  curl -sS --max-time 3 %q/api/tasks?status=in_progress | head -c 4000\n" "$task_url"
+    fi
+}
+
+print_transport_hint() {
+    if pe_uses_windows_loopback && command -v curl.exe >/dev/null 2>&1; then
+        printf "WSL transport: PE is on Windows localhost; manual probes must use curl.exe, not Linux curl.\n"
+    elif is_wsl; then
+        printf "WSL transport: if Linux curl cannot reach PE on 127.0.0.1, retry with curl.exe or set PE_URL=http://<windows-host-ip>:9200.\n"
+    fi
+}
+
+print_service_port_hint() {
+    printf "Service port map:\n"
+    printf "  Progress Engine: %s (default :9200; task APIs are /api/*)\n" "$PE_URL"
+    printf "  llm-gateway:     http://127.0.0.1:9100 (not a PE task API)\n"
+    printf "  agent-memory:    http://127.0.0.1:9877 (L3 router: /write /search /health)\n"
+    printf "  dashboard dev:   http://127.0.0.1:5173 (Vite UI only; not a task or memory API)\n"
+    printf "Do not set PE_URL to :9100; that is llm-gateway, not Progress Engine.\n"
+    printf "If PE runs elsewhere, set PE_URL to the Progress Engine base URL only.\n"
+    print_transport_hint
+}
+
+# Parse PE /api/validate-scope JSON: extract string .warning (robust); fallback to regex.
+pe_warning_from_validate_json() {
+    local json="$1"
+    [[ -n "$json" ]] || return 0
+    if command -v python3 >/dev/null 2>&1; then
+        local out
+        if out=$(
+            printf '%s' "$json" | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+w=d.get("warning")
+sys.stdout.write("" if w is None else (w if isinstance(w, str) else str(w)))' 2>/dev/null
+        ); then
+            [[ -n "$out" ]] && printf '%s' "$out"
+            return 0
+        fi
+    fi
+    if command -v jq >/dev/null 2>&1; then
+        jq -r '.warning // empty' <<<"$json" 2>/dev/null | tr -d '\n'
+        return 0
+    fi
+    if [[ "$json" =~ \"warning\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+    fi
+}
+
+MSG_FILE="$1"
+MSG=$(head -1 "$MSG_FILE")
+
+# ── Skip conditions ──────────────────────────────────────────────
+# Merge commits
+if [[ "$MSG" == Merge* ]]; then
+    exit 0
+fi
+
+# Environment variable override
+if [[ "${SKIP_TASK_REF:-}" == "1" ]]; then
+    exit 0
+fi
+
+RED='\033[0;31m'
+NC='\033[0m'
+
+if pe_url_points_to_llm_gateway; then
+    printf "${RED}[commit-msg] REJECTED${NC}: PE_URL points to :9100, which is llm-gateway, not Progress Engine.\n"
+    print_service_port_hint
+    printf "Use the Progress Engine task API instead:\n"
+    print_task_list_hint
+    exit 1
+fi
+
+# ── Check 1: Conventional commit format (align with Rust CC_RE: type + optional(scope) + !? + :) ──
+# Note: `[!:]:` is wrong in ERE — it matches `!:` or `::`, not a single `:` after scope.
+CC_REGEX='^[a-z][a-z0-9-]*(\([^)]+\))?(!)?:[[:space:]]+.+'
+if ! [[ "$MSG" =~ $CC_REGEX ]]; then
+    printf "${RED}[commit-msg] REJECTED${NC}: not conventional commit format.\n"
+    printf "Expected: type(scope): description #N\n"
+    printf "Examples:\n"
+    printf "  feat(stocks): add Kelly criterion #42\n"
+    printf "  fix(sublease): edge case, closes #18\n"
+    printf "  chore(progress-engine): refactor db #7\n"
+    exit 1
+fi
+
+# ── Check 2: Task reference ──────────────────────────────────────
+if ! [[ "$MSG" =~ \#[0-9]+ ]]; then
+    printf "${RED}[commit-msg] REJECTED${NC}: missing task reference (#N).\n"
+    printf "Put a task id in the first line of the message, for example: closes #42 (if finishing task) or #42 (activity only)\n"
+    printf "This hook talks to Progress Engine for task lookup; it does not use llm-gateway.\n"
+    print_service_port_hint
+    printf "To list in-progress Progress Engine tasks:\n"
+    print_task_list_hint
+    printf "If you see \"Connection refused\", start PE first, e.g.:\n"
+    printf "  cargo run -p progress-engine -- serve\n"
+    printf "Do not add 2>/dev/null to that curl while debugging — it hides the real error.\n"
+    exit 1
+fi
+
+if [[ "$MSG" =~ (^|[^0-9])\#0([^0-9]|$) ]]; then
+    printf "${RED}[commit-msg] REJECTED${NC}: #0 is not a valid Progress Engine task reference.\n"
+    printf "Use a real task id, for example #201. If you do not know it, list Progress Engine tasks:\n"
+    print_service_port_hint
+    print_task_list_hint
+    exit 1
+fi
+
+# ── Check 3: Task vs commit scope (PE uses DB aliases; best-effort, never blocks) ───
+YELLOW='\033[0;33m'
+if [[ "$MSG" =~ \#([0-9]+) ]]; then
+    TASK_ID="${BASH_REMATCH[1]}"
+    GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    REPO_NAME=$(basename "$GIT_ROOT")
+    # Extract scope from type(scope)!: ... (avoid bash [[ =~ ]] edge cases with [^)] in some versions)
+    COMMIT_SCOPE="$REPO_NAME"
+    SCOPE_EXTRACT=$(printf '%s' "$MSG" | sed -n 's/^[a-z][a-z0-9-]*(\([^)]*\))!*:[[:space:]].*/\1/p')
+    if [[ -n "$SCOPE_EXTRACT" ]]; then
+        COMMIT_SCOPE="$SCOPE_EXTRACT"
+    fi
+    VALIDATION_RESULT=$(
+        pe_curl -sG --max-time 1 "${PE_URL}/api/validate-scope" \
+            --data-urlencode "scope=${COMMIT_SCOPE}" \
+            --data-urlencode "task_id=${TASK_ID}" \
+            2>/dev/null || true
+    )
+    WARN_TEXT="$(pe_warning_from_validate_json "$VALIDATION_RESULT")"
+    if [[ -n "$WARN_TEXT" ]]; then
+        printf "${YELLOW}[commit-msg] WARNING${NC}: %s\n" "$WARN_TEXT"
+        print_service_port_hint
+        printf "List Progress Engine tasks:\n"
+        print_task_list_hint
+    fi
+fi
+
+# ── Check 4: freshly-minted task + bare #N (best-effort, never blocks) ───
+# manage-tasks skill: "做完就 closes #N 或 pe task done。裸 #N 只记账，不会关。"
+# A task created in the last few minutes almost always means it was just
+# minted to satisfy Check 2's #N requirement -- if THIS commit is the one
+# finishing that work, a bare #N silently never closes it (PE zika retro,
+# 2026-08-24: #910/#911/#924/#973). Closes/fixes/resolves/done already
+# present is fine; this only nudges the bare-#N case, and only when the
+# task is fresh enough that "just created for this commit" is plausible.
+CLOSE_KEYWORD_RE='(closes?|closed|fixes?|fixed|resolves?|resolved|done)[[:space:]]*:?[[:space:]]+#[0-9]+'
+if [[ "$MSG" =~ \#([0-9]+) ]]; then
+    TASK_ID="${BASH_REMATCH[1]}"
+    if ! [[ "$MSG" =~ $CLOSE_KEYWORD_RE ]] && command -v python3 >/dev/null 2>&1; then
+        TASK_JSON=$(pe_curl -sS --max-time 1 "${PE_URL}/api/tasks/${TASK_ID}" 2>/dev/null || true)
+        FRESH_MINUTES=$(
+            printf '%s' "$TASK_JSON" | python3 -c '
+import json, sys
+from datetime import datetime
+try:
+    d = json.load(sys.stdin)
+    created = datetime.strptime(d["created_at"], "%Y-%m-%d %H:%M:%S")
+    print(int((datetime.now() - created).total_seconds() // 60))
+except Exception:
+    pass
+' 2>/dev/null || true
+        )
+        if [[ "$FRESH_MINUTES" =~ ^[0-9]+$ ]] && [[ "$FRESH_MINUTES" -le 15 ]]; then
+            printf "${YELLOW}╔══════════════════════════════════════════════════════════════════════════════╗${NC}\n"
+            printf "${YELLOW}║ [commit-msg] ⚠️  TASK CLOSE WARNING: Bare '#%s' detected                     ║${NC}\n" "$TASK_ID"
+            printf "${YELLOW}║ Task #%s was created %s min ago. Bare '#%s' ONLY records activity;           ║${NC}\n" "$TASK_ID" "$FRESH_MINUTES" "$TASK_ID"
+            printf "${YELLOW}║ Progress Engine will NOT close this task automatically!                      ║${NC}\n"
+            printf "${YELLOW}║ If this commit completes the work, use: 'closes #%s'                          ║${NC}\n" "$TASK_ID"
+            printf "${YELLOW}║ If doing WIP/intermediate commit, verify final closure upon completion.      ║${NC}\n"
+            printf "${YELLOW}╚══════════════════════════════════════════════════════════════════════════════╝${NC}\n"
+            if [[ "${STRICT_TASK_CLOSE:-}" == "1" ]]; then
+                printf "${RED}[commit-msg] REJECTED${NC}: STRICT_TASK_CLOSE is set and bare '#%s' is not allowed for fresh tasks.\n" "$TASK_ID"
+                exit 1
+            fi
+        fi
+    fi
+fi
+
+exit 0

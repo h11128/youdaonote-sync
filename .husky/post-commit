@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Auto-installed by myforge/scripts/install-hooks.sh
+# Post-commit hook: notify progress-engine of new commits.
+# Task closes (closes #N) are applied inside PE ingest-git, not in this shell script.
+# Fire-and-forget — never blocks or fails the commit.
+# If PE is unreachable, writes a pending marker so the next
+# successful call (or PE startup auto-ingest) picks it up.
+
+is_wsl() {
+    grep -qi "microsoft" /proc/version 2>/dev/null
+}
+
+wsl_host_ip() {
+    awk '/^nameserver / { print $2; exit }' /etc/resolv.conf 2>/dev/null
+}
+
+default_pe_url() {
+    if is_wsl; then
+        if command -v curl.exe >/dev/null 2>&1; then
+            printf 'http://127.0.0.1:9200'
+            return
+        fi
+        local host_ip
+        host_ip="$(wsl_host_ip)"
+        if [[ -n "$host_ip" ]]; then
+            printf 'http://%s:9200' "$host_ip"
+            return
+        fi
+    fi
+    printf 'http://127.0.0.1:9200'
+}
+
+PE_URL="${PE_URL:-$(default_pe_url)}"
+
+pe_uses_windows_loopback() {
+    is_wsl && [[ "$PE_URL" =~ ^https?://(127\.0\.0\.1|localhost)(:|/) ]]
+}
+
+pe_curl() {
+    if pe_uses_windows_loopback && command -v curl.exe >/dev/null 2>&1; then
+        curl.exe "$@"
+    else
+        curl "$@"
+    fi
+}
+
+PENDING_DIR="${HOME}/.cache/myforge-hooks"
+
+# Retry any previously failed ingests first
+if [ -d "$PENDING_DIR" ]; then
+    for f in "$PENDING_DIR"/ingest-pending-*; do
+        [ -f "$f" ] || continue
+        if pe_curl -sf --max-time 2 -X POST "$PE_URL/api/ingest-git" -o /dev/null 2>/dev/null; then
+            rm -f "$f"
+        else
+            break
+        fi
+    done
+fi
+
+# Fire current ingest; on failure, leave a marker
+HASH=$(git rev-parse HEAD 2>/dev/null || echo "")
+REPO=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "")
+if ! pe_curl -sf --max-time 2 -X POST "$PE_URL/api/ingest-git?repo=$REPO&hash=$HASH" -o /dev/null 2>/dev/null; then
+    mkdir -p "$PENDING_DIR"
+    touch "$PENDING_DIR/ingest-pending-$(date +%s)"
+fi
+
+# ---- Repo-local hook extension ----
+# Each repo can define scripts/post-commit-local.sh for custom actions.
+# This file lives in the repo (git-tracked), survives hook reinstalls.
+_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -x "$_REPO_ROOT/scripts/post-commit-local.sh" ]; then
+    "$_REPO_ROOT/scripts/post-commit-local.sh" &
+fi
