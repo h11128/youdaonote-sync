@@ -66,8 +66,8 @@ Silent (no console flash):
 
 ```powershell
 $action = New-ScheduledTaskAction `
-  -Execute 'powershell.exe' `
-  -Argument '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File E:\Projects\youdaonote-sync\scripts\scheduled-sync.ps1' `
+  -Execute 'wscript.exe' `
+  -Argument '//nologo "E:\Projects\myforge\scripts\silent-run.vbs" pwsh.exe -NoProfile -ExecutionPolicy Bypass -File E:\Projects\youdaonote-sync\scripts\scheduled-sync.ps1' `
   -WorkingDirectory 'E:\Projects\youdaonote-sync'
 $task = Get-ScheduledTask -TaskName 'YoudaoNoteSync'
 Set-ScheduledTask -TaskName 'YoudaoNoteSync' -Action $action `
