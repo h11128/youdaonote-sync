@@ -81,3 +81,9 @@ htmlcov/
 .cursor/rules/same-worktree-coordinate.mdc
 .cursor/rules/youdao-note-listing-size.mdc
 # END shared-cursor-rules-projections
+
+.agents/
+.codex/
+.shellcheckrc
+pyproject.toml
+

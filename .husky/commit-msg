@@ -143,17 +143,19 @@ if ! [[ "$MSG" =~ $CC_REGEX ]]; then
     exit 1
 fi
 
-# ── Check 2: Task reference ──────────────────────────────────────
+# ── Check 2: Task reference and explicit intent (closes #N or part #N) ─────
+MSG_LOWER=$(printf '%s' "$MSG" | tr '[:upper:]' '[:lower:]')
+
 if ! [[ "$MSG" =~ \#[0-9]+ ]]; then
     printf "${RED}[commit-msg] REJECTED${NC}: missing task reference (#N).\n"
-    printf "Put a task id in the first line of the message, for example: closes #42 (if finishing task) or #42 (activity only)\n"
-    printf "This hook talks to Progress Engine for task lookup; it does not use llm-gateway.\n"
+    printf "You must specify a task reference with explicit intent:\n"
+    printf "  - To close/finish the task:   closes #42 (or fix #42, done #42)\n"
+    printf "  - For intermediate/WIP steps: part #42 (or wip #42)\n"
+    printf "Examples:\n"
+    printf "  feat(stocks): add Kelly criterion, closes #42\n"
+    printf "  feat(stocks): add data model, part #42\n"
     print_service_port_hint
-    printf "To list in-progress Progress Engine tasks:\n"
     print_task_list_hint
-    printf "If you see \"Connection refused\", start PE first, e.g.:\n"
-    printf "  cargo run -p progress-engine -- serve\n"
-    printf "Do not add 2>/dev/null to that curl while debugging — it hides the real error.\n"
     exit 1
 fi
 
@@ -162,6 +164,19 @@ if [[ "$MSG" =~ (^|[^0-9])\#0([^0-9]|$) ]]; then
     printf "Use a real task id, for example #201. If you do not know it, list Progress Engine tasks:\n"
     print_service_port_hint
     print_task_list_hint
+    exit 1
+fi
+
+# Hard-block bare #N. Every task reference must explicitly declare intent (closes or part/wip)
+INTENT_KEYWORD_RE='(^|[^a-z0-9_-])(closes?|closed|fixes?|fixed|resolves?|resolved|done|part|wip|ref|progress)[[:space:]]*:?[[:space:]]+#[0-9]+'
+if ! [[ "$MSG_LOWER" =~ $INTENT_KEYWORD_RE ]]; then
+    printf "${RED}[commit-msg] REJECTED${NC}: ambiguous bare task reference (#N) is forbidden.\n"
+    printf "You must explicitly declare whether this commit closes or progresses the task:\n"
+    printf "  - To close/finish the task:   closes #N (or close #N, fix #N, done #N)\n"
+    printf "  - For intermediate/WIP steps: part #N (or wip #N)\n"
+    printf "Examples:\n"
+    printf "  feat(stocks): add Kelly criterion, closes #42\n"
+    printf "  feat(stocks): implement math helpers, part #42\n"
     exit 1
 fi
 
@@ -189,47 +204,6 @@ if [[ "$MSG" =~ \#([0-9]+) ]]; then
         print_service_port_hint
         printf "List Progress Engine tasks:\n"
         print_task_list_hint
-    fi
-fi
-
-# ── Check 4: freshly-minted task + bare #N (best-effort, never blocks) ───
-# manage-tasks skill: "做完就 closes #N 或 pe task done。裸 #N 只记账，不会关。"
-# A task created in the last few minutes almost always means it was just
-# minted to satisfy Check 2's #N requirement -- if THIS commit is the one
-# finishing that work, a bare #N silently never closes it (PE zika retro,
-# 2026-08-24: #910/#911/#924/#973). Closes/fixes/resolves/done already
-# present is fine; this only nudges the bare-#N case, and only when the
-# task is fresh enough that "just created for this commit" is plausible.
-CLOSE_KEYWORD_RE='(closes?|closed|fixes?|fixed|resolves?|resolved|done)[[:space:]]*:?[[:space:]]+#[0-9]+'
-if [[ "$MSG" =~ \#([0-9]+) ]]; then
-    TASK_ID="${BASH_REMATCH[1]}"
-    if ! [[ "$MSG" =~ $CLOSE_KEYWORD_RE ]] && command -v python3 >/dev/null 2>&1; then
-        TASK_JSON=$(pe_curl -sS --max-time 1 "${PE_URL}/api/tasks/${TASK_ID}" 2>/dev/null || true)
-        FRESH_MINUTES=$(
-            printf '%s' "$TASK_JSON" | python3 -c '
-import json, sys
-from datetime import datetime
-try:
-    d = json.load(sys.stdin)
-    created = datetime.strptime(d["created_at"], "%Y-%m-%d %H:%M:%S")
-    print(int((datetime.now() - created).total_seconds() // 60))
-except Exception:
-    pass
-' 2>/dev/null || true
-        )
-        if [[ "$FRESH_MINUTES" =~ ^[0-9]+$ ]] && [[ "$FRESH_MINUTES" -le 15 ]]; then
-            printf "${YELLOW}╔══════════════════════════════════════════════════════════════════════════════╗${NC}\n"
-            printf "${YELLOW}║ [commit-msg] ⚠️  TASK CLOSE WARNING: Bare '#%s' detected                     ║${NC}\n" "$TASK_ID"
-            printf "${YELLOW}║ Task #%s was created %s min ago. Bare '#%s' ONLY records activity;           ║${NC}\n" "$TASK_ID" "$FRESH_MINUTES" "$TASK_ID"
-            printf "${YELLOW}║ Progress Engine will NOT close this task automatically!                      ║${NC}\n"
-            printf "${YELLOW}║ If this commit completes the work, use: 'closes #%s'                          ║${NC}\n" "$TASK_ID"
-            printf "${YELLOW}║ If doing WIP/intermediate commit, verify final closure upon completion.      ║${NC}\n"
-            printf "${YELLOW}╚══════════════════════════════════════════════════════════════════════════════╝${NC}\n"
-            if [[ "${STRICT_TASK_CLOSE:-}" == "1" ]]; then
-                printf "${RED}[commit-msg] REJECTED${NC}: STRICT_TASK_CLOSE is set and bare '#%s' is not allowed for fresh tasks.\n" "$TASK_ID"
-                exit 1
-            fi
-        fi
     fi
 fi
 
